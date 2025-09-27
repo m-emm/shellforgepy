@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple, Union
 import cadquery as cq
 import numpy as np
 
-from ...construct.alignment import Alignment
+from shellforgepy.construct.alignment import Alignment
 
 
 def _as_cq_vector(value) -> cq.Vector:

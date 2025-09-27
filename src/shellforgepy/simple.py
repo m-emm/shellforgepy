@@ -37,6 +37,24 @@ from .produce.arrange_and_export import (
     export_solid_to_stl,
 )
 
+from .construct.construct_utils import fibonacci_sphere, normalize
+
+from .geometry.face_point_cloud import face_point_cloud
+from .shells.mesh_partition import MeshPartition
+from .shells.partitionable_spheroid_triangle_mesh import (
+    PartitionableSpheroidTriangleMesh,
+)
+from .geometry.spherical_tools import (
+    coordinate_system_transform,
+    coordinate_system_transform_to_matrix,
+    coordinate_system_transformation_function,
+)
+from .geometry.treapezoidal_snake_geometry import create_trapezoidal_snake_geometry
+
+
+from shellforgepy.shells.transformed_region_view import TransformedRegionView
+
+
 # Note: Materialized connectors functionality is not yet implemented
 
 
@@ -56,6 +74,9 @@ def _load_cad_functions():
             "create_text_object": adapter.create_text_object,
             "directed_cylinder_at": adapter.directed_cylinder_at,
             "get_bounding_box": adapter.get_bounding_box,
+            "get_bounding_box_center": adapter.get_bounding_box_center,
+            "get_vertex_coordinates": adapter.get_vertex_coordinates,
+            "get_z_min": adapter.get_z_min,
         }
     except ImportError as e:
         # Return stub functions that provide helpful error messages
@@ -98,6 +119,9 @@ create_solid_from_traditional_face_vertex_maps = _cad_functions[
 create_text_object = _cad_functions["create_text_object"]
 directed_cylinder_at = _cad_functions["directed_cylinder_at"]
 get_bounding_box = _cad_functions["get_bounding_box"]
+get_bounding_box_center = _cad_functions["get_bounding_box_center"]
+get_vertex_coordinates = _cad_functions["get_vertex_coordinates"]
+get_z_min = _cad_functions.get("get_z_min")
 
 # Define what gets exported with "from simple import *"
 __all__ = [
@@ -128,4 +152,17 @@ __all__ = [
     "LeaderFollowersCuttersPart",
     "export_solid_to_stl",
     "arrange_and_export_parts",
+    "get_bounding_box_center",
+    "get_vertex_coordinates",
+    "get_z_min",
+    "fibonacci_sphere",
+    "normalize",
+    "face_point_cloud",
+    "MeshPartition",
+    "PartitionableSpheroidTriangleMesh",
+    "coordinate_system_transform",
+    "coordinate_system_transform_to_matrix",
+    "coordinate_system_transformation_function",
+    "TransformedRegionView",
+    "create_trapezoidal_snake_geometry"
 ]

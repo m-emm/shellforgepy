@@ -1,4 +1,4 @@
-from .adapter_chooser import get_cad_adapter
+from shellforgepy.adapters.adapter_chooser import get_cad_adapter
 
 adapter = get_cad_adapter()
 

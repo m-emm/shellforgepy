@@ -53,9 +53,9 @@ def import_adapter_module():
         adapter_type = detect_cad_environment()
 
     if adapter_type == "cadquery":
-        from .cadquery import cadquery_adapter as adapter_module
+        from shellforgepy.adapters.cadquery import cadquery_adapter as adapter_module
     elif adapter_type == "freecad":
-        from .freecad import freecad_adapter as adapter_module
+        from shellforgepy.adapters.freecad import freecad_adapter as adapter_module
     else:
         raise ValueError(f"Unknown adapter type: {adapter_type}")
 

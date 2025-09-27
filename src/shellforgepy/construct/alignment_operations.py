@@ -1,7 +1,7 @@
 import numpy as np
 from shellforgepy.construct.alignment import Alignment
 
-from ..adapters.adapter_chooser import get_cad_adapter
+from shellforgepy.adapters.adapter_chooser import get_cad_adapter
 
 # Get the adapter dynamically
 _cad_adapter = get_cad_adapter()
