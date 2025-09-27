@@ -8,25 +8,16 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple
 
 # Import the adapter to delegate CAD-specific operations
-from ..adapters.adapter_chooser import get_cad_adapter
-
-# Type alias for CAD objects - actual type depends on the adapter
-CadQueryObject = Any
-
-
-def _to_shape(obj):
-    """Convert a CAD object to a shape using the appropriate adapter."""
-    adapter = get_cad_adapter()
-    # For now, assume the adapter can handle the object directly
-    # This may need to be expanded based on adapter-specific logic
-    return obj
-
-
-def _as_vector(vector):
-    """Convert a vector to the appropriate CAD vector type using the adapter."""
-    if hasattr(vector, "__len__") and len(vector) == 3:
-        return tuple(float(v) for v in vector)
-    return vector
+from shellforgepy.adapters.simple import copy_part
+from shellforgepy.adapters.simple import (
+    export_solid_to_stl as adapter_export_solid_to_stl,
+)
+from shellforgepy.adapters.simple import (
+    fuse_parts,
+    get_bounding_box,
+    rotate_part,
+    translate_part,
+)
 
 
 @dataclass
@@ -36,13 +27,12 @@ class PartCollector:
     part = None
 
     def fuse(self, other):
-        """Fuse this part with another part using the appropriate CAD adapter."""
-        adapter = get_cad_adapter()
+        """Fuse this part with another part using the appropriate CAD"""
         if self.part is None:
             self.part = other
         else:
             # Delegate to adapter for fusing - this would need to be implemented in adapters
-            self.part = adapter.fuse_parts(self.part, other)
+            self.part = fuse_parts(self.part, other)
         return self.part
 
 
@@ -67,13 +57,13 @@ class NamedPart:
 
     def copy(self):
         """Create a copy of this named part."""
-        adapter = get_cad_adapter()
-        return NamedPart(self.name, adapter.copy_part(self.part))
+
+        return NamedPart(self.name, copy_part(self.part))
 
     def translate(self, vector):
         """Translate this part by the given vector."""
-        adapter = get_cad_adapter()
-        translated_part = adapter.translate_part(self.part, vector)
+
+        translated_part = translate_part(self.part, vector)
         return NamedPart(self.name, translated_part)
 
     def rotate(
@@ -83,8 +73,8 @@ class NamedPart:
         axis=(0.0, 0.0, 1.0),
     ):
         """Rotate this part around the given axis."""
-        adapter = get_cad_adapter()
-        rotated_part = adapter.rotate_part(self.part, angle, center, axis)
+
+        rotated_part = rotate_part(self.part, angle, center, axis)
         return NamedPart(self.name, rotated_part)
 
 
@@ -102,11 +92,11 @@ def _normalize_named_parts(
         if isinstance(item, Mapping):
             if "name" not in item or "part" not in item:
                 raise KeyError("Named parts mappings must contain 'name' and 'part'")
-            normalized.append(NamedPart(str(item["name"]), _to_shape(item["part"])))
+            normalized.append(NamedPart(str(item["name"]), item["part"]))
             continue
         if isinstance(item, tuple) and len(item) == 2:
             name, part = item
-            normalized.append(NamedPart(str(name), _to_shape(part)))
+            normalized.append(NamedPart(str(name), part))
             continue
         raise TypeError(
             f"Unsupported item in named parts sequence at index {idx}: {item!r}"
@@ -133,7 +123,7 @@ class PartList:
         if isinstance(part, LeaderFollowersCuttersPart):
             shape = part.get_leader_as_part()
         else:
-            shape = _to_shape(part)
+            shape = part
 
         if any(existing.name == name for existing in self.parts):
             raise ValueError(f"Part with name '{name}' already exists")
@@ -192,7 +182,7 @@ class LeaderFollowersCuttersPart:
         cutters=None,
         non_production_parts=None,
     ):
-        self.leader = _to_shape(leader)
+        self.leader = leader
         self.followers = _normalize_named_parts(followers)
         self.cutters = _normalize_named_parts(cutters)
         self.non_production_parts = _normalize_named_parts(non_production_parts)
@@ -217,9 +207,9 @@ class LeaderFollowersCuttersPart:
         return collector.part
 
     def copy(self):
-        adapter = get_cad_adapter()
+
         return LeaderFollowersCuttersPart(
-            adapter.copy_part(self.leader),
+            copy_part(self.leader),
             [follower.copy() for follower in self.followers],
             [cutter.copy() for cutter in self.cutters],
             [non_prod.copy() for non_prod in self.non_production_parts],
@@ -229,9 +219,9 @@ class LeaderFollowersCuttersPart:
         self,
         other,
     ):
-        adapter = get_cad_adapter()
+
         if isinstance(other, LeaderFollowersCuttersPart):
-            new_leader = adapter.fuse_parts(self.leader, other.leader)
+            new_leader = fuse_parts(self.leader, other.leader)
             new_followers = [f.copy() for f in (self.followers + other.followers)]
             new_cutters = [c.copy() for c in (self.cutters + other.cutters)]
             new_non_prod = [
@@ -242,8 +232,8 @@ class LeaderFollowersCuttersPart:
                 new_leader, new_followers, new_cutters, new_non_prod
             )
 
-        other_shape = _to_shape(other)
-        new_leader = adapter.fuse_parts(self.leader, other_shape)
+        other_shape = other
+        new_leader = fuse_parts(self.leader, other_shape)
         return LeaderFollowersCuttersPart(
             new_leader,
             [f.copy() for f in self.followers],
@@ -252,9 +242,9 @@ class LeaderFollowersCuttersPart:
         )
 
     def translate(self, vector):
-        adapter = get_cad_adapter()
-        vec = _as_vector(vector)
-        self.leader = adapter.translate_part(self.leader, vec)
+
+        vec = vector
+        self.leader = translate_part(self.leader, vec)
         self.followers = [follower.translate(vec) for follower in self.followers]
         self.cutters = [cutter.translate(vec) for cutter in self.cutters]
         self.non_production_parts = [
@@ -268,10 +258,10 @@ class LeaderFollowersCuttersPart:
         center=(0.0, 0.0, 0.0),
         axis=(0.0, 0.0, 1.0),
     ):
-        adapter = get_cad_adapter()
-        center_vec = _as_vector(center)
-        axis_vec = _as_vector(axis)
-        self.leader = adapter.rotate_part(self.leader, angle, center_vec, axis_vec)
+
+        center_vec = center
+        axis_vec = axis
+        self.leader = rotate_part(self.leader, angle, center_vec, axis_vec)
         self.followers = [
             follower.rotate(angle, center_vec, axis_vec) for follower in self.followers
         ]
@@ -286,8 +276,8 @@ class LeaderFollowersCuttersPart:
 
     @property
     def BoundBox(self):
-        adapter = get_cad_adapter()
-        return adapter.get_bounding_box(self.leader)
+
+        return get_bounding_box(self.leader)
 
 
 def export_solid_to_stl(
@@ -297,9 +287,9 @@ def export_solid_to_stl(
     tolerance=0.1,
     angular_tolerance=0.1,
 ):
-    """Export a CAD solid to an STL file using the appropriate adapter."""
-    adapter = get_cad_adapter()
-    adapter.export_solid_to_stl(
+    """Export a CAD solid to an STL file using the appropriate"""
+
+    adapter_export_solid_to_stl(
         solid,
         str(destination),
         tolerance=tolerance,
@@ -317,14 +307,14 @@ def _arrange_parts_in_rows(
     gap,
     bed_width,
 ):
-    adapter = get_cad_adapter()
+
     arranged = []
     x_cursor = 0.0
     y_cursor = 0.0
     row_depth = 0.0
 
     for shape in parts:
-        min_point, max_point = adapter.get_bounding_box(shape)
+        min_point, max_point = get_bounding_box(shape)
         width = max_point[0] - min_point[0]
         depth = max_point[1] - min_point[1]
 
@@ -340,7 +330,7 @@ def _arrange_parts_in_rows(
             y_cursor - min_point[1],
             -min_point[2],
         )
-        arranged_shape = adapter.translate_part(shape, move_vector)
+        arranged_shape = translate_part(shape, move_vector)
         arranged.append(arranged_shape)
 
         x_cursor += width + gap
@@ -375,14 +365,13 @@ def arrange_and_export_parts(
     if not parts_list:
         raise ValueError("No parts provided for arrangement and export")
 
-    adapter = get_cad_adapter()
     shapes = []
     names = []
     for entry in parts_list:
         if "name" not in entry or "part" not in entry:
             raise KeyError("Each part mapping must include 'name' and 'part'")
-        shape = _to_shape(entry["part"])  # type: ignore[arg-type]
-        min_point, max_point = adapter.get_bounding_box(shape)
+        shape = entry["part"]
+        min_point, max_point = get_bounding_box(shape)
         if (
             prod
             and max_build_height is not None
