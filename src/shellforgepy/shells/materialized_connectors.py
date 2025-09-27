@@ -13,7 +13,6 @@ from shellforgepy.adapters.simple import (
     create_basic_cylinder,
     create_extruded_polygon,
     create_solid_from_traditional_face_vertex_maps,
-    directed_cylinder_at,
 )
 from shellforgepy.construct.alignment import Alignment
 from shellforgepy.construct.alignment_operations import (
@@ -22,7 +21,10 @@ from shellforgepy.construct.alignment_operations import (
     rotate,
     translate,
 )
-from shellforgepy.geometry.higher_order_solids import create_trapezoid
+from shellforgepy.geometry.higher_order_solids import (
+    create_trapezoid,
+    directed_cylinder_at,
+)
 
 VectorLike = Union[Sequence[float], np.ndarray, Tuple[float, float, float]]
 

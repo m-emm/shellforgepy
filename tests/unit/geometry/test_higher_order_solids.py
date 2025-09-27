@@ -1,5 +1,5 @@
 import numpy as np
-from shellforgepy.adpter.simple import get_volume
+from shellforgepy.adapters.simple import get_volume
 from shellforgepy.geometry.higher_order_solids import (
     create_hex_prism,
     create_trapezoid,
@@ -33,13 +33,13 @@ def test_directed_cylinder():
         base_point=(0, 0, 0), direction=(0, 0, 1), radius=5, height=10
     )
     expected_volume = np.pi * 5**2 * 10
-    assert np.allclose(cyl_z.Volume, expected_volume, rtol=1e-5)
+    assert np.allclose(get_volume(cyl_z), expected_volume, rtol=1e-5)
 
     # Test cylinder along X axis
     cyl_x = directed_cylinder_at(
         base_point=(0, 0, 0), direction=(1, 0, 0), radius=5, height=10
     )
-    assert np.allclose(cyl_x.Volume, expected_volume, rtol=1e-5)
+    assert np.allclose(get_volume(cyl_x), expected_volume, rtol=1e-5)
 
     # Test cylinder along arbitrary direction
     direction = (1, 1, 1)  # diagonal direction

@@ -513,6 +513,10 @@ def translate_part(part, vector):
 
 def rotate_part(part, angle, center=(0.0, 0.0, 0.0), axis=(0.0, 0.0, 1.0)):
     """Rotate a CadQuery part around the given axis."""
+    if center is None:
+        center = (0.0, 0.0, 0.0)
+    if axis is None:
+        axis = (0.0, 0.0, 1.0)
     center_vec = cq.Vector(*center)
     axis_vec = cq.Vector(*axis)
     return part.rotate(center_vec, center_vec + axis_vec, angle)
