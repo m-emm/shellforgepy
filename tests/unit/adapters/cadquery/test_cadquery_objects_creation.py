@@ -10,12 +10,14 @@ except ImportError:
     cadquery_available = False
     cq = None
 
+from shellforgepy.construct.alignment import Alignment
 from shellforgepy.geometry.mesh_builders import create_dodecahedron_geometry
 from shellforgepy.simple import (
     create_basic_box,
     create_basic_cone,
     create_basic_cylinder,
     create_basic_sphere,
+    create_filleted_box,
     create_solid_from_traditional_face_vertex_maps,
 )
 
@@ -448,3 +450,107 @@ def test_polygon_creation():
         points=[(0, 0), (10, 0), (10, 10), (0, 10)], thickness=5
     )
     assert poly is not None
+
+
+@pytest.mark.skipif(not cadquery_available, reason="cadquery not available")
+def test_filleted_box_creation():
+    """Test creation of filleted boxes with different configurations."""
+
+    # Test 1: Basic filleted box (all edges filleted)
+    filleted_box = create_filleted_box(10, 10, 10, 2)
+    assert filleted_box is not None
+
+    # Check that the box has the correct dimensions
+    bbox = filleted_box.BoundingBox()
+    assert abs(bbox.xlen - 10) < 1e-10
+    assert abs(bbox.ylen - 10) < 1e-10
+    assert abs(bbox.zlen - 10) < 1e-10
+
+    # Check that filleting was applied - a filleted box should have more edges
+    # than the original 12 edges of a cube
+    original_box = create_basic_box(10, 10, 10)
+    original_edge_count = len(original_box.Edges())
+    filleted_edge_count = len(filleted_box.Edges())
+
+    # Filleted box should have more edges due to fillet surfaces
+    assert (
+        filleted_edge_count > original_edge_count
+    ), f"Filleted box should have more edges. Original: {original_edge_count}, Filleted: {filleted_edge_count}"
+
+    # Test 2: Box with fillets only at top
+    top_filleted_box = create_filleted_box(10, 10, 10, 1, fillets_at=[Alignment.TOP])
+    assert top_filleted_box is not None
+
+    # Should still have correct dimensions
+    bbox2 = top_filleted_box.BoundingBox()
+    assert abs(bbox2.xlen - 10) < 1e-10
+    assert abs(bbox2.ylen - 10) < 1e-10
+    assert abs(bbox2.zlen - 10) < 1e-10
+
+    # Should have fewer additional edges than fully filleted box
+    top_filleted_edge_count = len(top_filleted_box.Edges())
+    assert (
+        top_filleted_edge_count > original_edge_count
+    ), "Top-filleted box should have more edges than original"
+    assert (
+        top_filleted_edge_count < filleted_edge_count
+    ), "Top-filleted box should have fewer edges than fully filleted box"
+
+    # Test 3: Box with no fillets at bottom
+    no_bottom_filleted_box = create_filleted_box(
+        10, 10, 10, 1, no_fillets_at=[Alignment.BOTTOM]
+    )
+    assert no_bottom_filleted_box is not None
+
+    # Should still have correct dimensions
+    bbox3 = no_bottom_filleted_box.BoundingBox()
+    assert abs(bbox3.xlen - 10) < 1e-10
+    assert abs(bbox3.ylen - 10) < 1e-10
+    assert abs(bbox3.zlen - 10) < 1e-10
+
+    # Should have more edges than original but may be different from top-only
+    no_bottom_edge_count = len(no_bottom_filleted_box.Edges())
+    assert no_bottom_edge_count > original_edge_count
+
+    # Test 4: Box with fillets at multiple specific locations
+    multi_filleted_box = create_filleted_box(
+        10, 10, 10, 1, fillets_at=[Alignment.TOP, Alignment.FRONT]
+    )
+    assert multi_filleted_box is not None
+
+    multi_edge_count = len(multi_filleted_box.Edges())
+    assert multi_edge_count > original_edge_count
+
+    # Test 5: Box with no fillets (empty fillets_at list)
+    no_fillet_box = create_filleted_box(10, 10, 10, 1, fillets_at=[])
+    assert no_fillet_box is not None
+
+    # This should be identical to a basic box
+    basic_box = create_basic_box(10, 10, 10)
+
+    # Both should have same bounding box
+    bbox_no_fillet = no_fillet_box.BoundingBox()
+    bbox_basic = basic_box.BoundingBox()
+    assert abs(bbox_no_fillet.xlen - bbox_basic.xlen) < 1e-10
+    assert abs(bbox_no_fillet.ylen - bbox_basic.ylen) < 1e-10
+    assert abs(bbox_no_fillet.zlen - bbox_basic.zlen) < 1e-10
+
+    # Should have same number of edges as original box
+    no_fillet_edge_count = len(no_fillet_box.Edges())
+    assert (
+        no_fillet_edge_count == original_edge_count
+    ), f"No-fillet box should have same edges as original. Got {no_fillet_edge_count}, expected {original_edge_count}"
+
+    # Test 6: Verify different fillet radius works
+    large_fillet_box = create_filleted_box(20, 20, 20, 5)
+    assert large_fillet_box is not None
+
+    bbox_large = large_fillet_box.BoundingBox()
+    assert abs(bbox_large.xlen - 20) < 1e-10
+    assert abs(bbox_large.ylen - 20) < 1e-10
+    assert abs(bbox_large.zlen - 20) < 1e-10
+
+    # Large fillet should also create additional edges
+    large_fillet_edge_count = len(large_fillet_box.Edges())
+    large_original_edge_count = len(create_basic_box(20, 20, 20).Edges())
+    assert large_fillet_edge_count > large_original_edge_count

@@ -20,6 +20,7 @@ from shellforgepy.simple import (
     create_basic_cone,
     create_basic_cylinder,
     create_basic_sphere,
+    create_filleted_box,
     create_solid_from_traditional_face_vertex_maps,
 )
 
@@ -453,3 +454,8 @@ def test_polygon_creation():
         points=[(0, 0), (10, 0), (10, 10), (0, 10)], thickness=5
     )
     assert poly is not None
+
+
+@pytest.mark.skipif(not freecad_available, reason="FreeCAD not available")
+def test_filleted_box_creation():
+    filleted_box = create_filleted_box(10, 10, 10, 2)

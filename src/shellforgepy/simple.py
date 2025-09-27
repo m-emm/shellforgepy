@@ -79,6 +79,8 @@ def _load_cad_functions():
             "get_vertex_coordinates": adapter.get_vertex_coordinates,
             "get_z_min": adapter.get_z_min,
             "create_extruded_polygon": adapter.create_extruded_polygon,
+            "create_filleted_box": adapter.create_filleted_box,
+            "get_volume": getattr(adapter, "get_volume", None),
         }
     except ImportError as e:
         # Return stub functions that provide helpful error messages
@@ -105,6 +107,9 @@ def _load_cad_functions():
             "directed_cylinder_at": _missing_cad_error("directed_cylinder_at"),
             "get_bounding_box": _missing_cad_error("get_bounding_box"),
             "create_extruded_polygon": _missing_cad_error("create_extruded_polygon"),
+            "get_bounding_box_center": _missing_cad_error("get_bounding_box_center"),
+            "get_volume": _missing_cad_error("get_volume"),
+            "create_filleted_box": _missing_cad_error("create_filleted_box"),
         }
 
 
@@ -126,6 +131,8 @@ get_bounding_box_center = _cad_functions["get_bounding_box_center"]
 get_vertex_coordinates = _cad_functions["get_vertex_coordinates"]
 get_z_min = _cad_functions.get("get_z_min")
 create_extruded_polygon = _cad_functions["create_extruded_polygon"]
+create_filleted_box = _cad_functions["create_filleted_box"]
+get_volume = _cad_functions.get("get_volume")
 
 # Define what gets exported with "from simple import *"
 __all__ = [
@@ -173,4 +180,6 @@ __all__ = [
     "create_trapezoid",
     "create_screw_connector_normal",
     "create_extruded_polygon",
+    "get_volume",
+    "create_filleted_box",
 ]
