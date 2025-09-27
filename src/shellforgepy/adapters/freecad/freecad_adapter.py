@@ -492,6 +492,10 @@ def rotate_part(part, angle, center=(0.0, 0.0, 0.0), axis=(0.0, 0.0, 1.0)):
         center: Center point of rotation as (x, y, z) tuple
         axis: Rotation axis as (x, y, z) tuple
     """
+    if center is None:
+        center = (0.0, 0.0, 0.0)
+    if axis is None:
+        axis = (0.0, 0.0, 1.0)
     center_vec = Base.Vector(center[0], center[1], center[2])
     axis_vec = Base.Vector(axis[0], axis[1], axis[2])
     rotated = part.copy()
@@ -539,3 +543,8 @@ def create_extruded_polygon(points, thickness):
     extruded = face.extrude(Base.Vector(0, 0, thickness))
 
     return extruded
+
+
+def get_volume(solid):
+    """Get the volume of a FreeCAD solid."""
+    return solid.Volume
