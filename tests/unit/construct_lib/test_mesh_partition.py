@@ -6,15 +6,15 @@ from collections import defaultdict
 
 import matplotlib.pyplot as plt
 import numpy as np
-from shellforgepy.shells.connector_hint import ConnectorHint
-from shellforgepy.shells.connector_utils import merge_collinear_connectors
 from shellforgepy.construct.construct_utils import normalize
-from shellforgepy.geometries import (
+from shellforgepy.geometry.mesh_builders import (
     create_cube_geometry,
     create_dodecahedron_geometry,
     create_fibonacci_sphere_geometry,
     create_tetrahedron_geometry,
 )
+from shellforgepy.shells.connector_hint import ConnectorHint
+from shellforgepy.shells.connector_utils import merge_collinear_connectors
 from shellforgepy.shells.mesh_partition import MeshPartition
 from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple
 
 # Import the adapter to delegate CAD-specific operations
-from shellforgepy.adapters.simple import copy_part
+from shellforgepy.adapters.simple import copy_part, cut_parts
 from shellforgepy.adapters.simple import (
     export_solid_to_stl as adapter_export_solid_to_stl,
 )
@@ -33,6 +33,14 @@ class PartCollector:
         else:
             # Delegate to adapter for fusing - this would need to be implemented in adapters
             self.part = fuse_parts(self.part, other)
+        return self.part
+
+    def cut(self, other):
+        """Cut another part from this part using the appropriate CAD adapter"""
+        if self.part is None:
+            raise ValueError("Cannot cut from None part")
+        else:
+            self.part = cut_parts(self.part, other)
         return self.part
 
 

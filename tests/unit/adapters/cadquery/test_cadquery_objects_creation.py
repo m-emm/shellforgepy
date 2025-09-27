@@ -343,6 +343,7 @@ def test_part_manipulation_functions():
     """Test part manipulation functions."""
     from shellforgepy.adapters.cadquery.cadquery_adapter import (
         copy_part,
+        cut_parts,
         fuse_parts,
         rotate_part,
         translate_part,
@@ -390,32 +391,20 @@ def test_part_manipulation_functions():
     expected_volume = box1.Volume() + box2.Volume()
     assert np.allclose(fused.Volume(), expected_volume, rtol=1e-5)
 
+    # Test cut
+    # Create two overlapping boxes to test cutting
+    box3 = create_basic_box(10, 10, 10)  # Box at origin
+    box4 = create_basic_box(
+        5, 5, 15, (2.5, 2.5, 0)
+    )  # Smaller box overlapping with box3
 
-@pytest.mark.skipif(not cadquery_available, reason="cadquery not available")
-def test_directed_cylinder():
-    """Test directed cylinder creation."""
-    from shellforgepy.adapters.cadquery.cadquery_adapter import directed_cylinder_at
+    original_volume = box3.Volume()
+    cut_result = cut_parts(box3, box4)
 
-    # Test cylinder along Z axis (should be same as basic cylinder)
-    cyl_z = directed_cylinder_at(
-        base_point=(0, 0, 0), direction=(0, 0, 1), radius=5, height=10
-    )
-    expected_volume = np.pi * 5**2 * 10
-    assert np.allclose(cyl_z.Volume(), expected_volume, rtol=1e-5)
-
-    # Test cylinder along X axis
-    cyl_x = directed_cylinder_at(
-        base_point=(0, 0, 0), direction=(1, 0, 0), radius=5, height=10
-    )
-    assert np.allclose(cyl_x.Volume(), expected_volume, rtol=1e-5)
-
-    # Test cylinder along arbitrary direction
-    direction = (1, 1, 1)  # diagonal direction
-    cyl_diag = directed_cylinder_at(
-        base_point=(5, 5, 5), direction=direction, radius=3, height=8
-    )
-    expected_volume = np.pi * 3**2 * 8
-    assert np.allclose(cyl_diag.Volume(), expected_volume, rtol=1e-5)
+    # After cutting, the volume should be less than the original
+    assert cut_result.Volume() < original_volume
+    # Should be positive (not everything was cut away)
+    assert cut_result.Volume() > 0
 
 
 @pytest.mark.skipif(not cadquery_available, reason="cadquery not available")
@@ -449,3 +438,13 @@ def test_export_stl():
         # Clean up
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
+
+
+@pytest.mark.skipif(not cadquery_available, reason="cadquery not available")
+def test_polygon_creation():
+    from shellforgepy.adapters.cadquery.cadquery_adapter import create_extruded_polygon
+
+    poly = create_extruded_polygon(
+        points=[(0, 0), (10, 0), (10, 10), (0, 10)], thickness=5
+    )
+    assert poly is not None

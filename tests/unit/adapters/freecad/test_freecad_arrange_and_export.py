@@ -46,6 +46,29 @@ def test_part_collector_multiple_fuse():
 
 
 @pytest.mark.skipif(not freecad_available, reason="FreeCAD not available")
+def test_part_collector_cut():
+    """Test PartCollector cut functionality."""
+    collector = PartCollector()
+
+    # Create two overlapping boxes
+    box1 = create_basic_box(20, 20, 20)
+    box2 = create_basic_box(10, 10, 10, origin=(5, 5, 5))  # Overlapping with box1
+
+    # Add the first box
+    collector.fuse(box1)
+    # Use FreeCAD's Volume property directly
+    original_volume = collector.part.Volume
+
+    # Cut the second box from the first
+    result = collector.cut(box2)
+
+    # The result should be the part and should have less volume
+    assert result is collector.part
+    cut_volume = collector.part.Volume
+    assert cut_volume < original_volume
+
+
+@pytest.mark.skipif(not freecad_available, reason="FreeCAD not available")
 def test_named_part_basic():
     """Test NamedPart basic functionality."""
     box = create_basic_box(10, 10, 10)

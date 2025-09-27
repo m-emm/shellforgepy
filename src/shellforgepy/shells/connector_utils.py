@@ -2,14 +2,13 @@ import logging
 from collections import defaultdict
 from typing import List
 
-import networkx as nx
 import numpy as np
-from shellforgepy.shells.connector_hint import ConnectorHint
 from shellforgepy.construct.construct_utils import (
     are_normals_similar,
     compute_triangle_normal,
     normalize,
 )
+from shellforgepy.shells.connector_hint import ConnectorHint
 
 _logger = logging.getLogger(__name__)
 

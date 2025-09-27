@@ -1,8 +1,6 @@
 from typing import Optional
 
 import numpy as np
-from shellforgepy.construct.alignment import Alignment
-from shellforgepy.geometry.spherical_tools import coordinate_system_transform
 
 # FreeCAD imports will be available when run in FreeCAD environment
 try:
@@ -347,70 +345,6 @@ def get_vertex_points(obj) -> list:
     return points
 
 
-def directed_cylinder_at(base_point, direction, radius, height):
-
-    cylinder = Part.makeCylinder(radius, height)
-    direction = np.array(direction, dtype=np.float64)
-    if np.linalg.norm(direction) < 1e-8:
-        raise ValueError("Direction vector cannot be zero")
-    direction /= np.linalg.norm(direction)
-
-    if not np.allclose(direction, [0, 0, 1]):
-
-        out_1 = np.array([0, 0, 1], dtype=np.float64)
-        if np.allclose(direction, out_1):
-            out_1 = np.array([1, 0, 0], dtype=np.float64)
-
-        transformation = coordinate_system_transform(
-            (0, 0, 0), (0, 0, 1), (1, 0, 0), base_point, direction, out_1
-        )
-
-        rotation = rotate(
-            np.degrees(transformation["rotation_angle"]),
-            axis=Base.Vector(*transformation["rotation_axis"]),
-        )
-        the_translation = translate(
-            transformation["translation"][0],
-            transformation["translation"][1],
-            transformation["translation"][2],
-        )
-
-        cylinder = rotation(cylinder)
-        cylinder = the_translation(cylinder)
-
-        return cylinder
-    else:
-        # If the direction is already aligned with Z, just translate
-        cylinder = translate(base_point[0], base_point[1], base_point[2])(cylinder)
-        return cylinder
-
-
-def translate(x, y, z):
-    """Create a translation transformation function."""
-
-    def retval(body):
-        translated = body.copy()
-        translated.translate(Base.Vector(x, y, z))
-        return translated
-
-    return retval
-
-
-def rotate(angle, center=None, axis=None):
-    """Create a rotation transformation function."""
-    if center is None:
-        center = Base.Vector(0, 0, 0)
-    if axis is None:
-        axis = Base.Vector(0, 0, 1)
-
-    def retval(body):
-        rotated = body.copy()
-        rotated.rotate(center, axis, angle)  # FreeCAD expects degrees
-        return rotated
-
-    return retval
-
-
 def create_text_object(
     text: str,
     size,
@@ -530,59 +464,6 @@ def export_solid_to_stl(
     solid.exportStl(destination)
 
 
-def align_translation(part, to, alignment: Alignment, axes=None):
-    bb = part.BoundBox
-    to_bb = to.BoundBox
-    part_width = bb.XMax - bb.XMin
-    part_length = bb.YMax - bb.YMin
-    part_height = bb.ZMax - bb.ZMin
-
-    def project_to_axes(x, y, z):
-        if axes is None:
-            return (x, y, z)
-        result = [0, 0, 0]
-        for i in axes:
-            result[i] = [x, y, z][i]
-        return tuple(result)
-
-    if alignment == Alignment.LEFT:
-        return translate(*project_to_axes(to_bb.XMin - bb.XMin, 0, 0))
-    elif alignment == Alignment.RIGHT:
-        return translate(*project_to_axes(to_bb.XMax - bb.XMax, 0, 0))
-    elif alignment == Alignment.BACK:
-        return translate(*project_to_axes(0, to_bb.YMax - bb.YMax, 0))
-    elif alignment == Alignment.FRONT:
-        return translate(*project_to_axes(0, to_bb.YMin - bb.YMin, 0))
-    elif alignment == Alignment.TOP:
-        return translate(*project_to_axes(0, 0, to_bb.ZMax - bb.ZMax))
-    elif alignment == Alignment.BOTTOM:
-        return translate(*project_to_axes(0, 0, to_bb.ZMin - bb.ZMin))
-    elif alignment == Alignment.CENTER:
-        return translate(
-            *project_to_axes(
-                (to_bb.XMin + to_bb.XMax) / 2 - (bb.XMin + bb.XMax) / 2,
-                (to_bb.YMin + to_bb.YMax) / 2 - (bb.YMin + bb.YMax) / 2,
-                (to_bb.ZMin + to_bb.ZMax) / 2 - (bb.ZMin + bb.ZMax) / 2,
-            )
-        )
-
-    elif alignment == Alignment.STACK_LEFT:
-        return translate(*project_to_axes(to_bb.XMin - bb.XMin - part_width, 0, 0))
-    elif alignment == Alignment.STACK_RIGHT:
-        return translate(*project_to_axes(to_bb.XMax - bb.XMax + part_width, 0, 0))
-    elif alignment == Alignment.STACK_BACK:
-        return translate(*project_to_axes(0, to_bb.YMax - bb.YMax + part_length, 0))
-    elif alignment == Alignment.STACK_FRONT:
-        return translate(*project_to_axes(0, to_bb.YMin - bb.YMin - part_length, 0))
-    elif alignment == Alignment.STACK_TOP:
-        return translate(*project_to_axes(0, 0, to_bb.ZMax - bb.ZMax + part_height))
-    elif alignment == Alignment.STACK_BOTTOM:
-        return translate(*project_to_axes(0, 0, to_bb.ZMin - bb.ZMin - part_height))
-
-    else:
-        raise ValueError(f"Unknown alignment: {alignment}")
-
-
 def copy_part(part):
     """Create a copy of a FreeCAD part."""
     if hasattr(part, "copy"):
@@ -595,6 +476,8 @@ def translate_part(part, vector):
     """Translate a FreeCAD part by the given vector."""
     if len(vector) != 3:
         raise ValueError("Vector must contain exactly three components")
+    if np.linalg.norm(np.array(vector)) < 1e-8:
+        return part.copy()  # No translation needed
     translated = part.copy()
     translated.translate(Base.Vector(vector[0], vector[1], vector[2]))
     return translated
@@ -622,6 +505,37 @@ def fuse_parts(part1, part2):
     return part1.fuse(part2)
 
 
-def align(part, to, alignment, axes=None):
-    """Align a part to another part according to alignment."""
-    return align_translation(part, to, alignment, axes=axes)(part.copy())
+def cut_parts(part1, part2):
+    """Cut part2 from part1."""
+    return part1.cut(part2)
+
+
+def create_extruded_polygon(points, thickness):
+    """
+    Create an extruded polygon from a list of 2-tuple (x, y) coordinates in the active document.
+
+    Args:
+    points (list of tuple): List of (x, y) coordinates for the polygon.
+    thickness (float): The extrusion thickness along the z-axis.
+
+    Returns:
+    Part.Shape: The extruded polygon shape, if successful.
+    """
+
+    # Convert list of tuples into FreeCAD Vectors, adding the first point at the end to close the polygon
+    points = [Base.Vector(x, y, 0) for x, y in points]
+    # check if it is already closed
+
+    if points[0].distanceToPoint(points[-1]) > 1e-6:
+        points = points + [Base.Vector(points[0][0], points[0][1], 0)]
+
+    # Create a polygon (wire) from the points and close it
+    wire = Part.makePolygon(points)
+
+    # Convert the wire to a face
+    face = Part.Face(wire)
+
+    # Extrude the face to create a solid
+    extruded = face.extrude(Base.Vector(0, 0, thickness))
+
+    return extruded

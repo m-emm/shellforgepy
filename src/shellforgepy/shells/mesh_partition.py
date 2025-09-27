@@ -1,16 +1,9 @@
 import logging
 from collections import Counter, defaultdict, deque
-from dataclasses import replace
-from itertools import combinations
 from typing import List, Optional
 
 import networkx as nx
 import numpy as np
-from shellforgepy.shells.connector_hint import ConnectorHint
-from shellforgepy.shells.connector_utils import (
-    compute_connector_hints_from_shell_maps,
-    merge_collinear_connectors,
-)
 from shellforgepy.construct.construct_utils import (
     compute_triangle_normal,
     fibonacci_sphere,
@@ -18,14 +11,19 @@ from shellforgepy.construct.construct_utils import (
     normalize_edge,
     triangle_edges,
 )
-from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
-    PartitionableSpheroidTriangleMesh,
-)
-from shellforgepy.shells.region_edge_feature import RegionEdgeFeature
 from shellforgepy.geometry.spherical_tools import (
     cartesian_to_spherical_jackson,
     rotation_matrix_from_vectors,
 )
+from shellforgepy.shells.connector_hint import ConnectorHint
+from shellforgepy.shells.connector_utils import (
+    compute_connector_hints_from_shell_maps,
+    merge_collinear_connectors,
+)
+from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
+    PartitionableSpheroidTriangleMesh,
+)
+from shellforgepy.shells.region_edge_feature import RegionEdgeFeature
 
 _logger = logging.getLogger(__name__)
 

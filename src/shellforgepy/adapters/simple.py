@@ -11,8 +11,11 @@ create_solid_from_traditional_face_vertex_maps = (
 )
 create_basic_cone = adapter.create_basic_cone
 create_text_object = adapter.create_text_object
-directed_cylinder_at = adapter.directed_cylinder_at
 fuse_parts = adapter.fuse_parts
+cut_parts = adapter.cut_parts
+create_extruded_polygon = adapter.create_extruded_polygon
+get_volume = adapter.get_volume
+
 get_bounding_box = adapter.get_bounding_box
 translate_part = adapter.translate_part
 rotate_part = adapter.rotate_part
@@ -26,11 +29,13 @@ __all__ = [
     "create_solid_from_traditional_face_vertex_maps",
     "create_basic_cone",
     "create_text_object",
-    "directed_cylinder_at",
     "get_bounding_box",
     "fuse_parts",
+    "cut_parts",
     "translate_part",
     "rotate_part",
     "export_solid_to_stl",
     "copy_part",
+    "create_extruded_polygon",
+    "get_volume",
 ]

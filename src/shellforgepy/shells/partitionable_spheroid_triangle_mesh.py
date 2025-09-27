@@ -1,13 +1,12 @@
 import copy
 import logging
-from collections import Counter, defaultdict, deque
+from collections import defaultdict, deque
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.spatial import ConvexHull
 from shellforgepy.construct.construct_utils import (
     CylinderSpec,
-    compute_area,
-    compute_barycentric_coords,
     intersect_edge_with_cylinder,
     normalize,
     normalize_edge,
@@ -20,7 +19,6 @@ from shellforgepy.geometry.spherical_tools import (
     cartesian_to_spherical_jackson,
     spherical_to_cartesian_jackson,
 )
-from scipy.spatial import ConvexHull
 
 _logger = logging.getLogger(__name__)
 AREA_FRACTION_LIMIT = 1e-6

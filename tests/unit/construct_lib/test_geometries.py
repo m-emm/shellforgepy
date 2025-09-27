@@ -1,5 +1,5 @@
 import numpy as np
-from shellforgepy.geometries import (
+from shellforgepy.geometry.mesh_builders import (
     create_cube_geometry,
     create_dodecahedron_geometry,
     create_fibonacci_sphere_geometry,

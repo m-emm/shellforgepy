@@ -1,9 +1,7 @@
-import heapq
 import math
 from typing import Optional
 
 import numpy as np
-from shellforgepy.shells.connector_utils import transform_connector_hint
 from shellforgepy.construct.construct_utils import (
     compute_lay_flat_transform,
     fibonacci_sphere,
@@ -11,12 +9,13 @@ from shellforgepy.construct.construct_utils import (
     normalize,
     triangle_area,
 )
-from shellforgepy.shells.mesh_partition import MeshPartition
-from shellforgepy.shells.region_edge_feature import RegionEdgeFeature
 from shellforgepy.geometry.spherical_tools import (
     ray_triangle_intersect,
     rotation_matrix_from_vectors,
 )
+from shellforgepy.shells.connector_utils import transform_connector_hint
+from shellforgepy.shells.mesh_partition import MeshPartition
+from shellforgepy.shells.region_edge_feature import RegionEdgeFeature
 
 
 class TransformedRegionView:

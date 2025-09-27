@@ -9,9 +9,10 @@ from shellforgepy.construct.construct_utils import (
     normalize,
     triangle_area,
 )
-from shellforgepy.geometries import (
+from shellforgepy.geometry.mesh_builders import (
     create_cube_geometry,
     create_dodecahedron_geometry,
+    create_icosahedron_geometry,
 )
 from shellforgepy.shells.mesh_partition import MeshPartition
 from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (

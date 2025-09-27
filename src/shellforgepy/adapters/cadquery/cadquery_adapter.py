@@ -1,10 +1,7 @@
-import math
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional
 
 import cadquery as cq
 import numpy as np
-
-from shellforgepy.construct.alignment import Alignment
 
 
 def _as_cq_vector(value) -> cq.Vector:
@@ -276,73 +273,6 @@ def get_vertex_points(obj) -> list:
     return points
 
 
-def translate(x, y, z):
-    """
-    Create a translation function that can be applied to CadQuery objects.
-
-    Args:
-        x, y, z: Translation distances along respective axes
-
-    Returns:
-        A function that applies the translation to a CadQuery object
-    """
-
-    def retval(body):
-        if isinstance(body, (list, tuple)):
-            return [retval(b) for b in body]
-
-        if isinstance(body, cq.Workplane):
-            return body.translate(cq.Vector(x, y, z))
-        elif isinstance(body, cq.Shape):
-            return body.translate(cq.Vector(x, y, z))
-        else:
-            raise TypeError(f"Unsupported type for translation: {type(body)}")
-
-    return retval
-
-
-def rotate(
-    angle,
-    center=None,
-    axis=None,
-):
-    """
-    Create a rotation function that can be applied to CadQuery objects.
-
-    Args:
-        angle: Rotation angle in degrees
-        center: Center point of rotation (x, y, z). Defaults to origin.
-        axis: Rotation axis (x, y, z). Defaults to Z-axis.
-
-    Returns:
-        A function that applies the rotation to a CadQuery object
-    """
-    if center is None:
-        center = (0, 0, 0)
-
-    if axis is None:
-        axis = (0, 0, 1)
-
-    def retval(body):
-        if isinstance(body, list):
-            return [retval(b) for b in body]
-
-        if isinstance(body, cq.Workplane):
-            return body.rotate(
-                axisStartPoint=cq.Vector(*center),
-                axisEndPoint=cq.Vector(*center) + cq.Vector(*axis),
-                angleDegrees=angle,
-            )
-        elif isinstance(body, cq.Shape):
-            axis_start = cq.Vector(*center)
-            axis_end = axis_start + cq.Vector(*axis)
-            return body.rotate(axis_start, axis_end, angle)
-        else:
-            raise TypeError(f"Unsupported type for rotation: {type(body)}")
-
-    return retval
-
-
 def _normalize_vertex_map(vertexes):
     """Normalize vertex data to a dictionary of int -> (x, y, z)."""
     if isinstance(vertexes, dict):
@@ -439,50 +369,6 @@ def create_solid_from_traditional_face_vertex_maps(
         raise ValueError("Failed to build solid from shell")
 
     return solid
-
-
-def directed_cylinder_at(
-    base_point,
-    direction,
-    radius,
-    height,
-):
-    """Create a cylinder oriented along ``direction`` starting at ``base_point``.
-
-    Args:
-        base_point: XYZ coordinates of the cylinder's base centre in millimetres.
-        direction: Vector indicating the extrusion direction. Must be non-zero.
-        radius: Cylinder radius.
-        height: Cylinder height measured along ``direction``.
-
-    Returns:
-        ``cadquery.Solid`` positioned and oriented as requested.
-    """
-
-    direction_vec = _as_cq_vector(direction)
-    if direction_vec.Length <= 1e-9:
-        raise ValueError("Direction vector cannot be zero-length")
-
-    base_shape = cq.Workplane("XY").circle(radius).extrude(height).val()
-
-    default_dir = cq.Vector(0.0, 0.0, 1.0)
-    target_dir = direction_vec.normalized()
-
-    axis = default_dir.cross(target_dir)
-    if axis.Length > 1e-9:
-        angle_deg = math.degrees(default_dir.getAngle(target_dir))
-        axis_start = cq.Vector(0.0, 0.0, 0.0)
-        axis_end = axis_start + axis.normalized()
-        base_shape = base_shape.rotate(axis_start, axis_end, angle_deg)
-    else:
-        dot = default_dir.dot(target_dir)
-        if dot < 0:
-            axis_start = cq.Vector(0.0, 0.0, 0.0)
-            axis_end = axis_start + cq.Vector(1.0, 0.0, 0.0)
-            base_shape = base_shape.rotate(axis_start, axis_end, 180.0)
-
-    base_shape = base_shape.translate(_as_cq_vector(base_point))
-    return base_shape
 
 
 def create_text_object(
@@ -637,105 +523,26 @@ def fuse_parts(part1, part2):
     return part1.fuse(part2)
 
 
-def align(part, to, alignment, axes=None):
-    """Align a part to another part according to alignment."""
-    return align_translation(part, to, alignment, axes=axes)(part.copy())
+def cut_parts(part1, part2):
+    """Cut part2 from part1."""
+    return part1.cut(part2)
 
 
-def align_translation(
-    part,
-    to,
-    alignment: Alignment,
-    axes: Optional[List[int]] = None,
-):
-    """
-    Create a translation function that aligns one object to another.
-
-    Args:
-        part: The object to be aligned
-        to: The target object to align to
-        alignment: The type of alignment to perform
-        axes: Optional list of axes to constrain alignment to (0=X, 1=Y, 2=Z)
-
-    Returns:
-        A function that applies the alignment translation
-    """
-    # Extract the solid from workplane if needed
-    part_obj = part.val() if hasattr(part, "val") else part
-    to_obj = to.val() if hasattr(to, "val") else to
-
-    bb = part_obj.BoundingBox()
-    to_bb = to_obj.BoundingBox()
-
-    part_width = bb.xlen
-    part_length = bb.ylen
-    part_height = bb.zlen
-
-    def project_to_axes(x: float, y: float, z: float) -> Tuple[float, float, float]:
-        if axes is None:
-            return x, y, z
-
-        return (x if 0 in axes else 0, y if 1 in axes else 0, z if 2 in axes else 0)
-
-    if alignment == Alignment.LEFT:
-        return translate(*project_to_axes(to_bb.xmin - bb.xmin, 0, 0))
-    elif alignment == Alignment.RIGHT:
-        return translate(*project_to_axes(to_bb.xmax - bb.xmax, 0, 0))
-    elif alignment == Alignment.BACK:
-        return translate(*project_to_axes(0, to_bb.ymax - bb.ymax, 0))
-    elif alignment == Alignment.FRONT:
-        return translate(*project_to_axes(0, to_bb.ymin - bb.ymin, 0))
-    elif alignment == Alignment.TOP:
-        return translate(*project_to_axes(0, 0, to_bb.zmax - bb.zmax))
-    elif alignment == Alignment.BOTTOM:
-        return translate(*project_to_axes(0, 0, to_bb.zmin - bb.zmin))
-    elif alignment == Alignment.CENTER:
-        return translate(
-            *project_to_axes(
-                (to_bb.xmin + to_bb.xmax) / 2 - (bb.xmin + bb.xmax) / 2,
-                (to_bb.ymin + to_bb.ymax) / 2 - (bb.ymin + bb.ymax) / 2,
-                (to_bb.zmin + to_bb.zmax) / 2 - (bb.zmin + bb.zmax) / 2,
-            )
-        )
-    elif alignment == Alignment.STACK_LEFT:
-        return translate(*project_to_axes(to_bb.xmin - bb.xmin - part_width, 0, 0))
-    elif alignment == Alignment.STACK_RIGHT:
-        return translate(*project_to_axes(to_bb.xmax - bb.xmax + part_width, 0, 0))
-    elif alignment == Alignment.STACK_BACK:
-        return translate(*project_to_axes(0, to_bb.ymax - bb.ymax + part_length, 0))
-    elif alignment == Alignment.STACK_FRONT:
-        return translate(*project_to_axes(0, to_bb.ymin - bb.ymin - part_length, 0))
-    elif alignment == Alignment.STACK_TOP:
-        return translate(*project_to_axes(0, 0, to_bb.zmax - bb.zmax + part_height))
-    elif alignment == Alignment.STACK_BOTTOM:
-        return translate(*project_to_axes(0, 0, to_bb.zmin - bb.zmin - part_height))
-    else:
-        raise ValueError(f"Unknown alignment: {alignment}")
+def create_hex_prism(diameter, height, origin=(0, 0, 0)):
+    """Create a hexagonal prism."""
+    hex_prism = cq.Workplane("XY").polygon(6, diameter).extrude(height).val()
+    return translate_part(hex_prism, origin)
 
 
-def align(
-    part,
-    to,
-    alignment: Alignment,
-    axes: Optional[List[int]] = None,
-) -> Union[cq.Workplane, cq.Shape]:
-    """
-    Align one object to another and return the aligned copy.
+def create_extruded_polygon(points, thickness):
+    """Create an extruded polygon from a list of (x, y) coordinates."""
+    # Convert to CadQuery points and create wire
+    cq_points = [(x, y) for x, y in points]
+    workplane = cq.Workplane("XY")
+    wire = workplane.polyline(cq_points).close()
+    return wire.extrude(thickness).val()
 
-    Args:
-        part: The object to be aligned (will be copied)
-        to: The target object to align to
-        alignment: The type of alignment to perform
-        axes: Optional list of axes to constrain alignment to (0=X, 1=Y, 2=Z)
 
-    Returns:
-        A copy of the part object aligned to the target
-    """
-    if isinstance(part, cq.Workplane):
-        part_copy = part
-    elif isinstance(part, cq.Shape):
-        part_copy = part
-    else:
-        raise TypeError(f"Unsupported type for alignment: {type(part)}")
-
-    return align_translation(part, to, alignment, axes=axes)(part_copy)
+def get_volume(solid):
+    """Get the volume of a CadQuery solid."""
+    return solid.Volume()

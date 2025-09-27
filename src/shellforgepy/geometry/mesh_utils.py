@@ -5,7 +5,6 @@ Minimal binary STL writer from plain Python lists.
 - triangles: list[tuple[int, int, int]]  (indices into vertices)
 """
 
-from heapq import merge
 from math import sqrt
 from struct import pack
 from typing import Any, Dict, Iterable, List, Sequence, Tuple

@@ -30,7 +30,8 @@ from shellforgepy.simple import (
     translate,
     LeaderFollowersCuttersPart,
     PartList,
-    directed_cylinder_at
+    directed_cylinder_at,
+    create_solid_from_traditional_face_vertex_maps
 )
 
 

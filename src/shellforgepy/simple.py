@@ -14,6 +14,8 @@ Usage:
     # - Part arrangement and export functions
 """
 
+from shellforgepy.shells.transformed_region_view import TransformedRegionView
+
 # Core alignment functionality
 from .construct.alignment import ALIGNMENT_SIGNS, Alignment
 from .construct.alignment_operations import (
@@ -25,6 +27,19 @@ from .construct.alignment_operations import (
     stack_alignment_of,
     translate,
 )
+from .construct.construct_utils import fibonacci_sphere, normalize
+from .geometry.face_point_cloud import face_point_cloud
+from .geometry.higher_order_solids import (
+    create_hex_prism,
+    create_trapezoid,
+    directed_cylinder_at,
+)
+from .geometry.spherical_tools import (
+    coordinate_system_transform,
+    coordinate_system_transform_to_matrix,
+    coordinate_system_transformation_function,
+)
+from .geometry.treapezoidal_snake_geometry import create_trapezoidal_snake_geometry
 
 # Part arrangement and export functionality
 from .produce.arrange_and_export import (
@@ -36,24 +51,10 @@ from .produce.arrange_and_export import (
     arrange_and_export_parts,
     export_solid_to_stl,
 )
-
-from .construct.construct_utils import fibonacci_sphere, normalize
-
-from .geometry.face_point_cloud import face_point_cloud
 from .shells.mesh_partition import MeshPartition
 from .shells.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
 )
-from .geometry.spherical_tools import (
-    coordinate_system_transform,
-    coordinate_system_transform_to_matrix,
-    coordinate_system_transformation_function,
-)
-from .geometry.treapezoidal_snake_geometry import create_trapezoidal_snake_geometry
-
-
-from shellforgepy.shells.transformed_region_view import TransformedRegionView
-
 
 # Note: Materialized connectors functionality is not yet implemented
 
@@ -72,7 +73,6 @@ def _load_cad_functions():
             "create_basic_sphere": adapter.create_basic_sphere,
             "create_solid_from_traditional_face_vertex_maps": adapter.create_solid_from_traditional_face_vertex_maps,
             "create_text_object": adapter.create_text_object,
-            "directed_cylinder_at": adapter.directed_cylinder_at,
             "get_bounding_box": adapter.get_bounding_box,
             "get_bounding_box_center": adapter.get_bounding_box_center,
             "get_vertex_coordinates": adapter.get_vertex_coordinates,
@@ -117,7 +117,7 @@ create_solid_from_traditional_face_vertex_maps = _cad_functions[
     "create_solid_from_traditional_face_vertex_maps"
 ]
 create_text_object = _cad_functions["create_text_object"]
-directed_cylinder_at = _cad_functions["directed_cylinder_at"]
+
 get_bounding_box = _cad_functions["get_bounding_box"]
 get_bounding_box_center = _cad_functions["get_bounding_box_center"]
 get_vertex_coordinates = _cad_functions["get_vertex_coordinates"]
@@ -164,5 +164,7 @@ __all__ = [
     "coordinate_system_transform_to_matrix",
     "coordinate_system_transformation_function",
     "TransformedRegionView",
-    "create_trapezoidal_snake_geometry"
+    "create_trapezoidal_snake_geometry",
+    "create_hex_prism",
+    "create_trapezoid",
 ]

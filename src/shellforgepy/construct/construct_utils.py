@@ -1,11 +1,10 @@
 import math
-from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
-from shellforgepy.geometry.spherical_tools import rotation_matrix_from_vectors
 from scipy.optimize import minimize_scalar
+from shellforgepy.geometry.spherical_tools import rotation_matrix_from_vectors
 
 
 def is_valid_rigid_transform(T: np.ndarray, tol=1e-6) -> bool:
@@ -62,46 +61,6 @@ def are_normals_similar(n1: np.ndarray, n2: np.ndarray, tol: float = 1e-3) -> bo
     n1 = normalize(n1)
     n2 = normalize(n2)
     return np.dot(n1, n2) > 1.0 - tol
-
-
-def circumcircle_center_and_radius(v0, v1, v2):
-    """
-    Compute the center and radius of the circumscribed circle of a triangle in 3D.
-
-    Parameters:
-        v0, v1, v2: np.ndarray of shape (3,)
-            The three 3D points defining the triangle.
-
-    Returns:
-        center: np.ndarray of shape (3,)
-            The center of the circumscribed circle.
-        radius: float
-            The radius of the circumscribed circle.
-    """
-    # Normal of the triangle
-    normal = compute_triangle_normal(v0, v1, v2)
-    normal_norm_sq = np.dot(normal, normal)
-    if normal_norm_sq == 0:
-        raise ValueError(
-            "The three points do not form a valid triangle; they are collinear."
-        )
-
-    normal = normalize(normal)
-
-    # Squared lengths
-    a_len_sq = np.dot(a, a)
-    b_len_sq = np.dot(b, b)
-
-    # Compute circumcenter using vector formulation
-    cross_ab = np.cross(a, b)
-    alpha = np.cross(cross_ab, b) * a_len_sq
-    beta = np.cross(a, cross_ab) * b_len_sq
-    center = v0 + (alpha + beta) / (2 * normal_norm_sq)
-
-    # Radius is distance from center to any vertex
-    radius = np.linalg.norm(center - v0)
-
-    return center, radius
 
 
 def fibonacci_sphere_spherical_coordinates(samples=100):

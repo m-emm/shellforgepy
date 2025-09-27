@@ -15,7 +15,6 @@ from shellforgepy.construct.construct_utils import fibonacci_sphere
 from shellforgepy.geometry.spherical_tools import (
     cartesian_to_spherical_jackson,
     filter_outside_spherical_cap,
-    spherical_to_cartesian_jackson,
 )
 
 border_extension = 0.1
