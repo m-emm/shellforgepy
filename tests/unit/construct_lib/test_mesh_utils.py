@@ -26,8 +26,6 @@ from shellforgepy.shells.transformed_region_view import TransformedRegionView
 _logger = logging.getLogger(__name__)
 
 
-# Use only plain pytest-compatible test functions, no unittest framework, no classes, etc.
-
 import os
 import struct
 import tempfile
@@ -803,3 +801,185 @@ def test_validate_and_fix_mesh_segment_with_twist():
     # Twist should be detected
     assert twist_info["is_twisted"]
     assert twist_info["best_rotation"] == 2
+
+
+def test_create_cube_geometry():
+    """Test create_cube_geometry function."""
+    verts, faces = create_cube_geometry(radius=1.0)
+
+    # Should have 8 vertices and 12 triangular faces
+    assert verts.shape == (8, 3)
+    assert faces.shape == (12, 3)
+
+    # All vertices should be on sphere of radius 1.0
+    distances = np.linalg.norm(verts, axis=1)
+    np.testing.assert_allclose(distances, 1.0, rtol=1e-10)
+
+    # Check that faces use valid vertex indices
+    assert np.all(faces >= 0)
+    assert np.all(faces < 8)
+
+    # Test custom radius
+    verts_r2, faces_r2 = create_cube_geometry(radius=2.0)
+    distances_r2 = np.linalg.norm(verts_r2, axis=1)
+    np.testing.assert_allclose(distances_r2, 2.0, rtol=1e-10)
+
+    # Shape should remain the same
+    assert verts_r2.shape == (8, 3)
+    assert faces_r2.shape == (12, 3)
+
+
+def test_create_dodecahedron_geometry():
+    """Test create_dodecahedron_geometry function."""
+    verts, faces = create_dodecahedron_geometry(radius=1.0)
+
+    # Should have 20 vertices and 12 pentagonal faces
+    assert verts.shape == (20, 3)
+    assert faces.shape == (12, 5)
+
+    # All vertices should be on sphere of radius 1.0
+    distances = np.linalg.norm(verts, axis=1)
+    np.testing.assert_allclose(distances, 1.0, rtol=1e-10)
+
+    # Check that faces use valid vertex indices
+    assert np.all(faces >= 0)
+    assert np.all(faces < 20)
+
+    # Test custom radius
+    verts_r3, faces_r3 = create_dodecahedron_geometry(radius=3.0)
+    distances_r3 = np.linalg.norm(verts_r3, axis=1)
+    np.testing.assert_allclose(distances_r3, 3.0, rtol=1e-10)
+
+
+def test_create_tetrahedron_geometry():
+    """Test create_tetrahedron_geometry function."""
+    verts, faces = create_tetrahedron_geometry(radius=1.0)
+
+    # Should have 4 vertices and 4 triangular faces
+    assert verts.shape == (4, 3)
+    assert faces.shape == (4, 3)
+
+    # All vertices should be on sphere of radius 1.0
+    distances = np.linalg.norm(verts, axis=1)
+    np.testing.assert_allclose(distances, 1.0, rtol=1e-10)
+
+    # Check that faces use valid vertex indices
+    assert np.all(faces >= 0)
+    assert np.all(faces < 4)
+
+    # Test custom radius
+    verts_r05, faces_r05 = create_tetrahedron_geometry(radius=0.5)
+    distances_r05 = np.linalg.norm(verts_r05, axis=1)
+    np.testing.assert_allclose(distances_r05, 0.5, rtol=1e-10)
+
+
+def test_create_fibonacci_sphere_geometry():
+    """Test create_fibonacci_sphere_geometry function."""
+    # Test with default parameters
+    verts, faces = create_fibonacci_sphere_geometry(radius=1.0, samples=100)
+
+    # Should have 100 vertices (sample count)
+    assert verts.shape[0] == 100
+    assert verts.shape[1] == 3
+
+    # All vertices should be on sphere of radius 1.0
+    distances = np.linalg.norm(verts, axis=1)
+    np.testing.assert_allclose(distances, 1.0, rtol=1e-10)
+
+    # Should have triangular faces
+    assert faces.shape[1] == 3
+    assert faces.shape[0] > 0  # Should have some faces from convex hull
+
+    # Check that faces use valid vertex indices
+    assert np.all(faces >= 0)
+    assert np.all(faces < 100)
+
+    # Test with fewer samples
+    verts_small, faces_small = create_fibonacci_sphere_geometry(radius=2.0, samples=20)
+    assert verts_small.shape == (20, 3)
+    distances_small = np.linalg.norm(verts_small, axis=1)
+    np.testing.assert_allclose(distances_small, 2.0, rtol=1e-10)
+
+    # Test with different radius
+    verts_r5, faces_r5 = create_fibonacci_sphere_geometry(radius=5.0, samples=50)
+    distances_r5 = np.linalg.norm(verts_r5, axis=1)
+    np.testing.assert_allclose(distances_r5, 5.0, rtol=1e-10)
+
+
+def test_partitionable_spheroid_triangle_mesh_basic():
+    """Test basic PartitionableSpheroidTriangleMesh functionality."""
+    # Create a simple tetrahedron mesh
+    verts, faces = create_tetrahedron_geometry(radius=1.0)
+
+    # Convert to list format expected by the class
+    vertices_list = [list(v) for v in verts]
+    faces_list = [list(f) for f in faces]
+    vertex_labels = [f"v{i}" for i in range(len(vertices_list))]
+
+    # Create mesh instance
+    mesh = PartitionableSpheroidTriangleMesh(
+        vertices=vertices_list, faces=faces_list, vertex_labels=vertex_labels
+    )
+
+    # Test basic properties
+    assert len(mesh.vertices) == 4
+    assert len(mesh.faces) == 4
+    assert len(mesh.vertex_labels) == 4
+
+    # Test that vertices are preserved
+    for i, vertex in enumerate(mesh.vertices):
+        np.testing.assert_allclose(vertex, vertices_list[i], rtol=1e-10)
+
+
+def test_partitionable_spheroid_triangle_mesh_from_point_cloud():
+    """Test PartitionableSpheroidTriangleMesh creation from point cloud."""
+    # Create a simple cube point cloud
+    verts, _ = create_cube_geometry(radius=1.0)
+
+    # Convert to expected format
+    points = [list(v) for v in verts]
+
+    # Create mesh from point cloud
+    mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
+
+    # Should have 8 vertices
+    assert len(mesh.vertices) == 8
+    assert len(mesh.vertex_labels) == 8
+
+    # Should have some triangles from convex hull
+    assert len(mesh.faces) > 0
+
+    # All vertices should be preserved
+    mesh_verts = np.array(mesh.vertices)
+    orig_verts = np.array(points)
+
+    # Should contain all original points (order may differ)
+    for orig_vert in orig_verts:
+        distances = np.linalg.norm(mesh_verts - orig_vert, axis=1)
+        assert np.min(distances) < 1e-10  # At least one vertex should match closely
+
+
+def test_partitionable_spheroid_triangle_mesh_with_fibonacci_sphere():
+    """Test PartitionableSpheroidTriangleMesh with fibonacci sphere geometry."""
+    # Create fibonacci sphere
+    verts, faces = create_fibonacci_sphere_geometry(radius=2.0, samples=50)
+
+    # Convert to expected format
+    vertices_list = [list(v) for v in verts]
+    faces_list = [list(f) for f in faces]
+    vertex_labels = [f"fib_{i}" for i in range(len(vertices_list))]
+
+    # Create mesh
+    mesh = PartitionableSpheroidTriangleMesh(
+        vertices=vertices_list, faces=faces_list, vertex_labels=vertex_labels
+    )
+
+    # Verify properties
+    assert len(mesh.vertices) == 50
+    assert len(mesh.faces) == len(faces_list)
+    assert len(mesh.vertex_labels) == 50
+
+    # All vertices should maintain their distance from origin
+    for vertex in mesh.vertices:
+        distance = np.linalg.norm(vertex)
+        assert abs(distance - 2.0) < 1e-10
