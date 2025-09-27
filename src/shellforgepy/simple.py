@@ -51,6 +51,7 @@ from .produce.arrange_and_export import (
     arrange_and_export_parts,
     export_solid_to_stl,
 )
+from .shells.materialized_connectors import create_screw_connector_normal
 from .shells.mesh_partition import MeshPartition
 from .shells.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
@@ -77,6 +78,7 @@ def _load_cad_functions():
             "get_bounding_box_center": adapter.get_bounding_box_center,
             "get_vertex_coordinates": adapter.get_vertex_coordinates,
             "get_z_min": adapter.get_z_min,
+            "create_extruded_polygon": adapter.create_extruded_polygon,
         }
     except ImportError as e:
         # Return stub functions that provide helpful error messages
@@ -102,6 +104,7 @@ def _load_cad_functions():
             "create_text_object": _missing_cad_error("create_text_object"),
             "directed_cylinder_at": _missing_cad_error("directed_cylinder_at"),
             "get_bounding_box": _missing_cad_error("get_bounding_box"),
+            "create_extruded_polygon": _missing_cad_error("create_extruded_polygon"),
         }
 
 
@@ -122,6 +125,7 @@ get_bounding_box = _cad_functions["get_bounding_box"]
 get_bounding_box_center = _cad_functions["get_bounding_box_center"]
 get_vertex_coordinates = _cad_functions["get_vertex_coordinates"]
 get_z_min = _cad_functions.get("get_z_min")
+create_extruded_polygon = _cad_functions["create_extruded_polygon"]
 
 # Define what gets exported with "from simple import *"
 __all__ = [
@@ -167,4 +171,6 @@ __all__ = [
     "create_trapezoidal_snake_geometry",
     "create_hex_prism",
     "create_trapezoid",
+    "create_screw_connector_normal",
+    "create_extruded_polygon",
 ]
