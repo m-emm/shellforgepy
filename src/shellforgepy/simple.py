@@ -59,10 +59,12 @@ def _load_cad_functions():
         }
     except ImportError as e:
         # Return stub functions that provide helpful error messages
+        error_message = str(e)  # Capture the error message for use in nested functions
+
         def _missing_cad_error(func_name):
             def stub(*args, **kwargs):
                 raise ImportError(
-                    f"Cannot use {func_name}: {str(e)}\n"
+                    f"Cannot use {func_name}: {error_message}\n"
                     "Please ensure either CadQuery or FreeCAD is properly installed."
                 )
 

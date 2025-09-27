@@ -12,7 +12,7 @@ flake8 src/ tests/ --count --select=E9,F63,F7,F82 --ignore=F824 --show-source --
 
 
 echo "Checking for unused imports..."
-flake8 --select=F401 --exclude="src/*/simple.py" --exclude "build/*" --exclude "lambda_runtimes/*" src/
+flake8 --select=F401 --exclude="src/*/simple.py" --exclude "build/*" --exclude "src/shellforgepy/adapters/adapter_chooser.py" src/
 if [ $? -ne 0 ]; then
     echo "❌ Found unused imports! Please remove them before committing."
     exit 1

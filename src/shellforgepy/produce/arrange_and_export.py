@@ -5,19 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import (
-    Any,
-    Dict,
-    Iterable,
-    Iterator,
-    List,
-    Mapping,
-    MutableMapping,
-    Optional,
-    Sequence,
-    Tuple,
-    Union,
-)
+from typing import Any, Mapping, Optional, Tuple
 
 # Import the adapter to delegate CAD-specific operations
 from ..adapters.adapter_chooser import get_cad_adapter
@@ -26,7 +14,7 @@ from ..adapters.adapter_chooser import get_cad_adapter
 CadQueryObject = Any
 
 
-def _to_shape(obj: Any) -> Any:
+def _to_shape(obj):
     """Convert a CAD object to a shape using the appropriate adapter."""
     adapter = get_cad_adapter()
     # For now, assume the adapter can handle the object directly
@@ -34,7 +22,7 @@ def _to_shape(obj: Any) -> Any:
     return obj
 
 
-def _as_vector(vector: Union[Sequence[float], Any]) -> Any:
+def _as_vector(vector):
     """Convert a vector to the appropriate CAD vector type using the adapter."""
     if hasattr(vector, "__len__") and len(vector) == 3:
         return tuple(float(v) for v in vector)
@@ -45,9 +33,9 @@ def _as_vector(vector: Union[Sequence[float], Any]) -> Any:
 class PartCollector:
     """Accumulates CAD parts and fuses them into a single shape."""
 
-    part: Optional[Any] = None
+    part = None
 
-    def fuse(self, other: Any) -> Any:
+    def fuse(self, other):
         """Fuse this part with another part using the appropriate CAD adapter."""
         adapter = get_cad_adapter()
         if self.part is None:
@@ -77,12 +65,12 @@ class NamedPart:
     name: str
     part: Any  # CAD object type depends on the adapter
 
-    def copy(self) -> "NamedPart":
+    def copy(self):
         """Create a copy of this named part."""
         adapter = get_cad_adapter()
         return NamedPart(self.name, adapter.copy_part(self.part))
 
-    def translate(self, vector: Sequence[float]) -> "NamedPart":
+    def translate(self, vector):
         """Translate this part by the given vector."""
         adapter = get_cad_adapter()
         translated_part = adapter.translate_part(self.part, vector)
@@ -90,10 +78,10 @@ class NamedPart:
 
     def rotate(
         self,
-        angle: float,
-        center: Sequence[float] = (0.0, 0.0, 0.0),
-        axis: Sequence[float] = (0.0, 0.0, 1.0),
-    ) -> "NamedPart":
+        angle,
+        center=(0.0, 0.0, 0.0),
+        axis=(0.0, 0.0, 1.0),
+    ):
         """Rotate this part around the given axis."""
         adapter = get_cad_adapter()
         rotated_part = adapter.rotate_part(self.part, angle, center, axis)
@@ -101,14 +89,12 @@ class NamedPart:
 
 
 def _normalize_named_parts(
-    parts: Optional[
-        Sequence[Union[NamedPart, Mapping[str, object], Tuple[str, CadQueryObject]]]
-    ],
-) -> List[NamedPart]:
+    parts,
+):
     if not parts:
         return []
 
-    normalized: List[NamedPart] = []
+    normalized = []
     for idx, item in enumerate(parts):
         if isinstance(item, NamedPart):
             normalized.append(item)
@@ -131,19 +117,19 @@ def _normalize_named_parts(
 class PartList:
     """Container for managing named CadQuery parts."""
 
-    def __init__(self) -> None:
-        self.parts: List[PartInfo] = []
+    def __init__(self):
+        self.parts = []
 
     def add(
         self,
-        part: Union[CadQueryObject, "LeaderFollowersCuttersPart"],
-        name: str,
+        part,
+        name,
         *,
-        flip: bool = False,
-        skip_in_production: bool = False,
-        prod_rotation_angle: Optional[float] = None,
-        prod_rotation_axis: Optional[Sequence[float]] = None,
-    ) -> None:
+        flip=False,
+        skip_in_production=False,
+        prod_rotation_angle=None,
+        prod_rotation_axis=None,
+    ):
         if isinstance(part, LeaderFollowersCuttersPart):
             shape = part.get_leader_as_part()
         else:
@@ -152,7 +138,7 @@ class PartList:
         if any(existing.name == name for existing in self.parts):
             raise ValueError(f"Part with name '{name}' already exists")
 
-        axis_tuple: Optional[Tuple[float, float, float]] = None
+        axis_tuple = None
         if prod_rotation_axis is not None:
             if len(prod_rotation_axis) != 3:
                 raise ValueError("prod_rotation_axis must contain exactly three values")
@@ -169,7 +155,7 @@ class PartList:
             )
         )
 
-    def as_list(self) -> List[Dict[str, object]]:
+    def as_list(self):
         return [
             {
                 "name": info.name,
@@ -186,13 +172,13 @@ class PartList:
             for info in self.parts
         ]
 
-    def __iter__(self) -> Iterator[PartInfo]:
+    def __iter__(self):
         return iter(self.parts)
 
-    def __len__(self) -> int:  # pragma: no cover - trivial
+    def __len__(self):  # pragma: no cover - trivial
         return len(self.parts)
 
-    def __getitem__(self, key: int) -> PartInfo:  # pragma: no cover - trivial
+    def __getitem__(self, key):  # pragma: no cover - trivial
         return self.parts[key]
 
 
@@ -201,28 +187,20 @@ class LeaderFollowersCuttersPart:
 
     def __init__(
         self,
-        leader: CadQueryObject,
-        followers: Optional[
-            Sequence[Union[NamedPart, Mapping[str, object], Tuple[str, CadQueryObject]]]
-        ] = None,
-        cutters: Optional[
-            Sequence[Union[NamedPart, Mapping[str, object], Tuple[str, CadQueryObject]]]
-        ] = None,
-        non_production_parts: Optional[
-            Sequence[Union[NamedPart, Mapping[str, object], Tuple[str, CadQueryObject]]]
-        ] = None,
-    ) -> None:
-        self.leader: Any = _to_shape(leader)
-        self.followers: List[NamedPart] = _normalize_named_parts(followers)
-        self.cutters: List[NamedPart] = _normalize_named_parts(cutters)
-        self.non_production_parts: List[NamedPart] = _normalize_named_parts(
-            non_production_parts
-        )
+        leader,
+        followers=None,
+        cutters=None,
+        non_production_parts=None,
+    ):
+        self.leader = _to_shape(leader)
+        self.followers = _normalize_named_parts(followers)
+        self.cutters = _normalize_named_parts(cutters)
+        self.non_production_parts = _normalize_named_parts(non_production_parts)
 
-    def get_leader_as_part(self) -> Any:
+    def get_leader_as_part(self):
         return self.leader
 
-    def get_non_production_parts_fused(self) -> Optional[Any]:
+    def get_non_production_parts_fused(self):
         if not self.non_production_parts:
             return None
         collector = PartCollector()
@@ -230,7 +208,7 @@ class LeaderFollowersCuttersPart:
             collector.fuse(part.part)
         return collector.part
 
-    def leaders_followers_fused(self) -> Any:
+    def leaders_followers_fused(self):
         collector = PartCollector()
         collector.fuse(self.leader)
         for follower in self.followers:
@@ -238,7 +216,7 @@ class LeaderFollowersCuttersPart:
         assert collector.part is not None
         return collector.part
 
-    def copy(self) -> "LeaderFollowersCuttersPart":
+    def copy(self):
         adapter = get_cad_adapter()
         return LeaderFollowersCuttersPart(
             adapter.copy_part(self.leader),
@@ -249,8 +227,8 @@ class LeaderFollowersCuttersPart:
 
     def fuse(
         self,
-        other: Union[CadQueryObject, "LeaderFollowersCuttersPart"],
-    ) -> "LeaderFollowersCuttersPart":
+        other,
+    ):
         adapter = get_cad_adapter()
         if isinstance(other, LeaderFollowersCuttersPart):
             new_leader = adapter.fuse_parts(self.leader, other.leader)
@@ -273,7 +251,7 @@ class LeaderFollowersCuttersPart:
             [n.copy() for n in self.non_production_parts],
         )
 
-    def translate(self, vector: Sequence[float]) -> "LeaderFollowersCuttersPart":
+    def translate(self, vector):
         adapter = get_cad_adapter()
         vec = _as_vector(vector)
         self.leader = adapter.translate_part(self.leader, vec)
@@ -286,10 +264,10 @@ class LeaderFollowersCuttersPart:
 
     def rotate(
         self,
-        angle: float,
-        center: Sequence[float] = (0.0, 0.0, 0.0),
-        axis: Sequence[float] = (0.0, 0.0, 1.0),
-    ) -> "LeaderFollowersCuttersPart":
+        angle,
+        center=(0.0, 0.0, 0.0),
+        axis=(0.0, 0.0, 1.0),
+    ):
         adapter = get_cad_adapter()
         center_vec = _as_vector(center)
         axis_vec = _as_vector(axis)
@@ -307,18 +285,18 @@ class LeaderFollowersCuttersPart:
         return self
 
     @property
-    def BoundBox(self) -> Any:
+    def BoundBox(self):
         adapter = get_cad_adapter()
         return adapter.get_bounding_box(self.leader)
 
 
 def export_solid_to_stl(
-    solid: Any,
-    destination: Union[str, Path],
+    solid,
+    destination,
     *,
-    tolerance: float = 0.1,
-    angular_tolerance: float = 0.1,
-) -> None:
+    tolerance=0.1,
+    angular_tolerance=0.1,
+):
     """Export a CAD solid to an STL file using the appropriate adapter."""
     adapter = get_cad_adapter()
     adapter.export_solid_to_stl(
@@ -329,18 +307,18 @@ def export_solid_to_stl(
     )
 
 
-def _safe_name(name: str) -> str:
+def _safe_name(name):
     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in name)
 
 
 def _arrange_parts_in_rows(
-    parts: Sequence[Any],
+    parts,
     *,
-    gap: float,
-    bed_width: Optional[float],
-) -> List[Any]:
+    gap,
+    bed_width,
+):
     adapter = get_cad_adapter()
-    arranged: List[Any] = []
+    arranged = []
     x_cursor = 0.0
     y_cursor = 0.0
     row_depth = 0.0
@@ -372,24 +350,24 @@ def _arrange_parts_in_rows(
 
 
 def arrange_and_export_parts(
-    parts: Union[Iterable[Mapping[str, object]], PartList],
-    prod_gap: float,
-    bed_with: float,
-    script_file: str,
-    export_directory: Optional[Union[str, Path]] = None,
+    parts,
+    prod_gap,
+    bed_with,
+    script_file,
+    export_directory=None,
     *,
-    prod: bool = False,
-    process_data: Optional[MutableMapping[str, object]] = None,
-    max_build_height: Optional[float] = None,
-) -> Path:
+    prod=False,
+    process_data=None,
+    max_build_height=None,
+):
     """Arrange named parts, export individual STLs, and a fused assembly."""
 
     if isinstance(parts, PartList):
-        parts_iterable: Iterable[Mapping[str, object]] = parts.as_list()
+        parts_iterable = parts.as_list()
     else:
         parts_iterable = parts
 
-    parts_list: List[Dict[str, object]] = [dict(item) for item in parts_iterable]
+    parts_list = [dict(item) for item in parts_iterable]
     if prod:
         parts_list = [p for p in parts_list if not p.get("skip_in_production", False)]
         print("Arranging for production")
@@ -398,8 +376,8 @@ def arrange_and_export_parts(
         raise ValueError("No parts provided for arrangement and export")
 
     adapter = get_cad_adapter()
-    shapes: List[Any] = []
-    names: List[str] = []
+    shapes = []
+    names = []
     for entry in parts_list:
         if "name" not in entry or "part" not in entry:
             raise KeyError("Each part mapping must include 'name' and 'part'")
