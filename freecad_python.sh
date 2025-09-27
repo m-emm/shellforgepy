@@ -44,7 +44,7 @@ export FREECAD_PYTHON_ARGS="$PYTHON_ARGS"
 
 # Run the FCMacro using the FreeCAD command line
 # Note: We use exit() to ensure clean shutdown
-echo "exit()" | /Applications/FreeCAD.app/Contents/Resources/bin/freecad -c "$SCRIPT_DIR/src/shellforgepy/adapters/freecad/freecad_python.FCMacro"
+echo "exit()" | /Applications/FreeCAD.app/Contents/Resources/bin/freecad -c "$SCRIPT_DIR/docker/freecad_python.FCMacro"
 
 echo "=================================="
 echo "FreeCAD Python session completed"

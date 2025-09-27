@@ -75,22 +75,11 @@ def start_stdlib_repl(ns):
 
 
 def setup_environment():
-    """Set up the Python environment with common project paths."""
-    # Add common project directories to Python path
-    potential_projects = [
-        "/Users/mege/git/shellforgepy",
-        "/Users/mege/git/py-3d-construct-lib",
-        "/Users/mege/git/mege-cadquery-helpers",
-    ]
-    
-    for project_path in potential_projects:
-        if Path(project_path).exists() and project_path not in sys.path:
-            sys.path.insert(0, project_path)
-    
+    """Set up the Python environment with mounted project paths."""
     print("FreeCAD Python Command-Line Wrapper")
     print("=" * 50)
     print(f"Python version: {sys.version}")
-    print(f"Added to Python path: {[p for p in potential_projects if Path(p).exists()]}")
+    print(f"Current working directory: {os.getcwd()}")
     
 
 def check_freecad_availability():
@@ -102,7 +91,7 @@ def check_freecad_availability():
         return True
     except ImportError as e:
         print(f"✗ FreeCAD modules not available: {e}")
-        return False
+        raise e
 
 def parse_python_args(args_string):
     """
@@ -328,7 +317,7 @@ def run_basic_repl(namespace):
 def main():
     """Main entry point."""
     setup_environment()
-    freecad_available = check_freecad_availability()
+    check_freecad_availability()
     
     # Get arguments from environment variable
     args_string = os.environ.get('FREECAD_PYTHON_ARGS', '')
