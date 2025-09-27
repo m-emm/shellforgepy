@@ -1,44 +1,127 @@
 # shellforgepy
 
-Add a short description here!
+Python tooling for the **ShellForge** workflow: model geometry in pure Python, pick a
+CAD backend at runtime, and export parts ready for fabrication. The package
+provides a layered architecture — from NumPy-based geometry utilities through
+alignment-centric construction helpers and production-focused exporters — with
+optional adapters for CadQuery and FreeCAD.
+
+---
+
+## Why ShellForgePy?
+
+- **Backend‑agnostic modeling** – Keep your design logic independent of any CAD
+  kernel. Only when you need to materialise a shape do you pick an adapter
+  (CadQuery, FreeCAD, …).
+- **Alignment‑first construction** – Use the `construct` helpers to position and
+  combine parts predictably. Translating ShellForge design ideas into code stays
+  tidy and explicit.
+- **Production utilities** – `produce` offers layout helpers, STL export, and
+  other fabrication conveniences targeted at 3D printing and similar workflows.
+- **Composable adapters** – Import `shellforgepy.simple` to auto-select an
+  available CAD backend at import time, while still giving you informative error
+  messages if nothing is installed.
+
+---
 
 ## Installation
+
+Base package (geometry + construct + arrange/produce layers):
 
 ```bash
 pip install shellforgepy
 ```
 
-## Usage
-
-```python
-import shellforgepy
-
-# Your code here
-```
-
-## Development
-
-### Setup
+Optional extras:
 
 ```bash
-git clone <your-repo-url>
+# CadQuery adapter
+pip install shellforgepy[cadquery]
+
+# FreeCAD adapter (requires a system FreeCAD installation)
+pip install shellforgepy[freecad]
+
+# Everything
+pip install shellforgepy[all]
+```
+
+### Development install
+
+```bash
+git clone git@github.com:m-emm/shellforgepy.git
 cd shellforgepy
+python -m venv .venv
+source .venv/bin/activate
 pip install -e ".[testing]"
 ```
 
-### Running Tests
+---
+
+## Quick start
+
+```python
+from shellforgepy.simple import (
+    Alignment,
+    align,
+    arrange_and_export_parts,
+    create_basic_box,
+    create_basic_cylinder,
+)
+
+# Model a simple assembly (pure Python)
+base = create_basic_box(80, 60, 5)
+post = create_basic_cylinder(radius=5, height=40)
+post = align(post, base, Alignment.CENTER)
+assembly = [
+    {"name": "base", "part": base},
+    {"name": "post", "part": post},
+]
+
+# Lay out parts for printing and export to STL
+arrange_and_export_parts(
+    parts=assembly,
+    prod_gap=5.0,
+    bed_with=200.0,
+    script_file="examples/pedestal.py",
+    export_directory="output",
+)
+```
+
+If a CadQuery or FreeCAD adapter is available, the exporter will use it
+transparently. Otherwise you get a helpful error telling you which dependency is
+missing.
+
+---
+
+## Project layout
+
+```
+src/shellforgepy/
+├── geometry/        # Pure NumPy/ SciPy helpers
+├── construct/       # Alignment and composition primitives
+├── produce/         # Arrangement + export helpers
+├── adapters/        # Optional cadquery/ and freecad/ backends
+└── simple.py        # Convenience facade with auto-selected adapter
+```
+
+---
+
+## Contributing & Development
+
+Run linters/tests before pushing:
 
 ```bash
 pytest
-```
-
-### Code Formatting
-
-```bash
 black src/ tests/
 isort src/ tests/
 ```
 
+Bug reports and pull requests are welcome! Please document new APIs in docstrings
+and keep adapter-specific code isolated so ShellForgePy stays backend-agnostic by
+default.
+
+---
+
 ## License
 
-See LICENSE.txt for details.
+MIT — see [LICENSE.txt](LICENSE.txt).

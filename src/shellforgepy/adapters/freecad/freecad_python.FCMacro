@@ -1,0 +1,377 @@
+#!/usr/bin/env python3
+"""
+Generic FreeCAD Python command-line wrapper.
+
+This script mimic    print("Added to Python path: {[p for p in potential_projects if Path(p).exists()]}")
+    print("ℹ Console mode only - no GUI dependencies")of the standard Python command line within
+the FreeCAD environment, providing access to FreeCAD modules while supporting
+standard Python invocation patterns.
+
+Usage examples:
+    # Run a module (like pytest)
+    ./freecad_python.sh -m pytest tests/unit/adapters/cadquery/ -v
+    
+    # Run a script
+    ./freecad_python.sh my_script.py arg1 arg2
+    
+    # Run with imports and basic setup
+    ./freecad_python.sh -c "import shellforgepy; print('Works!')"
+
+The arguments are passed via environment variables since FreeCAD macros
+can't easily receive command line arguments directly.
+"""
+
+import os
+import sys
+import runpy
+import shlex
+from pathlib import Path
+
+# Console-mode only - no GUI dependencies
+
+def make_ns():
+
+    import FreeCAD as App
+
+    ns = {
+        "App": App,
+        "doc": App.ActiveDocument,
+        "fc": App,  # alias, sometimes feels nicer in a REPL
+    }
+    # add whatever else you want handy:
+    # ns["Part"] = __import__("Part")
+    return ns
+
+def banner(ns):
+    return (
+        "FreeCAD interactive session\n"
+        "  App=FreeCAD,  doc=App.ActiveDocument\n"
+        f"  Document: {ns['doc'].Name if ns['doc'] else 'None'}\n"
+        "Tip: 'ns' dict has everything if you want to inspect it directly.\n"
+    )
+
+ns = make_ns()
+ns["ns"] = ns  # let you inspect the namespace itself
+
+def start_ipython(ns):
+    # Prefer IPython if available (nicer completion/history).
+    try:
+        import IPython
+        # This still needs a TTY for stdin/stdout; otherwise it will hang.
+        IPython.embed(colors="neutral", user_ns=ns)  # blocks until you exit
+        return True
+    except Exception:
+        return False
+
+def start_stdlib_repl(ns):
+    try:
+        import code
+        # code.interact requires a usable stdin/stdout (typically a terminal).
+        code.interact(banner=banner(ns), local=ns)
+        return True
+    except Exception:
+        return False
+
+
+
+def setup_environment():
+    """Set up the Python environment with common project paths."""
+    # Add common project directories to Python path
+    potential_projects = [
+        "/Users/mege/git/shellforgepy",
+        "/Users/mege/git/py-3d-construct-lib",
+        "/Users/mege/git/mege-cadquery-helpers",
+    ]
+    
+    for project_path in potential_projects:
+        if Path(project_path).exists() and project_path not in sys.path:
+            sys.path.insert(0, project_path)
+    
+    print("FreeCAD Python Command-Line Wrapper")
+    print("=" * 50)
+    print(f"Python version: {sys.version}")
+    print(f"Added to Python path: {[p for p in potential_projects if Path(p).exists()]}")
+    
+
+def check_freecad_availability():
+    """Check if FreeCAD modules are available."""
+    try:
+        import FreeCAD
+        import Part
+        print("✓ FreeCAD modules available")
+        return True
+    except ImportError as e:
+        print(f"✗ FreeCAD modules not available: {e}")
+        return False
+
+def parse_python_args(args_string):
+    """
+    Parse Python command line arguments similar to the python executable.
+    
+    Returns:
+        dict: Parsed arguments including 'module', 'script', 'code', 'args'
+    """
+    if not args_string.strip():
+        return {'mode': 'interactive', 'args': []}
+    
+    # Split the arguments respecting quotes
+    try:
+        args = shlex.split(args_string)
+    except ValueError:
+        # Fall back to simple split if shlex fails
+        args = args_string.split()
+    
+    result = {'mode': 'interactive', 'args': []}
+    i = 0
+    
+    while i < len(args):
+        arg = args[i]
+        
+        if arg == '-m':
+            # Module mode: python -m module_name [args...]
+            if i + 1 < len(args):
+                result['mode'] = 'module'
+                result['module'] = args[i + 1]
+                result['args'] = args[i + 2:]
+                return result
+            else:
+                raise ValueError("Argument expected for -m")
+                
+        elif arg == '-c':
+            # Code mode: python -c "code" [args...]
+            if i + 1 < len(args):
+                result['mode'] = 'code'
+                result['code'] = args[i + 1]
+                result['args'] = args[i + 2:]
+                return result
+            else:
+                raise ValueError("Argument expected for -c")
+                
+        elif not arg.startswith('-'):
+            # Script mode: python script.py [args...]
+            result['mode'] = 'script'
+            result['script'] = arg
+            result['args'] = args[i + 1:]
+            return result
+            
+        i += 1
+    
+    return result
+
+def run_module(module_name, args):
+    """Run a module using runpy, similar to python -m."""
+    print(f"Running module: {module_name}")
+    print(f"Arguments: {args}")
+    print("-" * 30)
+    
+    # Set sys.argv as the module would expect it
+    old_argv = sys.argv[:]
+    try:
+        sys.argv = [module_name] + args
+        runpy.run_module(module_name, run_name='__main__', alter_sys=True)
+    finally:
+        sys.argv = old_argv
+
+def run_script(script_path, args):
+    """Run a Python script file."""
+    print(f"Running script: {script_path}")
+    print(f"Arguments: {args}")
+    print("-" * 30)
+    
+    # Set sys.argv as the script would expect it
+    old_argv = sys.argv[:]
+    try:
+        sys.argv = [script_path] + args
+        runpy.run_path(script_path, run_name='__main__')
+    finally:
+        sys.argv = old_argv
+
+def run_code(code_string, args):
+    """Execute code string."""
+    print(f"Executing code: {code_string[:50]}{'...' if len(code_string) > 50 else ''}")
+    print(f"Arguments: {args}")
+    print("-" * 30)
+    
+    # Set sys.argv for the code
+    old_argv = sys.argv[:]
+    try:
+        sys.argv = ['<string>'] + args
+        exec(code_string, {'__name__': '__main__'})
+    finally:
+        sys.argv = old_argv
+
+def run_interactive_repl():
+    """Run an interactive Python REPL with FreeCAD environment."""
+    print("Starting FreeCAD Interactive Python REPL")
+    print("=" * 50)
+    print("Available modules:")
+    
+    # Try to import common modules and show what's available
+    available_modules = []
+    modules_to_check = [
+        ('FreeCAD', 'FreeCAD'),
+        ('Part', 'Part'),
+        ('shellforgepy', 'shellforgepy'),
+        ('numpy', 'np'),
+        ('matplotlib.pyplot', 'plt'),
+    ]
+    
+    namespace = {'__name__': '__main__'}
+    
+    for module_name, alias in modules_to_check:
+        try:
+            if module_name == 'FreeCAD':
+                import FreeCAD as module
+            elif module_name == 'Part':
+                import Part as module
+            else:
+                module = __import__(module_name)
+            namespace[alias] = module
+            available_modules.append(f"  {alias} = {module_name}")
+            print(f"✓ {alias} = {module_name}")
+        except ImportError:
+            print(f"✗ {module_name} not available")
+    
+    # Add common FreeCAD aliases to namespace (console mode only)
+    try:
+        import FreeCAD
+        namespace['App'] = FreeCAD
+        namespace['doc'] = getattr(FreeCAD, 'ActiveDocument', None)
+        available_modules.extend([
+            "  App = FreeCAD", 
+            "  doc = App.ActiveDocument"
+        ])
+        print("✓ Added FreeCAD console aliases")
+    except ImportError:
+        print("✗ FreeCAD not available for aliases")
+    
+    print("\nPre-imported modules in namespace:")
+    for mod in available_modules:
+        print(mod)
+    
+    print("\nType 'help()' for help, 'exit()' or Ctrl+D to exit")
+    print("=" * 50)
+    
+    # Try different REPL approaches
+    repl_methods = [
+        ('IPython', run_ipython_repl),
+        ('code.interact', run_code_interact),
+        ('basic_repl', run_basic_repl),
+    ]
+    
+    for method_name, method_func in repl_methods:
+        try:
+            print(f"Trying {method_name} REPL...")
+            method_func(namespace)
+            return  # If successful, we're done
+        except Exception as e:
+            print(f"{method_name} failed: {e}")
+            continue
+    
+    print("All REPL methods failed. Check your environment.")
+
+def run_ipython_repl(namespace):
+    """Try to run IPython REPL."""
+    import IPython
+    IPython.embed(user_ns=namespace, banner1="FreeCAD + IPython REPL")
+
+def run_code_interact(namespace):
+    """Run standard library code.interact REPL."""
+    import code
+    import readline  # For better line editing
+    
+    console = code.InteractiveConsole(locals=namespace)
+    console.interact(banner="FreeCAD Python REPL (using code.interact)")
+
+def run_basic_repl(namespace):
+    """Basic REPL implementation."""
+    import sys
+    
+    # Update globals with our namespace
+    globals().update(namespace)
+    
+    print("Basic REPL - enter Python commands:")
+    
+    while True:
+        try:
+            # Get input
+            try:
+                line = input(">>> ")
+            except EOFError:
+                print("\nExiting...")
+                break
+            
+            if line.strip() in ('exit()', 'quit()', 'exit', 'quit'):
+                break
+                
+            if not line.strip():
+                continue
+            
+            # Try to evaluate as expression first, then as statement
+            try:
+                result = eval(line, globals(), namespace)
+                if result is not None:
+                    print(repr(result))
+            except SyntaxError:
+                # Not an expression, try as statement
+                try:
+                    exec(line, globals(), namespace)
+                except Exception as e:
+                    print(f"Error: {e}")
+            except Exception as e:
+                print(f"Error: {e}")
+                
+        except KeyboardInterrupt:
+            print("\nKeyboardInterrupt")
+            continue
+
+def main():
+    """Main entry point."""
+    setup_environment()
+    freecad_available = check_freecad_availability()
+    
+    # Get arguments from environment variable
+    args_string = os.environ.get('FREECAD_PYTHON_ARGS', '')
+    
+    if not args_string.strip():
+        print("No arguments provided - starting interactive REPL")
+        print("To run specific commands, set FREECAD_PYTHON_ARGS environment variable.")
+        print("Examples:")
+        print("  FREECAD_PYTHON_ARGS='-m pytest tests/ -v'")
+        print("  FREECAD_PYTHON_ARGS='-c \"import shellforgepy; print(dir(shellforgepy))\"'")
+        print("  FREECAD_PYTHON_ARGS='my_script.py arg1 arg2'")
+        print("")
+        run_interactive_repl()
+        return
+    
+    print(f"Processing arguments: {args_string}")
+    
+    try:
+        parsed = parse_python_args(args_string)
+        print(f"Parsed as: {parsed}")
+        print("=" * 50)
+        
+        if parsed['mode'] == 'module':
+            run_module(parsed['module'], parsed['args'])
+        elif parsed['mode'] == 'script':
+            run_script(parsed['script'], parsed['args'])
+        elif parsed['mode'] == 'code':
+            run_code(parsed['code'], parsed['args'])
+        elif parsed['mode'] == 'interactive':
+            run_interactive_repl()
+        else:
+            print(f"Unknown mode: {parsed['mode']}")
+            return 1
+            
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+if __name__ == '__main__':
+    exit_code = main()
+    print("=" * 50)
+    print("FreeCAD Python wrapper completed")
+    if exit_code:
+        print(f"Exit code: {exit_code}")
