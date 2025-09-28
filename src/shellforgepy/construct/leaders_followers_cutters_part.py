@@ -117,12 +117,10 @@ class LeaderFollowersCuttersPart:
     def rotate(self, *args):
         """Rotate all parts in this composite."""
         self.leader = rotate_part_native(self.leader, *args)
-        self.followers = [
-            rotate_part_native(follower, *args) for follower in self.followers
-        ]
-        self.cutters = [rotate_part_native(cutter, *args) for cutter in self.cutters]
+        self.followers = [follower.rotate(*args) for follower in self.followers]
+        self.cutters = [cutter.rotate(*args) for cutter in self.cutters]
         self.non_production_parts = [
-            rotate_part_native(part, *args) for part in self.non_production_parts
+            part.rotate(*args) for part in self.non_production_parts
         ]
         return self
 
