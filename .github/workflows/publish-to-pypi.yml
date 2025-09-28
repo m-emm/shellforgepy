@@ -32,6 +32,8 @@ jobs:
           pip install setuptools wheel
           # Install the package in development mode with test dependencies and CadQuery
           pip install -e .[testing,cadquery]
+          # Install additional test dependencies
+          pip install matplotlib
 
       - name: Run unit tests
         run: |
