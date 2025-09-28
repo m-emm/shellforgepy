@@ -64,6 +64,49 @@ def analyze_file_imports(file_path: Path) -> Tuple[List[Dict], List[Dict]]:
         return [], []
 
 
+def get_module_exports(file_path: Path) -> Set[str]:
+    """Extract what symbols a module exports (classes, functions, variables)."""
+    exports = set()
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        tree = ast.parse(content)
+        
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                exports.add(node.name)
+            elif isinstance(node, ast.ClassDef):
+                exports.add(node.name)
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        exports.add(target.id)
+                    elif isinstance(target, ast.Tuple) or isinstance(target, ast.List):
+                        for elt in target.elts:
+                            if isinstance(elt, ast.Name):
+                                exports.add(elt.id)
+        
+        # Also check for __all__ to see what's explicitly exported
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == '__all__':
+                        if isinstance(node.value, ast.List):
+                            all_exports = set()
+                            for elt in node.value.elts:
+                                if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                                    all_exports.add(elt.value)
+                            # If __all__ is defined, prefer it over discovered exports
+                            if all_exports:
+                                return all_exports
+        
+        return exports
+    except (SyntaxError, UnicodeDecodeError) as e:
+        print(f"Warning: Could not parse {file_path} for exports: {e}")
+        return set()
+
+
 def module_paths():
     """Collect all module paths and their imports."""
     print(f"Scanning source directory: {SRC_DIR}")
@@ -114,6 +157,60 @@ def module_paths():
     return sorted(all_paths), dict(paths_being_imported), file_imports
 
 
+def find_invalid_imports(all_paths, file_imports):
+    """Find imports where the imported name doesn't exist in the target module."""
+    invalid_imports = []
+    
+    # Build a map of module paths to their file paths
+    module_to_file = {}
+    for path in SRC_DIR.rglob("*.py"):
+        relative_path = path.relative_to(SRC_DIR)
+        module_path = ".".join(relative_path.with_suffix("").parts)
+        module_to_file[module_path] = path
+    
+    # Check each file's imports
+    for file_path, imports_data in file_imports.items():
+        for imp in imports_data.get('from_imports', []):
+            if imp.get('level', 0) > 0 and imp.get('module'):
+                # This is a relative import - reconstruct the absolute module path
+                current_file_path = Path(file_path)
+                relative_path = current_file_path.relative_to(SRC_DIR)
+                current_module_parts = relative_path.with_suffix("").parts
+                
+                # Handle relative import level
+                level = imp['level']
+                if level >= len(current_module_parts):
+                    continue  # Can't go up that many levels
+                
+                # Get the base module path by going up 'level' directories
+                base_parts = current_module_parts[:-level] if level > 0 else current_module_parts
+                target_module = ".".join(base_parts + tuple(imp['module'].split('.')))
+                
+                # Check if the target module exists and has the imported name
+                if target_module in module_to_file:
+                    target_file = module_to_file[target_module]
+                    exports = get_module_exports(target_file)
+                    
+                    if imp['name'] not in exports:
+                        # Try to find where this name actually exists
+                        correct_modules = []
+                        for mod_path, mod_file in module_to_file.items():
+                            mod_exports = get_module_exports(mod_file)
+                            if imp['name'] in mod_exports:
+                                correct_modules.append(mod_path)
+                        
+                        invalid_imports.append({
+                            'file': file_path,
+                            'imported_name': imp['name'],
+                            'incorrect_module': f".{imp['module']}" if imp.get('level', 0) > 0 else imp['module'],
+                            'resolved_module': target_module,
+                            'correct_modules': correct_modules,
+                            'reason': f"'{imp['name']}' is not exported by '{target_module}'"
+                        })
+    
+    return invalid_imports
+
+
 def find_misplaced_imports(all_paths, paths_being_imported, file_imports):
     """Find imports that should use full module paths but are using relative/incorrect paths."""
     misplaced_imports = []
@@ -143,6 +240,10 @@ def find_misplaced_imports(all_paths, paths_being_imported, file_imports):
         try:
             relative_to_src = file_path_obj.relative_to(Path(file_path).parts[0])
         except:
+            continue
+            
+        # Skip simple.py files - they should use relative imports
+        if file_path.endswith('/simple.py'):
             continue
             
         # Analyze each from_import in this file
@@ -202,6 +303,9 @@ def find_misplaced_imports(all_paths, paths_being_imported, file_imports):
                 else:
                     # Multiple or no matches - report all possibilities
                     for file_path in file_paths:
+                        # Skip simple.py files - they should use relative imports
+                        if file_path.endswith('/simple.py'):
+                            continue
                         misplaced_imports.append({
                             'file': file_path,
                             'incorrect_import': imported_module,
@@ -212,6 +316,10 @@ def find_misplaced_imports(all_paths, paths_being_imported, file_imports):
             
             # Found a single match - this is likely a misplaced import
             for file_path in file_paths:
+                # Skip simple.py files - they should use relative imports
+                if file_path.endswith('/simple.py'):
+                    continue
+                    
                 # Get specific import details for this file
                 import_details = []
                 if file_path in file_imports:
@@ -234,6 +342,9 @@ def find_misplaced_imports(all_paths, paths_being_imported, file_imports):
         for full_path in all_paths:
             if full_path.endswith("." + imported_module):
                 for file_path in file_paths:
+                    # Skip simple.py files - they should use relative imports
+                    if file_path.endswith('/simple.py'):
+                        continue
                     import_details = []
                     if file_path in file_imports:
                         for imp in file_imports[file_path]['imports']:
@@ -263,8 +374,27 @@ def main():
     for path in all_paths:
         print(f"  {path}")
     
+    # Find invalid imports (importing names that don't exist in target modules)
+    invalid_imports = find_invalid_imports(all_paths, file_imports)
+    
     # Find misplaced imports
     misplaced_imports = find_misplaced_imports(all_paths, paths_being_imported, file_imports)
+    
+    print("\n" + "="*60)
+    print("INVALID IMPORTS (importing non-existent names):")
+    print("="*60)
+    
+    if not invalid_imports:
+        print("✓ No invalid imports found!")
+    else:
+        for item in invalid_imports:
+            print(f"\nFile: {item['file']}")
+            print(f"  ❌ Importing: '{item['imported_name']}' from {item['incorrect_module']}")
+            print(f"  📝 Problem: {item['reason']}")
+            if item['correct_modules']:
+                print(f"  ✅ Available in: {', '.join(item['correct_modules'])}")
+            else:
+                print(f"  ⚠️  '{item['imported_name']}' not found in any analyzed module")
     
     print("\n" + "="*60)
     print("MISPLACED IMPORTS (Need Fixing):")

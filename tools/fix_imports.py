@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
-Import fixer script that automatically corrects misplaced imports.
+Import fixer script that automatically corrects misplaced imports using robust AST-based regeneration.
 """
 
 import ast
-import re
+import subprocess
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Set, Optional
 
 # Import the analysis functions from import_fixer
 from import_fixer import module_paths, find_misplaced_imports, analyze_file_imports
+# Import the robust import regeneration functions
+from import_regenerator import ImportSpec, regenerate_imports, ImportRegenerationError, ExoticImportError, find_invalid_imports
 
 PROJECT_DIR = Path(__file__).parent.parent.resolve()
 
@@ -31,6 +33,73 @@ def determine_correct_import(incorrect_import: str, imported_names: List[str], a
             return f"shellforgepy.{incorrect_import}"
     
     return incorrect_import
+
+
+def fix_invalid_import_in_file(file_path: str, imported_name: str, incorrect_module: str, correct_modules: List[str]) -> bool:
+    """Fix an invalid import by changing the module it's imported from."""
+    path = Path(file_path)
+    
+    if not path.exists():
+        print(f"Warning: File {file_path} does not exist")
+        return False
+    
+    if not correct_modules:
+        print(f"Warning: No correct modules found for '{imported_name}'")
+        return False
+    
+    # Choose the first correct module (could be enhanced with better heuristics)
+    correct_module = correct_modules[0]
+    
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        original_content = content
+        
+        # Convert the correct module to relative import for simple.py files
+        if file_path.endswith('/simple.py'):
+            # Convert absolute path like 'shellforgepy.construct.named_part' to relative '.construct.named_part'
+            if correct_module.startswith('shellforgepy.'):
+                relative_module = '.' + correct_module[len('shellforgepy.'):]
+            else:
+                relative_module = correct_module
+        else:
+            relative_module = correct_module
+        
+        # Pattern to find and replace the specific import
+        # Handle relative imports (from .module import name)
+        if incorrect_module.startswith('.'):
+            pattern = rf'^(\s*)from\s+{re.escape(incorrect_module)}\s+import\s+([^,\n]*{re.escape(imported_name)}[^,\n]*)'
+            
+            def replace_import(match):
+                indent = match.group(1)
+                import_list = match.group(2)
+                # Split import list and remove the specific name
+                imports = [imp.strip() for imp in import_list.split(',')]
+                remaining_imports = [imp for imp in imports if imported_name not in imp]
+                
+                result = ""
+                if remaining_imports:
+                    # Keep the original import with remaining items
+                    result += f"{indent}from {incorrect_module} import {', '.join(remaining_imports)}\n"
+                
+                # Add the corrected import
+                result += f"{indent}from {relative_module} import {imported_name}"
+                return result
+            
+            content = re.sub(pattern, replace_import, content, flags=re.MULTILINE)
+        
+        if content != original_content:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            return True
+        else:
+            print(f"Warning: No changes made to {file_path} for import {imported_name}")
+            return False
+            
+    except Exception as e:
+        print(f"Error processing {file_path}: {e}")
+        return False
 
 
 def fix_import_in_file(file_path: str, incorrect_import: str, correct_import: str, adapter_exports: set) -> bool:
@@ -135,17 +204,33 @@ def main():
     all_paths, paths_being_imported, file_imports = module_paths()
     misplaced_imports = find_misplaced_imports(all_paths, paths_being_imported, file_imports)
     
-    if not misplaced_imports:
-        print("✅ No misplaced imports found!")
+    # Also get invalid imports (importing non-existent names)
+    invalid_imports = find_invalid_imports(all_paths, file_imports)
+    
+    if not misplaced_imports and not invalid_imports:
+        print("✅ No import issues found!")
         return
     
     print(f"Found {len(misplaced_imports)} misplaced imports to fix.")
+    print(f"Found {len(invalid_imports)} invalid imports to fix.")
     
     # Get adapter exports for special handling
     adapter_exports = find_adapter_exports()
     print(f"Found {len(adapter_exports)} adapter functions that should import from shellforgepy.adapters.simple")
     
-    # Group fixes by file to avoid duplicate processing, but skip simple.py files
+    # Group invalid import fixes by file
+    invalid_fixes_by_file = {}
+    for item in invalid_imports:
+        file_path = item['file']
+        if file_path not in invalid_fixes_by_file:
+            invalid_fixes_by_file[file_path] = []
+        invalid_fixes_by_file[file_path].append({
+            'imported_name': item['imported_name'],
+            'incorrect_module': item['incorrect_module'],
+            'correct_modules': item['correct_modules']
+        })
+    
+    # Group misplaced import fixes by file to avoid duplicate processing, but skip simple.py files
     fixes_by_file = {}
     for item in misplaced_imports:
         if 'correct_import' in item:  # Skip ambiguous cases
@@ -164,10 +249,27 @@ def main():
                 'reason': item['reason']
             })
     
-    print(f"\n🔧 Applying fixes to {len(fixes_by_file)} files...")
+    print(f"\n🔧 Applying invalid import fixes to {len(invalid_fixes_by_file)} files...")
     
     fixed_count = 0
     failed_count = 0
+    
+    # Process invalid import fixes first
+    for file_path, fixes in invalid_fixes_by_file.items():
+        print(f"\nProcessing invalid imports: {file_path}")
+        
+        for fix in fixes:
+            correct_module_str = ', '.join(fix['correct_modules'][:3])  # Show first 3 options
+            print(f"  Fixing: '{fix['imported_name']}' from {fix['incorrect_module']} → {correct_module_str}")
+            
+            if fix_invalid_import_in_file(file_path, fix['imported_name'], fix['incorrect_module'], fix['correct_modules']):
+                fixed_count += 1
+                print(f"    ✅ Fixed")
+            else:
+                failed_count += 1
+                print(f"    ❌ Failed")
+    
+    print(f"\n🔧 Applying misplaced import fixes to {len(fixes_by_file)} files...")
     
     for file_path, fixes in fixes_by_file.items():
         print(f"\nProcessing: {file_path}")
