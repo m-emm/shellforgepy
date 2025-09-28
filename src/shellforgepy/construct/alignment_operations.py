@@ -189,3 +189,10 @@ def align(part, to, alignment, axes=None):
     This is a wrapper that delegates to the CAD adapter's align function.
     """
     return align_translation(part, to, alignment, axes)(part)
+
+
+def copy_part(part):
+    """Create a copy of the given part using the CAD adapter's copy function."""
+    from shellforgepy.adapters.simple import copy_part as adapter_copy_part
+
+    return adapter_copy_part(part)

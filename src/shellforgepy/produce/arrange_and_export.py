@@ -13,35 +13,13 @@ from shellforgepy.adapters.simple import (
     export_solid_to_stl as adapter_export_solid_to_stl,
 )
 from shellforgepy.adapters.simple import (
-    fuse_parts,
     get_bounding_box,
-    rotate_part,
-    translate_part,
 )
 
-
-@dataclass
-class PartCollector:
-    """Accumulates CAD parts and fuses them into a single shape."""
-
-    part = None
-
-    def fuse(self, other):
-        """Fuse this part with another part using the appropriate CAD"""
-        if self.part is None:
-            self.part = other
-        else:
-            # Delegate to adapter for fusing - this would need to be implemented in adapters
-            self.part = fuse_parts(self.part, other)
-        return self.part
-
-    def cut(self, other):
-        """Cut another part from this part using the appropriate CAD adapter"""
-        if self.part is None:
-            raise ValueError("Cannot cut from None part")
-        else:
-            self.part = cut_parts(self.part, other)
-        return self.part
+from shellforgepy.construct.alignment_operations import translate, rotate
+from shellforgepy.construct.leaders_followers_cutters_part import (
+    LeaderFollowersCuttersPart,
+)
 
 
 @dataclass
@@ -54,62 +32,6 @@ class PartInfo:
     skip_in_production: bool = False
     prod_rotation_angle: Optional[float] = None
     prod_rotation_axis: Optional[Tuple[float, float, float]] = None
-
-
-@dataclass
-class NamedPart:
-    """A CAD part with a name."""
-
-    name: str
-    part: Any  # CAD object type depends on the adapter
-
-    def copy(self):
-        """Create a copy of this named part."""
-
-        return NamedPart(self.name, copy_part(self.part))
-
-    def translate(self, vector):
-        """Translate this part by the given vector."""
-
-        translated_part = translate_part(self.part, vector)
-        return NamedPart(self.name, translated_part)
-
-    def rotate(
-        self,
-        angle,
-        center=(0.0, 0.0, 0.0),
-        axis=(0.0, 0.0, 1.0),
-    ):
-        """Rotate this part around the given axis."""
-
-        rotated_part = rotate_part(self.part, angle, center, axis)
-        return NamedPart(self.name, rotated_part)
-
-
-def _normalize_named_parts(
-    parts,
-):
-    if not parts:
-        return []
-
-    normalized = []
-    for idx, item in enumerate(parts):
-        if isinstance(item, NamedPart):
-            normalized.append(item)
-            continue
-        if isinstance(item, Mapping):
-            if "name" not in item or "part" not in item:
-                raise KeyError("Named parts mappings must contain 'name' and 'part'")
-            normalized.append(NamedPart(str(item["name"]), item["part"]))
-            continue
-        if isinstance(item, tuple) and len(item) == 2:
-            name, part = item
-            normalized.append(NamedPart(str(name), part))
-            continue
-        raise TypeError(
-            f"Unsupported item in named parts sequence at index {idx}: {item!r}"
-        )
-    return normalized
 
 
 class PartList:
@@ -180,114 +102,6 @@ class PartList:
         return self.parts[key]
 
 
-class LeaderFollowersCuttersPart:
-    """Group a leader part with follower, cutter, and non-production parts."""
-
-    def __init__(
-        self,
-        leader,
-        followers=None,
-        cutters=None,
-        non_production_parts=None,
-    ):
-        self.leader = leader
-        self.followers = _normalize_named_parts(followers)
-        self.cutters = _normalize_named_parts(cutters)
-        self.non_production_parts = _normalize_named_parts(non_production_parts)
-
-    def get_leader_as_part(self):
-        return self.leader
-
-    def get_non_production_parts_fused(self):
-        if not self.non_production_parts:
-            return None
-        collector = PartCollector()
-        for part in self.non_production_parts:
-            collector.fuse(part.part)
-        return collector.part
-
-    def leaders_followers_fused(self):
-        collector = PartCollector()
-        collector.fuse(self.leader)
-        for follower in self.followers:
-            collector.fuse(follower.part)
-        assert collector.part is not None
-        return collector.part
-
-    def copy(self):
-
-        return LeaderFollowersCuttersPart(
-            copy_part(self.leader),
-            [follower.copy() for follower in self.followers],
-            [cutter.copy() for cutter in self.cutters],
-            [non_prod.copy() for non_prod in self.non_production_parts],
-        )
-
-    def fuse(
-        self,
-        other,
-    ):
-
-        if isinstance(other, LeaderFollowersCuttersPart):
-            new_leader = fuse_parts(self.leader, other.leader)
-            new_followers = [f.copy() for f in (self.followers + other.followers)]
-            new_cutters = [c.copy() for c in (self.cutters + other.cutters)]
-            new_non_prod = [
-                n.copy()
-                for n in (self.non_production_parts + other.non_production_parts)
-            ]
-            return LeaderFollowersCuttersPart(
-                new_leader, new_followers, new_cutters, new_non_prod
-            )
-
-        other_shape = other
-        new_leader = fuse_parts(self.leader, other_shape)
-        return LeaderFollowersCuttersPart(
-            new_leader,
-            [f.copy() for f in self.followers],
-            [c.copy() for c in self.cutters],
-            [n.copy() for n in self.non_production_parts],
-        )
-
-    def translate(self, vector):
-
-        vec = vector
-        self.leader = translate_part(self.leader, vec)
-        self.followers = [follower.translate(vec) for follower in self.followers]
-        self.cutters = [cutter.translate(vec) for cutter in self.cutters]
-        self.non_production_parts = [
-            part.translate(vec) for part in self.non_production_parts
-        ]
-        return self
-
-    def rotate(
-        self,
-        angle,
-        center=(0.0, 0.0, 0.0),
-        axis=(0.0, 0.0, 1.0),
-    ):
-
-        center_vec = center
-        axis_vec = axis
-        self.leader = rotate_part(self.leader, angle, center_vec, axis_vec)
-        self.followers = [
-            follower.rotate(angle, center_vec, axis_vec) for follower in self.followers
-        ]
-        self.cutters = [
-            cutter.rotate(angle, center_vec, axis_vec) for cutter in self.cutters
-        ]
-        self.non_production_parts = [
-            part.rotate(angle, center_vec, axis_vec)
-            for part in self.non_production_parts
-        ]
-        return self
-
-    @property
-    def BoundBox(self):
-
-        return get_bounding_box(self.leader)
-
-
 def export_solid_to_stl(
     solid,
     destination,
@@ -338,7 +152,7 @@ def _arrange_parts_in_rows(
             y_cursor - min_point[1],
             -min_point[2],
         )
-        arranged_shape = translate_part(shape, move_vector)
+        arranged_shape = translate(*move_vector)(shape)
         arranged.append(arranged_shape)
 
         x_cursor += width + gap

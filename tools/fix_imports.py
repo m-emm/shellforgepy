@@ -14,7 +14,26 @@ from import_fixer import module_paths, find_misplaced_imports, analyze_file_impo
 PROJECT_DIR = Path(__file__).parent.parent.resolve()
 
 
-def fix_import_in_file(file_path: str, incorrect_import: str, correct_import: str) -> bool:
+def determine_correct_import(incorrect_import: str, imported_names: List[str], adapter_exports: set) -> str:
+    """Determine the correct import path based on what's being imported."""
+    # If importing adapter functions, use shellforgepy.adapters.simple
+    if any(name in adapter_exports for name in imported_names):
+        return "shellforgepy.adapters.simple"
+    
+    # Otherwise, use the suggested correct import (which should be absolute shellforgepy.*)
+    # Convert relative-style imports to absolute
+    if not incorrect_import.startswith('shellforgepy.'):
+        if '.' in incorrect_import:
+            # Handle cases like "construct.alignment" -> "shellforgepy.construct.alignment"
+            return f"shellforgepy.{incorrect_import}"
+        else:
+            # Handle single module names
+            return f"shellforgepy.{incorrect_import}"
+    
+    return incorrect_import
+
+
+def fix_import_in_file(file_path: str, incorrect_import: str, correct_import: str, adapter_exports: set) -> bool:
     """Fix a specific import in a file by replacing incorrect with correct import."""
     path = Path(file_path)
     
@@ -28,17 +47,38 @@ def fix_import_in_file(file_path: str, incorrect_import: str, correct_import: st
         
         original_content = content
         
+        # Parse the file to understand what's being imported
+        try:
+            tree = ast.parse(content)
+            imported_names = []
+            
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == incorrect_import:
+                    for alias in node.names:
+                        imported_names.append(alias.name)
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == incorrect_import:
+                            imported_names.append(alias.name)
+            
+            # Determine the actual correct import based on what's being imported
+            actual_correct_import = determine_correct_import(incorrect_import, imported_names, adapter_exports)
+            
+        except:
+            # If parsing fails, use the provided correct_import
+            actual_correct_import = correct_import
+        
         # Pattern to match import statements
         patterns = [
             # from incorrect_import import ...
             (rf'^(\s*)from\s+{re.escape(incorrect_import)}\s+import\s+(.+)$', 
-             rf'\1from {correct_import} import \2'),
+             rf'\1from {actual_correct_import} import \2'),
             # import incorrect_import
             (rf'^(\s*)import\s+{re.escape(incorrect_import)}(\s|$)', 
-             rf'\1import {correct_import}\2'),
+             rf'\1import {actual_correct_import}\2'),
             # import incorrect_import as alias
             (rf'^(\s*)import\s+{re.escape(incorrect_import)}\s+as\s+(.+)$', 
-             rf'\1import {correct_import} as \2'),
+             rf'\1import {actual_correct_import} as \2'),
         ]
         
         for pattern, replacement in patterns:
@@ -57,6 +97,39 @@ def fix_import_in_file(file_path: str, incorrect_import: str, correct_import: st
         return False
 
 
+def is_simple_py_file(file_path: str) -> bool:
+    """Check if a file is a simple.py export facade that should be skipped."""
+    return file_path.endswith('/simple.py')
+
+
+def find_adapter_exports():
+    """Find all exports from adapters/simple.py for special handling."""
+    adapter_exports = set()
+    
+    adapter_simple_file = PROJECT_DIR / "src/shellforgepy/adapters/simple.py"
+    
+    if adapter_simple_file.exists():
+        try:
+            with open(adapter_simple_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Parse the file to find __all__ exports
+            tree = ast.parse(content)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name) and target.id == '__all__':
+                            if isinstance(node.value, ast.List):
+                                for elt in node.value.elts:
+                                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                                        adapter_exports.add(elt.value)
+                                        
+        except Exception as e:
+            print(f"Warning: Could not parse {adapter_simple_file}: {e}")
+    
+    return adapter_exports
+
+
 def main():
     print("🔍 Analyzing imports...")
     all_paths, paths_being_imported, file_imports = module_paths()
@@ -68,11 +141,21 @@ def main():
     
     print(f"Found {len(misplaced_imports)} misplaced imports to fix.")
     
-    # Group fixes by file to avoid duplicate processing
+    # Get adapter exports for special handling
+    adapter_exports = find_adapter_exports()
+    print(f"Found {len(adapter_exports)} adapter functions that should import from shellforgepy.adapters.simple")
+    
+    # Group fixes by file to avoid duplicate processing, but skip simple.py files
     fixes_by_file = {}
     for item in misplaced_imports:
         if 'correct_import' in item:  # Skip ambiguous cases
             file_path = item['file']
+            
+            # Skip simple.py files - they are export facades and should not be "fixed"
+            if is_simple_py_file(file_path):
+                print(f"Skipping simple.py file: {file_path}")
+                continue
+                
             if file_path not in fixes_by_file:
                 fixes_by_file[file_path] = []
             fixes_by_file[file_path].append({
@@ -92,7 +175,7 @@ def main():
         for fix in fixes:
             print(f"  Fixing: {fix['incorrect']} → {fix['correct']}")
             
-            if fix_import_in_file(file_path, fix['incorrect'], fix['correct']):
+            if fix_import_in_file(file_path, fix['incorrect'], fix['correct'], adapter_exports):
                 fixed_count += 1
                 print(f"    ✅ Fixed")
             else:
