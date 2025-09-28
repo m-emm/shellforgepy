@@ -3,13 +3,16 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from shellforgepy.adapters.simple import get_volume
 from shellforgepy.simple import *
 
 try:
-    import FreeCAD as App
-    import Part
+    import FreeCAD
 
-    freecad_available = True
+    if FreeCAD is not None:
+        freecad_available = True
+    else:
+        freecad_available = False
 except ImportError:
     freecad_available = False
 
@@ -56,15 +59,15 @@ def test_part_collector_cut():
 
     # Add the first box
     collector.fuse(box1)
-    # Use FreeCAD's Volume property directly
-    original_volume = collector.part.Volume
+    # Use get_volume function to handle both FreeCAD and CadQuery properly
+    original_volume = get_volume(collector.part)
 
     # Cut the second box from the first
     result = collector.cut(box2)
 
     # The result should be the part and should have less volume
     assert result is collector.part
-    cut_volume = collector.part.Volume
+    cut_volume = get_volume(collector.part)
     assert cut_volume < original_volume
 
 
@@ -115,11 +118,15 @@ def test_named_part_rotate():
     named_part = NamedPart("test_box", box)
 
     # Rotate 90 degrees around Z axis using native FreeCAD signature: rotate(base, dir, degree)
-    from FreeCAD import Base
+    if freecad_available:
+        from FreeCAD import Base
 
-    base_vec = Base.Vector(0, 0, 0)  # center point
-    dir_vec = Base.Vector(0, 0, 1)  # axis direction
-    rotated_part = named_part.rotate(base_vec, dir_vec, 90)
+        base_vec = Base.Vector(0, 0, 0)  # center point
+        dir_vec = Base.Vector(0, 0, 1)  # axis direction
+        rotated_part = named_part.rotate(base_vec, dir_vec, 90)
+    else:
+        # For CadQuery compatibility, use different rotation approach
+        rotated_part = named_part.rotate((0, 0, 0), (0, 0, 1), 90)
 
     # After rotation, dimensions should swap (roughly)
     min_point, max_point = get_bounding_box(rotated_part)

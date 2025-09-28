@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 from shellforgepy.construct.alignment_operations import rotate, translate
 from shellforgepy.construct.named_part import NamedPart
 from shellforgepy.simple import (

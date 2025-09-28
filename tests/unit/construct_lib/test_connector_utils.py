@@ -1,12 +1,6 @@
 import numpy as np
-from shellforgepy.geometry.face_point_cloud import sphere_radius
-from shellforgepy.geometry.mesh_builders import create_cube_geometry
 from shellforgepy.shells.connector_hint import ConnectorHint
 from shellforgepy.shells.connector_utils import compute_connector_hints_from_shell_maps
-from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
-    PartitionableSpheroidTriangleMesh,
-)
-from shellforgepy.shells.transformed_region_view import TransformedRegionView
 
 
 def test_connector_hints_from_manual_tetrahedron_shell_map():

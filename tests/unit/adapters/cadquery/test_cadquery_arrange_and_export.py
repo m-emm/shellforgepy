@@ -3,11 +3,10 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from shellforgepy.adapters.simple import get_volume
 from shellforgepy.simple import *
 
 try:
-    import cadquery as cq
-
     cadquery_available = True
 except ImportError:
     cadquery_available = False
@@ -55,15 +54,15 @@ def test_part_collector_cut():
 
     # Add the first box
     collector.fuse(box1)
-    # Use CadQuery's volume method
-    original_volume = collector.part.Volume()
+    # Use get_volume function to handle both CadQuery and FreeCAD properly
+    original_volume = get_volume(collector.part)
 
     # Cut the second box from the first
     result = collector.cut(box2)
 
     # The result should be the part and should have less volume
     assert result is collector.part
-    cut_volume = collector.part.Volume()
+    cut_volume = get_volume(collector.part)
     assert cut_volume < original_volume
 
 

@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 from shellforgepy.construct.leaders_followers_cutters_part import (
     LeaderFollowersCuttersPart,
 )

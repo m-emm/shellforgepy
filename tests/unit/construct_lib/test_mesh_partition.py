@@ -1,6 +1,4 @@
-import json
 import logging
-import os
 import tempfile
 from collections import defaultdict
 
@@ -11,7 +9,6 @@ from shellforgepy.geometry.mesh_builders import (
     create_cube_geometry,
     create_dodecahedron_geometry,
     create_fibonacci_sphere_geometry,
-    create_tetrahedron_geometry,
 )
 from shellforgepy.shells.connector_hint import ConnectorHint
 from shellforgepy.shells.connector_utils import merge_collinear_connectors
@@ -20,7 +17,6 @@ from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
 )
 from shellforgepy.shells.region_edge_feature import RegionEdgeFeature
-from shellforgepy.shells.transformed_region_view import TransformedRegionView
 
 _logger = logging.getLogger(__name__)
 

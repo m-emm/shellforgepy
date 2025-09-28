@@ -1,22 +1,16 @@
-import logging
 import math
 
 import numpy as np
-import pytest
 from shellforgepy.construct.construct_utils import (
     CylinderSpec,
     compute_area,
-    fit_sphere_center_along_plane_normal,
     fit_sphere_to_points,
     intersect_edge_with_cylinder,
-    normalize,
     normalize_edge,
     select_uniform_cylindrical_vertices,
     split_triangle_topologically,
     triangle_edges,
 )
-
-_logger = logging.getLogger(__name__)
 
 
 def test_split_triangle_topologically_one_edge_split():

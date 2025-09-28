@@ -1,5 +1,3 @@
-from venv import create
-
 import numpy as np
 import pytest
 

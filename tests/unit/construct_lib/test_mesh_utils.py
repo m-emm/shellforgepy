@@ -1,35 +1,14 @@
-import json
-import logging
 import os
+import struct
 import tempfile
-from collections import defaultdict
-from unittest.mock import MagicMock, patch
 
-import matplotlib.pyplot as plt
 import numpy as np
-from shellforgepy.construct.construct_utils import normalize
 from shellforgepy.geometry.mesh_builders import (
     create_cube_geometry,
     create_dodecahedron_geometry,
     create_fibonacci_sphere_geometry,
     create_tetrahedron_geometry,
 )
-from shellforgepy.shells.connector_hint import ConnectorHint
-from shellforgepy.shells.connector_utils import merge_collinear_connectors
-from shellforgepy.shells.mesh_partition import MeshPartition
-from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
-    PartitionableSpheroidTriangleMesh,
-)
-from shellforgepy.shells.region_edge_feature import RegionEdgeFeature
-from shellforgepy.shells.transformed_region_view import TransformedRegionView
-
-_logger = logging.getLogger(__name__)
-
-
-import os
-import struct
-import tempfile
-
 from shellforgepy.geometry.mesh_utils import (
     _cross,
     _merge_duplicate_vertices,
@@ -43,6 +22,9 @@ from shellforgepy.geometry.mesh_utils import (
     validate_and_fix_mesh_segment,
     write_shell_maps_to_stl,
     write_stl_binary,
+)
+from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
+    PartitionableSpheroidTriangleMesh,
 )
 
 
