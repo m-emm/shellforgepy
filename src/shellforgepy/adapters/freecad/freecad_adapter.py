@@ -15,6 +15,11 @@ except ImportError:
     Base = None
 
 
+import logging
+
+_logger = logging.getLogger(__name__)
+
+
 def create_solid_from_traditional_face_vertex_maps(maps):
     """
     Create a solid from traditional face-vertex maps.
@@ -467,16 +472,30 @@ def export_solid_to_stl(
 
 def copy_part(part):
     """Create a copy of a FreeCAD part."""
+    # There are NO FRAMEWORK SPECIFIC CALLS allowed here! Use adapter functions only!
+    # isinstance(x, NamedPart) or similar ARE FORBIDDEN here!
+    # if something is needed like this, do it in reconstruct
+
     return part.copy()
 
 
 def translate_part(part, vector):
     """Translate a FreeCAD part by the given vector."""
-    if np.linalg.norm(np.array(vector)) < 1e-8:
-        return part.copy()  # No translation needed
-    translated = part.copy()
-    translated.translate(Base.Vector(vector[0], vector[1], vector[2]))
-    return translated
+    # There are NO FRAMEWORK SPECIFIC CALLS allowed here! Use adapter functions only!
+    # isinstance(x, NamedPart) or similar ARE FORBIDDEN here!
+    # if something is needed like this, do it in reconstruct
+
+    _logger.info(f"Translating part by vector {vector}, part={part} , id={id(part)}")
+    vec = Base.Vector(vector[0], vector[1], vector[2])
+
+    # FreeCAD modifies in-place, so create a copy first
+    translate_retval = part.copy()
+    translate_retval.translate(vec)
+
+    if hasattr(part, "reconstruct"):
+        return part.reconstruct(translate_retval)
+    else:
+        return translate_retval
 
 
 def rotate_part(part, angle, center=(0.0, 0.0, 0.0), axis=(0.0, 0.0, 1.0)):
@@ -488,25 +507,60 @@ def rotate_part(part, angle, center=(0.0, 0.0, 0.0), axis=(0.0, 0.0, 1.0)):
         center: Center point of rotation as (x, y, z) tuple
         axis: Rotation axis as (x, y, z) tuple
     """
+    # There are NO FRAMEWORK SPECIFIC CALLS allowed here! Use adapter functions only!
+    # isinstance(x, NamedPart) or similar ARE FORBIDDEN here!
+    # if something is needed like this, do it in reconstruct
+
     if center is None:
         center = (0.0, 0.0, 0.0)
     if axis is None:
         axis = (0.0, 0.0, 1.0)
+
     center_vec = Base.Vector(center[0], center[1], center[2])
     axis_vec = Base.Vector(axis[0], axis[1], axis[2])
-    # FreeCAD's rotate method expects angle in degrees, not radians
-    part.rotate(center_vec, axis_vec, angle)
-    return part
+
+    # FreeCAD modifies in-place, so create a copy first
+    rotate_retval = part.copy()
+    rotate_retval.rotate(center_vec, axis_vec, angle)
+
+    if hasattr(part, "reconstruct"):
+        return part.reconstruct(rotate_retval)
+    else:
+        return rotate_retval
+
+
+def translate_part_native(part, *args):
+    """Translate using native method. Must use the underlying cad system such that it creates a new object, and passes it to the reconstruct method if available, or returns it outright."""
+    _logger.info(
+        f"Native translating part by vector {args}, part={part} , id={id(part)}"
+    )
+
+    # we copy the part
+    translated = part.copy()
+    # the underlying translate must translate in-place
+    translated.translate(*args)
+
+    if hasattr(part, "reconstruct"):
+        _logger.info(
+            f"Reconstructing part {part} , id={id(part)}, translated id={id(translated)}"
+        )
+        return part.reconstruct(translated)
+    else:
+        _logger.info(
+            f"Not reconstructing part {part} , id={id(part)}, translated id={id(translated)}"
+        )
+        return translated
 
 
 def rotate_part_native(part, base, dir, degree):
-    """Rotate using native FreeCAD signature: rotate(base, dir, degree)"""
-    part.rotate(base, dir, degree)
+    """Rotate using native FreeCAD signature: rotate(base, dir, degree). Other adapters may have different signatures."""
+    rotated = part.copy()
+    rotated.rotate(base, dir, degree)
 
     if hasattr(part, "reconstruct"):
-        return part.reconstruct()
+        return part.reconstruct(rotated)
     else:
-        return part
+        return rotated
 
 
 def fuse_parts(part1, part2):

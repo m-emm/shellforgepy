@@ -22,6 +22,7 @@ rotate_part = adapter.rotate_part
 export_solid_to_stl = adapter.export_solid_to_stl
 copy_part = adapter.copy_part
 create_filleted_box = adapter.create_filleted_box
+translate_part_native = adapter.translate_part_native
 rotate_part_native = adapter.rotate_part_native
 
 __all__ = [
@@ -41,5 +42,6 @@ __all__ = [
     "create_extruded_polygon",
     "get_volume",
     "create_filleted_box",
+    "translate_part_native",
     "rotate_part_native",
 ]

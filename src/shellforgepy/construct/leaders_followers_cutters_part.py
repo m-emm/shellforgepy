@@ -1,6 +1,10 @@
 from typing import Mapping
 
-from shellforgepy.adapters.simple import copy_part, rotate_part_native, translate_part
+from shellforgepy.adapters.simple import (
+    copy_part,
+    rotate_part_native,
+    translate_part_native,
+)
 from shellforgepy.construct.named_part import NamedPart
 from shellforgepy.construct.part_collector import PartCollector
 
@@ -100,13 +104,13 @@ class LeaderFollowersCuttersPart:
             [copy_part(n) for n in self.non_production_parts],
         )
 
-    def translate(self, vector):
+    def translate(self, *args):
         """Translate all parts in this composite."""
-        self.leader = translate_part(self.leader, vector)
-        self.followers = [follower.translate(vector) for follower in self.followers]
-        self.cutters = [cutter.translate(vector) for cutter in self.cutters]
+        self.leader = translate_part_native(self.leader, *args)
+        self.followers = [follower.translate(*args) for follower in self.followers]
+        self.cutters = [cutter.translate(*args) for cutter in self.cutters]
         self.non_production_parts = [
-            part.translate(vector) for part in self.non_production_parts
+            part.translate(*args) for part in self.non_production_parts
         ]
         return self
 

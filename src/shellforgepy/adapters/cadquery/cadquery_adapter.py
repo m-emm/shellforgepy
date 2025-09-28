@@ -1,7 +1,10 @@
+import logging
 from typing import List, Optional
 
 import cadquery as cq
 import numpy as np
+
+_logger = logging.getLogger(__name__)
 
 
 def _as_cq_vector(value) -> cq.Vector:
@@ -502,8 +505,12 @@ def copy_part(part):
 
 def translate_part(part, vector):
     """Translate a CadQuery part by the given vector."""
+    _logger.info(f"Translating part by vector {vector}, part={part} , id={id(part)}")
     vec = cq.Vector(*map(float, vector))
-    return part.translate(vec)
+
+    retval = part.translate(vec)
+    _logger.info(f"Translated part id={id(retval)}")
+    return retval
 
 
 def rotate_part(part, angle, center=(0.0, 0.0, 0.0), axis=(0.0, 0.0, 1.0)):
@@ -524,6 +531,24 @@ def rotate_part(part, angle, center=(0.0, 0.0, 0.0), axis=(0.0, 0.0, 1.0)):
         return part.reconstruct(rotate_retval)
     else:
         return rotate_retval
+
+
+def translate_part_native(part, *args):
+    """Translate using native CadQuery signature. Used by composite objects."""
+    _logger.info(
+        f"Native translating part by vector {args}, part={part} , id={id(part)}"
+    )
+    translate_retval = part.translate(*args)
+    if hasattr(part, "reconstruct"):
+        _logger.info(
+            f"Reconstructing part {part} , id={id(part)}, translated id={id(translate_retval)}"
+        )
+        return part.reconstruct(translate_retval)
+    else:
+        _logger.info(
+            f"Not reconstructing part {part} , id={id(part)}, translated id={id(translate_retval)}"
+        )
+        return translate_retval
 
 
 def rotate_part_native(part, v1, v2, angle):

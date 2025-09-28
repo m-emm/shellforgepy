@@ -1,4 +1,12 @@
-from shellforgepy.adapters.simple import copy_part, rotate_part_native, translate_part
+import logging
+
+from shellforgepy.adapters.simple import (
+    copy_part,
+    rotate_part_native,
+    translate_part_native,
+)
+
+_logger = logging.getLogger(__name__)
 
 
 class NamedPart:
@@ -12,9 +20,14 @@ class NamedPart:
         """Create a copy of this named part."""
         return NamedPart(self.name, copy_part(self.part))
 
-    def translate(self, vector):
-        """Translate this part by a vector."""
-        translated_part = translate_part(self.part, vector)
+    def translate(self, *args):
+        """We mimick most cad-sytems in-place translation. We must do an in-place update of self.part."""
+
+        _logger.info(
+            f"Translating NamedPart: {self.name} with args: {args}, type of part: {type(self.part)}"
+        )
+        translated_part = translate_part_native(self.part, *args)
+        self.part = translated_part
         return NamedPart(self.name, translated_part)
 
     def rotate(self, *args):
@@ -24,6 +37,13 @@ class NamedPart:
 
     def reconstruct(self, transformed_result=None):
         """Reconstruct this NamedPart after transformation."""
+        transformed_result_id = (
+            id(transformed_result) if transformed_result is not None else "None"
+        )
+        part_id = id(self.part)
+        _logger.info(
+            f"Reconstructing NamedPart: {self.name} with transformed_result: {transformed_result}, self.part.id {part_id}, transformed_result.id {transformed_result_id}"
+        )
         if transformed_result is not None:
             # Use the transformation result if provided
             return NamedPart(self.name, transformed_result)

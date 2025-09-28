@@ -1,3 +1,5 @@
+import logging
+
 import numpy as np
 from shellforgepy.construct.alignment_operations import rotate, translate
 from shellforgepy.simple import (
@@ -5,6 +7,8 @@ from shellforgepy.simple import (
     get_bounding_box,
     get_bounding_box_center,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 def test_translate():
@@ -63,6 +67,9 @@ def test_functional_consistency_with_named_parts():
     part = create_basic_box(10, 20, 30)
     named_part = NamedPart("test", part)
 
+    _logger.info(
+        f"Created named_part with id {id(named_part)} and part id {id(named_part.part)}"
+    )
     # Functional transformations should work on both native parts and NamedParts
     native_translated = translate(5, 0, 0)(part)
     named_translated = translate(5, 0, 0)(named_part)
@@ -72,6 +79,10 @@ def test_functional_consistency_with_named_parts():
     assert named_translated.name == "test"
 
     # Results should be equivalent
+    _logger.info(f"native_translated id {id(native_translated)}")
+    _logger.info(
+        f"named_translated id {id(named_translated)} and part id {id(named_translated.part)}"
+    )
     native_center = get_bounding_box_center(native_translated)
     named_center = get_bounding_box_center(named_translated.part)
     assert np.allclose(native_center, named_center)
