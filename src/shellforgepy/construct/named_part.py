@@ -31,8 +31,9 @@ class NamedPart:
         return NamedPart(self.name, translated_part)
 
     def rotate(self, *args):
-        """Rotate this part using adapter function for consistent interface."""
+        """We mimick most cad-systems in-place rotation. We must do an in-place update of self.part."""
         rotated_part = rotate_part_native(self.part, *args)
+        self.part = rotated_part
         return NamedPart(self.name, rotated_part)
 
     def reconstruct(self, transformed_result=None):
