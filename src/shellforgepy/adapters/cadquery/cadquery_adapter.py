@@ -507,6 +507,10 @@ def translate_part(part, vector):
 
 
 def rotate_part(part, angle, center=(0.0, 0.0, 0.0), axis=(0.0, 0.0, 1.0)):
+    # There are NO FRAMEWORK SPECIFC CALLS allowed here! Use adapter functions only!
+    #  isinstance(x, NamedPart)  or similar ARE FORBIDDEN here!"
+    # if something is needed like this, do it in reconstruct
+
     """Rotate a CadQuery part around the given axis."""
 
     if center is None:
@@ -517,16 +521,19 @@ def rotate_part(part, angle, center=(0.0, 0.0, 0.0), axis=(0.0, 0.0, 1.0)):
     axis_vec = cq.Vector(*axis)
     rotate_retval = part.rotate(center_vec, center_vec + axis_vec, angle)
     if hasattr(part, "reconstruct"):
-        return part.reconstruct()
+        return part.reconstruct(rotate_retval)
     else:
         return rotate_retval
 
 
 def rotate_part_native(part, v1, v2, angle):
+    # There are NO FRAMEWORK SPECIFC CALLS allowed here! Use adapter functions only!
+    #  isinstance(x, NamedPart)  or similar ARE FORBIDDEN here!
+    # if something is needed like this, do it in reconstruct
 
     rotation_retval = part.rotate(v1, v2, angle)
     if hasattr(part, "reconstruct"):
-        return part.reconstruct()
+        return part.reconstruct(rotation_retval)
     else:
         return rotation_retval
 

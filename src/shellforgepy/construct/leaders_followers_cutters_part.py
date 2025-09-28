@@ -122,11 +122,23 @@ class LeaderFollowersCuttersPart:
         ]
         return self
 
-    def reconstruct(self):
+    def reconstruct(self, transformed_result=None):
         """Reconstruct this composite after in-place transformation."""
-        return LeaderFollowersCuttersPart(
-            copy_part(self.leader),
-            [copy_part(follower) for follower in self.followers],
-            [copy_part(cutter) for cutter in self.cutters],
-            [copy_part(part) for part in self.non_production_parts],
-        )
+
+        if transformed_result is not None:
+            # Use the transformation result if provided
+            return LeaderFollowersCuttersPart(
+                transformed_result.leader,
+                [follower for follower in transformed_result.followers],
+                [cutter for cutter in transformed_result.cutters],
+                [part for part in transformed_result.non_production_parts],
+            )
+
+        else:
+
+            return LeaderFollowersCuttersPart(
+                copy_part(self.leader),
+                [copy_part(follower) for follower in self.followers],
+                [copy_part(cutter) for cutter in self.cutters],
+                [copy_part(part) for part in self.non_production_parts],
+            )

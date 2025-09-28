@@ -25,6 +25,8 @@ def translate(x, y, z):
     """Create a translation transformation function."""
 
     # There are NO FRAMEWORK SPECIFC CALLS allowed here! Use adapter functions only!
+    #  isinstance(x, NamedPart)  or similar ARE FORBIDDEN here!"
+
     def retval(body):
         body_copy = copy_part(body)
         return translate_part(body_copy, (x, y, z))
@@ -36,6 +38,8 @@ def rotate(angle, center=None, axis=None):
     """Create a rotation transformation function."""
 
     # There are NO FRAMEWORK SPECIFC CALLS allowed here! Use adapter functions only!
+    #  isinstance(x, NamedPart)  or similar ARE FORBIDDEN here!"
+
     def retval(body):
         body_copy = copy_part(body)
 

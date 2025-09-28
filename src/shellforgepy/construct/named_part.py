@@ -20,11 +20,16 @@ class NamedPart:
     def rotate(self, *args):
         """Rotate this part using adapter function for consistent interface."""
         rotated_part = rotate_part_native(self.part, *args)
-        return rotated_part
+        return NamedPart(self.name, rotated_part)
 
-    def reconstruct(self):
-        """Reconstruct this NamedPart after in-place transformation."""
-        return NamedPart(self.name, copy_part(self.part))
+    def reconstruct(self, transformed_result=None):
+        """Reconstruct this NamedPart after transformation."""
+        if transformed_result is not None:
+            # Use the transformation result if provided
+            return NamedPart(self.name, transformed_result)
+        else:
+            # Fallback for backward compatibility
+            return NamedPart(self.name, copy_part(self.part))
 
     def fuse(self, other):
         """Fuse this part with another part - duck-types as native CAD object."""
