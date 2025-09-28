@@ -4,7 +4,12 @@ from shellforgepy.construct.leaders_followers_cutters_part import (
 )
 from shellforgepy.construct.named_part import NamedPart
 from shellforgepy.produce.arrange_and_export import PartList
-from shellforgepy.simple import create_basic_box, get_bounding_box_center, translate
+from shellforgepy.simple import (
+    create_basic_box,
+    get_bounding_box_center,
+    rotate,
+    translate,
+)
 
 
 def test_part_list_add_and_as_list():
@@ -50,7 +55,8 @@ def test_leader_followers_translate_and_rotate():
         original_follower_center[0] + 5
     )
 
-    group.rotate(90, center=(0, 0, 0), axis=(0, 0, 1))
+    # Use functional interface for framework-standardized parameters
+    group = rotate(90, center=(0, 0, 0), axis=(0, 0, 1))(group)
     rotated_leader_center = get_bounding_box_center(group.leader)
 
     # A 90° rotation around Z should transform (x, y, z) -> (-y, x, z)

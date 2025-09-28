@@ -114,10 +114,10 @@ def test_named_part_rotate():
     named_part = NamedPart("test_box", box)
 
     # Rotate 90 degrees around Z axis
-    rotated_part = named_part.rotate(90, (0, 0, 0), (0, 0, 1))
+    rotated_part = named_part.rotate((0.0, 0.0, 0.0), (0.0, 0.0, 1.0), 90)
 
     # After rotation, dimensions should swap (roughly)
-    min_point, max_point = get_bounding_box(rotated_part.part)
+    min_point, max_point = get_bounding_box(rotated_part)
     width = max_point[0] - min_point[0]
     depth = max_point[1] - min_point[1]
 

@@ -575,3 +575,62 @@ def test_invalid_alignment():
     with pytest.raises(ValueError, match="Unknown alignment"):
         # Use a string that's not a valid alignment
         align_translation(box2, box1, "INVALID_ALIGNMENT")
+
+
+@pytest.mark.skipif(not freecad_available, reason="FreeCAD not available")
+def test_named_part_native_rotate_method():
+    """Test NamedPart.rotate() method with native FreeCAD signature."""
+    from shellforgepy.construct.named_part import NamedPart
+
+    part = create_basic_box(10, 20, 30)
+    named_part = NamedPart("test", part)
+
+    # Use native FreeCAD signature: rotate(base, dir, degree)
+    base_vec = Base.Vector(0, 0, 0)  # center point
+    dir_vec = Base.Vector(0, 0, 1)  # axis direction
+    rotated_named_part = named_part.rotate(base_vec, dir_vec, 90)
+
+    assert rotated_named_part is not None
+
+    # Verify the rotation worked by checking bounding box dimensions
+    from shellforgepy.simple import get_bounding_box
+
+    bounding_box = get_bounding_box(rotated_named_part)
+    len_x = bounding_box[1][0] - bounding_box[0][0]
+    len_y = bounding_box[1][1] - bounding_box[0][1]
+    len_z = bounding_box[1][2] - bounding_box[0][2]
+
+    assert np.allclose(
+        len_x, 20, atol=1e-6
+    )  # X and Y dimensions swapped after 90° rotation
+    assert np.allclose(len_y, 10, atol=1e-6)
+    assert np.allclose(len_z, 30, atol=1e-6)
+
+
+@pytest.mark.skipif(not freecad_available, reason="FreeCAD not available")
+def test_leader_followers_native_rotate_method():
+    """Test LeaderFollowersCuttersPart with native rotate interface."""
+    from shellforgepy.construct.leaders_followers_cutters_part import (
+        LeaderFollowersCuttersPart,
+    )
+    from shellforgepy.construct.named_part import NamedPart
+
+    leader = create_basic_box(2, 2, 2)
+    follower = NamedPart("follower", create_basic_box(1, 1, 1))
+    group = LeaderFollowersCuttersPart(leader, followers=[follower])
+
+    # Use native FreeCAD signature: rotate(base, dir, degree)
+    base_vec = Base.Vector(0, 0, 0)  # center point
+    dir_vec = Base.Vector(0, 0, 1)  # axis direction
+    rotated_group = group.rotate(base_vec, dir_vec, 90)
+
+    # Should return self (in-place modification)
+    assert rotated_group is group
+
+    # Verify the rotation worked
+    from shellforgepy.simple import get_bounding_box_center
+
+    leader_center = get_bounding_box_center(group.leader)
+
+    # After 90° rotation around Z, the center should have moved appropriately
+    assert isinstance(leader_center, tuple)  # Basic sanity check

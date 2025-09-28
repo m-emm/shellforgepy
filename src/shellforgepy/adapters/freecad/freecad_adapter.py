@@ -467,16 +467,11 @@ def export_solid_to_stl(
 
 def copy_part(part):
     """Create a copy of a FreeCAD part."""
-    if hasattr(part, "copy"):
-        return part.copy()
-    else:
-        return part
+    return part.copy()
 
 
 def translate_part(part, vector):
     """Translate a FreeCAD part by the given vector."""
-    if len(vector) != 3:
-        raise ValueError("Vector must contain exactly three components")
     if np.linalg.norm(np.array(vector)) < 1e-8:
         return part.copy()  # No translation needed
     translated = part.copy()
@@ -499,10 +494,19 @@ def rotate_part(part, angle, center=(0.0, 0.0, 0.0), axis=(0.0, 0.0, 1.0)):
         axis = (0.0, 0.0, 1.0)
     center_vec = Base.Vector(center[0], center[1], center[2])
     axis_vec = Base.Vector(axis[0], axis[1], axis[2])
-    rotated = part.copy()
     # FreeCAD's rotate method expects angle in degrees, not radians
-    rotated.rotate(center_vec, axis_vec, angle)
-    return rotated
+    part.rotate(center_vec, axis_vec, angle)
+    return part
+
+
+def rotate_part_native(part, base, dir, degree):
+    """Rotate using native FreeCAD signature: rotate(base, dir, degree)"""
+    part.rotate(base, dir, degree)
+
+    if hasattr(part, "reconstruct"):
+        return part.reconstruct()
+    else:
+        return part
 
 
 def fuse_parts(part1, part2):

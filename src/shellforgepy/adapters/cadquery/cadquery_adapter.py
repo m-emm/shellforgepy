@@ -497,29 +497,38 @@ def export_solid_to_stl(
 
 def copy_part(part):
     """Create a copy of a CadQuery part."""
-    if hasattr(part, "copy"):
-        return part.copy()
-    else:
-        return part
+    return part.copy()
 
 
 def translate_part(part, vector):
     """Translate a CadQuery part by the given vector."""
-    if len(vector) != 3:
-        raise ValueError("Vector must contain exactly three components")
     vec = cq.Vector(*map(float, vector))
     return part.translate(vec)
 
 
 def rotate_part(part, angle, center=(0.0, 0.0, 0.0), axis=(0.0, 0.0, 1.0)):
     """Rotate a CadQuery part around the given axis."""
+
     if center is None:
         center = (0.0, 0.0, 0.0)
     if axis is None:
         axis = (0.0, 0.0, 1.0)
     center_vec = cq.Vector(*center)
     axis_vec = cq.Vector(*axis)
-    return part.rotate(center_vec, center_vec + axis_vec, angle)
+    rotate_retval = part.rotate(center_vec, center_vec + axis_vec, angle)
+    if hasattr(part, "reconstruct"):
+        return part.reconstruct()
+    else:
+        return rotate_retval
+
+
+def rotate_part_native(part, v1, v2, angle):
+
+    rotation_retval = part.rotate(v1, v2, angle)
+    if hasattr(part, "reconstruct"):
+        return part.reconstruct()
+    else:
+        return rotation_retval
 
 
 def fuse_parts(part1, part2):

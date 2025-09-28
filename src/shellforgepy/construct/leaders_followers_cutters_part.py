@@ -1,6 +1,6 @@
 from typing import Mapping
 
-from shellforgepy.construct.alignment_operations import copy_part, rotate, translate
+from shellforgepy.adapters.simple import copy_part, rotate_part_native, translate_part
 from shellforgepy.construct.named_part import NamedPart
 from shellforgepy.construct.part_collector import PartCollector
 
@@ -101,35 +101,32 @@ class LeaderFollowersCuttersPart:
         )
 
     def translate(self, vector):
-
-        vec = vector
-        translate_func = translate(*vec)
-        self.leader = translate_func(self.leader)
-        self.followers = [translate_func(follower) for follower in self.followers]
-        self.cutters = [translate_func(cutter) for cutter in self.cutters]
+        """Translate all parts in this composite."""
+        self.leader = translate_part(self.leader, vector)
+        self.followers = [follower.translate(vector) for follower in self.followers]
+        self.cutters = [cutter.translate(vector) for cutter in self.cutters]
         self.non_production_parts = [
-            translate_func(part) for part in self.non_production_parts
+            part.translate(vector) for part in self.non_production_parts
         ]
         return self
 
-    def rotate(
-        self,
-        angle,
-        center=(0.0, 0.0, 0.0),
-        axis=(0.0, 0.0, 1.0),
-    ):
-
-        rotation_func = rotate(angle, center=center, axis=axis)
-        self.leader = rotation_func(self.leader)
+    def rotate(self, *args):
+        """Rotate all parts in this composite."""
+        self.leader = rotate_part_native(self.leader, *args)
         self.followers = [
-            follower.rotate(angle, center=center, axis=axis)
-            for follower in self.followers
+            rotate_part_native(follower, *args) for follower in self.followers
         ]
-        self.cutters = [
-            cutter.rotate(angle, center=center, axis=axis) for cutter in self.cutters
-        ]
+        self.cutters = [rotate_part_native(cutter, *args) for cutter in self.cutters]
         self.non_production_parts = [
-            part.rotate(angle, center=center, axis=axis)
-            for part in self.non_production_parts
+            rotate_part_native(part, *args) for part in self.non_production_parts
         ]
         return self
+
+    def reconstruct(self):
+        """Reconstruct this composite after in-place transformation."""
+        return LeaderFollowersCuttersPart(
+            copy_part(self.leader),
+            [copy_part(follower) for follower in self.followers],
+            [copy_part(cutter) for cutter in self.cutters],
+            [copy_part(part) for part in self.non_production_parts],
+        )

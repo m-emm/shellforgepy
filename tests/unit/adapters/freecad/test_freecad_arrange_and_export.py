@@ -114,11 +114,15 @@ def test_named_part_rotate():
     box = create_basic_box(20, 10, 5)  # Longer in X direction
     named_part = NamedPart("test_box", box)
 
-    # Rotate 90 degrees around Z axis
-    rotated_part = named_part.rotate(90, (0, 0, 0), (0, 0, 1))
+    # Rotate 90 degrees around Z axis using native FreeCAD signature: rotate(base, dir, degree)
+    from FreeCAD import Base
+
+    base_vec = Base.Vector(0, 0, 0)  # center point
+    dir_vec = Base.Vector(0, 0, 1)  # axis direction
+    rotated_part = named_part.rotate(base_vec, dir_vec, 90)
 
     # After rotation, dimensions should swap (roughly)
-    min_point, max_point = get_bounding_box(rotated_part.part)
+    min_point, max_point = get_bounding_box(rotated_part)
     width = max_point[0] - min_point[0]
     depth = max_point[1] - min_point[1]
 

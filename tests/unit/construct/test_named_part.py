@@ -49,11 +49,12 @@ def test_named_part_translate_method():
 
 
 def test_named_part_rotate_method():
-    """Test NamedPart.rotate() method."""
+    """Test NamedPart with functional rotate interface."""
     part = create_basic_box(10, 20, 30)
     named_part = NamedPart("test", part)
 
-    rotated_named_part = named_part.rotate(90, center=(0, 0, 0), axis=(0, 0, 1))
+    # Use functional interface for framework-standardized parameters
+    rotated_named_part = rotate(90, center=(0, 0, 0), axis=(0, 0, 1))(named_part)
 
     assert rotated_named_part is not None
     assert rotated_named_part.name == "test"

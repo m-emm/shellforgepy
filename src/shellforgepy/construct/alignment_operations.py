@@ -1,7 +1,12 @@
 from types import SimpleNamespace
 
 import numpy as np
-from shellforgepy.adapters.simple import get_bounding_box, rotate_part, translate_part
+from shellforgepy.adapters.simple import (
+    copy_part,
+    get_bounding_box,
+    rotate_part,
+    translate_part,
+)
 from shellforgepy.construct.alignment import Alignment
 from shellforgepy.construct.bounding_box_helpers import (
     get_xlen,
@@ -19,20 +24,10 @@ from shellforgepy.construct.bounding_box_helpers import (
 def translate(x, y, z):
     """Create a translation transformation function."""
 
+    # There are NO FRAMEWORK SPECIFC CALLS allowed here! Use adapter functions only!
     def retval(body):
-        # Handle special framework objects
-        from shellforgepy.construct.leaders_followers_cutters_part import (
-            LeaderFollowersCuttersPart,
-        )
-        from shellforgepy.construct.named_part import NamedPart
-
-        if isinstance(body, NamedPart):
-            return body.translate((x, y, z))
-        elif isinstance(body, LeaderFollowersCuttersPart):
-            return body.translate((x, y, z))
-
-        # Handle raw parts
-        return translate_part(body, (x, y, z))
+        body_copy = copy_part(body)
+        return translate_part(body_copy, (x, y, z))
 
     return retval
 
@@ -40,20 +35,11 @@ def translate(x, y, z):
 def rotate(angle, center=None, axis=None):
     """Create a rotation transformation function."""
 
+    # There are NO FRAMEWORK SPECIFC CALLS allowed here! Use adapter functions only!
     def retval(body):
-        # Handle special framework objects
-        from shellforgepy.construct.leaders_followers_cutters_part import (
-            LeaderFollowersCuttersPart,
-        )
-        from shellforgepy.construct.named_part import NamedPart
+        body_copy = copy_part(body)
 
-        if isinstance(body, NamedPart):
-            return body.rotate(angle, center=center, axis=axis)
-        elif isinstance(body, LeaderFollowersCuttersPart):
-            return body.rotate(angle, center=center, axis=axis)
-
-        # Handle raw parts
-        return rotate_part(body, angle, center=center, axis=axis)
+        return rotate_part(body_copy, angle, center=center, axis=axis)
 
     return retval
 
@@ -211,10 +197,3 @@ def align(part, to, alignment, axes=None):
     This is a wrapper that delegates to the CAD adapter's align function.
     """
     return align_translation(part, to, alignment, axes)(part)
-
-
-def copy_part(part):
-    """Create a copy of the given part using the CAD adapter's copy function."""
-    from shellforgepy.adapters.simple import copy_part as adapter_copy_part
-
-    return adapter_copy_part(part)

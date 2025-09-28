@@ -83,15 +83,17 @@ def test_leader_followers_translate_method():
 
 
 def test_leader_followers_rotate_method():
-    """Test LeaderFollowersCuttersPart.rotate() method."""
+    """Test LeaderFollowersCuttersPart with functional rotate interface."""
     leader = create_basic_box(2, 2, 2)
     follower = NamedPart("follower", create_basic_box(1, 1, 1))
     group = LeaderFollowersCuttersPart(leader, followers=[follower])
 
-    rotated_group = group.rotate(90, center=(0, 0, 0), axis=(0, 0, 1))
+    # Use functional interface for framework-standardized parameters
+    rotated_group = rotate(90, center=(0, 0, 0), axis=(0, 0, 1))(group)
 
-    # Should return self
-    assert rotated_group is group
+    # Should return a new group (functional interface returns new objects)
+    assert rotated_group is not group
+    assert isinstance(rotated_group, LeaderFollowersCuttersPart)
 
     # Check that rotation occurred (dimensions should swap)
     leader_bbox = get_bounding_box(group.leader)
@@ -227,10 +229,12 @@ def test_leader_followers_fuse_operations():
 
 def test_leader_followers_complex_nested_operations():
     """Test complex nested operations to ensure consistency."""
-    # Create a complex group
+    # Create a complex group with properly constructed NamedParts
     leader = create_basic_box(5, 5, 5)
-    follower = NamedPart("follower", translate(10, 0, 0)(create_basic_box(2, 2, 2)))
-    cutter = NamedPart("cutter", translate(0, 10, 0)(create_basic_box(1, 1, 1)))
+    follower_part = translate(10, 0, 0)(create_basic_box(2, 2, 2))
+    follower = NamedPart("follower", follower_part)
+    cutter_part = translate(0, 10, 0)(create_basic_box(1, 1, 1))
+    cutter = NamedPart("cutter", cutter_part)
     group = LeaderFollowersCuttersPart(leader, followers=[follower], cutters=[cutter])
 
     # Apply a complex chain of transformations
