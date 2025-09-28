@@ -1,0 +1,1612 @@
+{
+    "shellforgepy/freecad_python_docker.sh": {
+        "checksum": "02739ac8839cc32590c262ce927fca8a56dae392ee8f1744e9ca2c8d97bcb4f7",
+        "summary": {
+            "file_content_summary": "This Bash script facilitates running Python commands within the FreeCAD environment using Docker. It supports various modes such as interactive REPL, script execution, and module running. Key components include environment setup, FreeCAD module availability checks, and argument parsing for different execution modes.",
+            "file_keywords": [
+                "FreeCAD",
+                "Docker",
+                "Python",
+                "Bash script",
+                "command-line",
+                "REPL",
+                "module execution",
+                "script execution"
+            ],
+            "file_dependencies": [
+                "shellforgepy/docker/freecad_python.FCMacro"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/AUTHORS.md": {
+        "checksum": "374d32e2c43a1adda1c2ffc98ee6d45077af01ef50bd433fe62553d2c3529197",
+        "summary": {
+            "file_content_summary": "The file 'AUTHORS.md' lists the contributors to the project, specifically highlighting Markus Emmenegger as a contributor. It encourages others to add their names when they contribute, serving as a record of contributions to the project.",
+            "file_keywords": [
+                "authors",
+                "contributors",
+                "project contributions",
+                "Markus Emmenegger"
+            ],
+            "file_dependencies": [],
+            "relevance": "LOW"
+        }
+    },
+    "shellforgepy/debug_functional.py": {
+        "checksum": "821e77d7c9adbe58c6307343c97334b40d2bddede823189b47a512783c1ad652",
+        "summary": {
+            "file_content_summary": "This file tests the translation of a 3D part using both functional and direct method approaches. It creates a basic box and a named part, then compares the results of translating them using different methods, including handling translations with a vector from FreeCAD. It prints the centers of the parts before and after translation.",
+            "file_keywords": [
+                "translation",
+                "3D part",
+                "functional approach",
+                "direct method",
+                "FreeCAD",
+                "named part",
+                "geometry"
+            ],
+            "file_dependencies": [
+                "shellforgepy/construct/alignment_operations.py",
+                "shellforgepy/construct/named_part.py",
+                "shellforgepy/simple.py",
+                "FreeCAD"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/debug_chain.py": {
+        "checksum": "6fecc69dd46de3eca5bf7202642253ef10c81fd65da207e1ca1d19b0c4b30953",
+        "summary": {
+            "file_content_summary": "This file demonstrates the use of transformation functions from the 'shellforgepy.simple' module to manipulate a 3D box object. It creates a basic box, applies translation and rotation transformations, and prints the box's center after each transformation. It also showcases chaining transformations for combined effects.",
+            "file_keywords": [
+                "3D transformations",
+                "box manipulation",
+                "translation",
+                "rotation",
+                "chained transformations",
+                "shellforgepy",
+                "example code"
+            ],
+            "file_dependencies": [
+                "shellforgepy/simple.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/debug_adapter.py": {
+        "checksum": "3d13ec56cac74d9c0af7aa38df823210a5ab8b85831584bb42a249deb62a0e21",
+        "summary": {
+            "file_content_summary": "This script is a debugging tool for understanding the behavior of NamedPart reconstruction in the shellforgepy project. It creates a basic box part, wraps it in a NamedPart, and tests the functionality of adapter functions for copying and translating parts, while printing the centers of the original and modified parts.",
+            "file_keywords": [
+                "debugging",
+                "NamedPart",
+                "adapter functions",
+                "copy part",
+                "translate part",
+                "bounding box center"
+            ],
+            "file_dependencies": [
+                "shellforgepy/adapters/simple.py",
+                "shellforgepy/construct/named_part.py",
+                "shellforgepy/simple.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/debug_named_part.py": {
+        "checksum": "7af4484bbfcceb85b65cafb703539a234074677632b302e0cdeef30454846160",
+        "summary": {
+            "file_content_summary": "This script is a debug tool for analyzing the translation behavior of a NamedPart object in the ShellForgePy project. It creates a basic box and a NamedPart, applies a translation, and prints the original and translated centers of both the part and the named part, along with the name and type of the translated named part.",
+            "file_keywords": [
+                "debug",
+                "NamedPart",
+                "translation",
+                "geometry",
+                "bounding box",
+                "ShellForgePy"
+            ],
+            "file_dependencies": [
+                "shellforgepy/construct/alignment_operations.py",
+                "shellforgepy/construct/named_part.py",
+                "shellforgepy/simple.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/CHANGELOG.md": {
+        "checksum": "3b50abeaa7a02a5d91fecd5e45257d70a35538a9aeef17f7f6fd358333c1dc3c",
+        "summary": {
+            "file_content_summary": "The Changelog file documents all notable changes to the project, following the Keep a Changelog format and adhering to Semantic Versioning. It includes sections for added, changed, deprecated, removed, fixed, and security updates, with the current entry noting the initial project setup.",
+            "file_keywords": [
+                "Changelog",
+                "project updates",
+                "versioning",
+                "semantic versioning",
+                "notable changes"
+            ],
+            "file_dependencies": [],
+            "relevance": "LOW"
+        }
+    },
+    "shellforgepy/precommit.sh": {
+        "checksum": "f44bf589d84768d7e6fcc84bcfe7cc4459770568527d69c45379aeb579294885",
+        "summary": {
+            "file_content_summary": "This Bash script automates code formatting and linting for Python files in the 'src' and 'tests' directories. It uses 'isort' and 'black' for formatting, and 'flake8' for linting, checking for syntax errors and unused imports. The script ensures code quality before committing changes.",
+            "file_keywords": [
+                "Bash script",
+                "code formatting",
+                "linting",
+                "isort",
+                "black",
+                "flake8",
+                "Python",
+                "automation"
+            ],
+            "file_dependencies": [],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/pyproject.toml": {
+        "checksum": "0d55d76aad2f1b6bb0b12715f3c4bbf4128917b8ed43cfe3ee7c573ab9303417",
+        "summary": {
+            "file_content_summary": "This file is a configuration for the build system of the project, specifying dependencies for building the package using setuptools. It includes requirements for setuptools and setuptools_scm, along with settings for versioning and code formatting using Black.",
+            "file_keywords": [
+                "build system",
+                "setuptools",
+                "dependencies",
+                "versioning",
+                "configuration",
+                "black"
+            ],
+            "file_dependencies": [],
+            "relevance": "LOW"
+        }
+    },
+    "shellforgepy/debug_translate.py": {
+        "checksum": "5be1860763b176dfbac7885a1b905c9475fd6f0de079cc36f8199edc1d3702f2",
+        "summary": {
+            "file_content_summary": "This Python script demonstrates the creation and manipulation of geometric parts using the ShellForgePy library. It creates a basic box and a named part, prints their original bounding box centers, applies a translation, and then prints the new centers and the type of the translated named part.",
+            "file_keywords": [
+                "Python",
+                "ShellForgePy",
+                "geometry",
+                "translation",
+                "bounding box",
+                "NamedPart",
+                "create_basic_box"
+            ],
+            "file_dependencies": [
+                "shellforgepy/construct/simple_objects.py",
+                "shellforgepy/simple.py",
+                "shellforgepy/construct/named_part.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/README.md": {
+        "checksum": "0303db0ca9d7dd63349127724473510ea28b1e5be27f34c43d667d84f1f425e2",
+        "summary": {
+            "file_content_summary": "The file provides an overview of the ShellForgePy project, a Python toolkit for modeling geometry and exporting parts for fabrication using various CAD backends like CadQuery and FreeCAD. It includes installation instructions, a quick start guide, project layout, and contribution guidelines, emphasizing backend-agnostic modeling and alignment-centric construction.",
+            "file_keywords": [
+                "ShellForgePy",
+                "Python",
+                "CAD",
+                "geometry",
+                "fabrication",
+                "CadQuery",
+                "FreeCAD",
+                "installation",
+                "contribution",
+                "export"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": [
+                "shellforgepy/src/shellforgepy/simple.py",
+                "shellforgepy/src/shellforgepy/construct/construct_utils.py",
+                "shellforgepy/src/shellforgepy/produce/arrange_and_export.py"
+            ]
+        }
+    },
+    "shellforgepy/setup.py": {
+        "checksum": "f2a9df0590f0a989ec41df14f34a052ba25c3874529c0398b0b7826c0d5046a6",
+        "summary": {
+            "file_content_summary": "This setup file for the shellforgepy project is generated by PyScaffold and configures the project using setuptools. It includes logic to handle versioning through setuptools_scm and provides error handling for build issues, prompting users to update necessary packages if an error occurs.",
+            "file_keywords": [
+                "setup",
+                "setuptools",
+                "PyScaffold",
+                "project configuration",
+                "versioning",
+                "build process"
+            ],
+            "file_dependencies": [
+                "shellforgepy/pyproject.toml",
+                "shellforgepy/setup.cfg"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/debug_base_vector.py": {
+        "checksum": "b413048131962ee2206979cb62799fa9fc19765ab0a7924451c61d1ddab6e241",
+        "summary": {
+            "file_content_summary": "This file tests the functionality of the NamedPart class's translate method using a Base.Vector from FreeCAD. It creates a basic box part, initializes a NamedPart with it, and attempts to translate the part by a specified vector, printing the original and new center positions of the part's bounding box.",
+            "file_keywords": [
+                "NamedPart",
+                "translate",
+                "Base.Vector",
+                "FreeCAD",
+                "bounding box",
+                "test",
+                "geometry"
+            ],
+            "file_dependencies": [
+                "shellforgepy/construct/named_part.py",
+                "shellforgepy/simple.py",
+                "FreeCAD"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/CONTRIBUTING.md": {
+        "checksum": "c000ca5345f5bb7bb99eca3b4d3a9bf4daf7758c3b86bb53fe4ccef3ee97db20",
+        "summary": {
+            "file_content_summary": "This file provides guidelines for contributing to the shellforgepy project, detailing the development setup, making changes, code style, and testing procedures. It encourages contributions by outlining steps for forking the repository, creating a virtual environment, running tests, and submitting pull requests, while emphasizing the importance of code formatting and testing.",
+            "file_keywords": [
+                "contributing",
+                "development setup",
+                "git",
+                "testing",
+                "code style",
+                "pull request",
+                "Python",
+                "Black",
+                "isort"
+            ],
+            "file_dependencies": [],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/freecad_python_simple.sh": {
+        "checksum": "25d111eab2a473fbafde09b0cacd76e5e8827ce7628c78ad1cde6707468340c3",
+        "summary": {
+            "file_content_summary": "This Bash script is a runner for FreeCAD Python using a Docker image. It sets up a virtual display for headless operation, installs necessary Python dependencies if not already installed, and executes a FreeCAD macro. The script handles command-line arguments for Python execution and ensures a clean environment by removing the Docker container after execution.",
+            "file_keywords": [
+                "FreeCAD",
+                "Docker",
+                "Bash script",
+                "Python",
+                "headless operation",
+                "dependencies",
+                "Xvfb"
+            ],
+            "file_dependencies": [],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/setup.cfg": {
+        "checksum": "c421a40ee1050031120efda9da191956fef79a4a6bd7b7c0f6892e78a0dcecd0",
+        "summary": {
+            "file_content_summary": "This configuration file is for the 'shellforgepy' project, detailing metadata, package options, dependencies, and testing configurations. It specifies project details like name, author, and license, along with required packages and optional dependencies for different functionalities. It also includes settings for testing and code style checks.",
+            "file_keywords": [
+                "configuration",
+                "setuptools",
+                "metadata",
+                "dependencies",
+                "testing",
+                "Python"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": [
+                "shellforgepy/README.md",
+                "shellforgepy/LICENSE.txt"
+            ]
+        }
+    },
+    "shellforgepy/freecad_python.sh": {
+        "checksum": "1b984f4b0259665e73339ffa6947890015887b6996c7e63ddcfc3f79d624d52c",
+        "summary": {
+            "file_content_summary": "This Bash script serves as a generic runner for executing Python commands within the FreeCAD environment. It allows users to start an interactive REPL, run scripts, or execute modules while managing command-line arguments and setting up the necessary environment for FreeCAD. The script ensures a clean shutdown of the FreeCAD session after execution.",
+            "file_keywords": [
+                "FreeCAD",
+                "Python",
+                "Bash script",
+                "REPL",
+                "command-line",
+                "script execution",
+                "environment setup"
+            ],
+            "file_dependencies": [],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/AGENTS.md": {
+        "checksum": "30e388cc0a26b0a5977b2a0031bb0a2a8aa6f8b49b1108764548fa81bccec142",
+        "summary": {
+            "file_content_summary": "This file serves as a guide for the ShellForge Python runtime, detailing its structure, coding standards, testing protocols, and integration points. It outlines the organization of the codebase into geometry, construction, production, and adapter modules, emphasizing backend-agnostic modeling and the use of specific formatting and testing practices.",
+            "file_keywords": [
+                "ShellForge",
+                "Python",
+                "CAD",
+                "geometry",
+                "testing",
+                "adapters",
+                "development",
+                "code style"
+            ],
+            "file_dependencies": [],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/LICENSE.txt": {
+        "checksum": "ffa28eb64212186cd4adf31b31aba585f6dad732edd0c149ede6fc6102058709",
+        "summary": {
+            "file_content_summary": "This file contains the MIT License, granting permission to use, copy, modify, and distribute the software without restrictions. It includes a disclaimer of warranty and liability, ensuring that the authors are not responsible for any claims or damages arising from the use of the software.",
+            "file_keywords": [
+                "MIT License",
+                "software license",
+                "copyright",
+                "permission",
+                "disclaimer",
+                "liability"
+            ],
+            "file_dependencies": [],
+            "relevance": "LOW"
+        }
+    },
+    "shellforgepy/tools/fix_relative_imports.py": {
+        "checksum": "ef30e495562d800286e3acf10290df0f23111af5e052279a5f6e88e6a292b7e5",
+        "summary": {
+            "file_content_summary": "This script fixes relative imports in Python files by converting them to absolute imports, excluding special 'simple.py' files. It uses the Abstract Syntax Tree (AST) to identify relative imports, resolves them to absolute paths, and rewrites the import statements in the original files. The main components include classes and functions for finding and fixing imports.",
+            "file_keywords": [
+                "relative imports",
+                "absolute imports",
+                "Python",
+                "AST",
+                "import fixer",
+                "source code",
+                "file processing"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": [
+                "shellforgepy/src/shellforgepy/__init__.py"
+            ]
+        }
+    },
+    "shellforgepy/tools/fix_imports_robust.py": {
+        "checksum": "c4e5329ac7a3a0ba569e202530914e7f4a802f2238a29fa74568e8b1253cf673",
+        "summary": {
+            "file_content_summary": "This script automates the correction of misplaced imports in Python files using AST-based analysis. It identifies symbols, their locations, and generates appropriate import specifications while handling special cases for adapter exports. Key functions include discovering symbol locations, extracting used symbols, and generating correct imports for files.",
+            "file_keywords": [
+                "import fixer",
+                "AST",
+                "Python",
+                "symbol analysis",
+                "import regeneration",
+                "adapter exports"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": [
+                "shellforgepy/tools/import_fixer.py",
+                "shellforgepy/tools/import_regenerator.py"
+            ]
+        }
+    },
+    "shellforgepy/tools/import_fixer.py": {
+        "checksum": "629d9e6f2b857b4c77424f04838c97e785c2db9249992e19b5660b4a9f0ed6e7",
+        "summary": {
+            "file_content_summary": "This file analyzes Python files in a project to extract import statements and module exports using the Abstract Syntax Tree (AST) module. It defines an ImportVisitor class to traverse the AST, functions to analyze imports and exports, and a module_paths function to scan source and test directories, collecting import information for each file.",
+            "file_keywords": [
+                "AST",
+                "import analysis",
+                "Python",
+                "module exports",
+                "source code",
+                "dependency analysis"
+            ],
+            "file_dependencies": [
+                "shellforgepy/src/shellforgepy/__init__.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tools/fix_imports.py": {
+        "checksum": "395f6adcc3a056486b010299a98af67d2b6d8bbf3b31b8d9f697ab0fd948a019",
+        "summary": {
+            "file_content_summary": "This script automates the correction of misplaced imports in Python files using AST-based analysis. It identifies incorrect imports, determines the correct paths, and modifies the files accordingly. Key functions include determining correct imports, fixing invalid imports, and handling both absolute and relative import statements.",
+            "file_keywords": [
+                "import fixer",
+                "AST",
+                "Python",
+                "import correction",
+                "module paths",
+                "robust regeneration"
+            ],
+            "file_dependencies": [
+                "shellforgepy/tools/import_fixer.py",
+                "shellforgepy/tools/import_regenerator.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tools/import_regenerator.py": {
+        "checksum": "4520ee6081775130771398d8135816834c7e1800ee98420e57f908778cd6a5bd",
+        "summary": {
+            "file_content_summary": "This file provides utilities for managing Python import statements, including validation of file structure, extraction of current imports, and regeneration of import sections. It defines an ImportSpec class for representing imports and includes error handling for exotic import patterns. The main functions facilitate the removal and regeneration of imports in Python files.",
+            "file_keywords": [
+                "import management",
+                "Python imports",
+                "import regeneration",
+                "file validation",
+                "AST parsing",
+                "error handling"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": [
+                "shellforgepy/tools/fix_imports.py",
+                "shellforgepy/tools/fix_imports_robust.py"
+            ]
+        }
+    },
+    "shellforgepy/tools/container_hash_calculator.py": {
+        "checksum": "2a3d37b65c7660173b7744b004864be9bc5b5316de6ec26d9d331ea58cb420ea",
+        "summary": {
+            "file_content_summary": "This Python script calculates hash values for local container source code, enabling content-based versioning. It identifies relevant files, computes their SHA256 hashes, and provides a command-line interface for users to obtain hashes for specific containers or all containers in a directory.",
+            "file_keywords": [
+                "container",
+                "hash calculation",
+                "versioning",
+                "Python",
+                "Docker",
+                "file management",
+                "CLI"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": [
+                "shellforgepy/tools/container_hash_calculator.py"
+            ]
+        }
+    },
+    "shellforgepy/tools/regenerate_imports.py": {
+        "checksum": "9f0267e902f00f0f989673dcda134f5cdf27eba5cb0c5cca024c5c915eae5f37",
+        "summary": {
+            "file_content_summary": "This file is an advanced import regenerator that analyzes Python files to extract import statements and symbols using the Abstract Syntax Tree (AST). It builds a model of imports, removes existing imports, and regenerates them in a canonical format. Key components include the ImportAnalyzer class, functions for discovering modules, and handling symbol imports.",
+            "file_keywords": [
+                "import regenerator",
+                "AST",
+                "symbol analysis",
+                "Python imports",
+                "module discovery",
+                "import cleaning"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": [
+                "shellforgepy/src/shellforgepy/__init__.py",
+                "shellforgepy/src/shellforgepy/simple.py"
+            ]
+        }
+    },
+    "shellforgepy/docker/freecad_python.FCMacro": {
+        "checksum": "93eca383138c24f2ee24e60d87fc80e55615cc154b280f6c23d5a2ed900f9e57",
+        "summary": {
+            "file_content_summary": "This script serves as a command-line wrapper for FreeCAD, allowing users to run modules, scripts, or code snippets within the FreeCAD environment. It sets up the necessary Python environment, checks for FreeCAD module availability, and provides an interactive REPL for user commands.",
+            "file_keywords": [
+                "FreeCAD",
+                "Python",
+                "command-line",
+                "REPL",
+                "module execution",
+                "script execution"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": [
+                "shellforgepy/src/shellforgepy/__init__.py",
+                "shellforgepy/src/shellforgepy/simple.py"
+            ]
+        }
+    },
+    "shellforgepy/docker/requirements.txt": {
+        "checksum": "c1cf5cafa876829cbc8228cfceca00bdbe706cde71139f7588731f450887cd85",
+        "summary": {
+            "file_content_summary": "This file specifies the core and testing dependencies for the shellforgepy project, including required versions of numpy and scipy for core functionality, and pytest along with pytest-cov for testing purposes. It ensures that the necessary libraries are available for both development and testing.",
+            "file_keywords": [
+                "dependencies",
+                "numpy",
+                "scipy",
+                "pytest",
+                "testing"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": []
+        }
+    },
+    "shellforgepy/docker/Dockerfile": {
+        "checksum": "dbb0593c669da44e8c4e5d0b79b745ac2cd138dfa8a0a0a11281604ba70dd208",
+        "summary": {
+            "file_content_summary": "This Dockerfile sets up a FreeCAD environment by installing necessary system dependencies, copying a FreeCAD Python wrapper, and creating workspace directories. It specifies the working directory and sets the default entrypoint to run the FreeCAD wrapper with the provided macro file.",
+            "file_keywords": [
+                "Dockerfile",
+                "FreeCAD",
+                "Python",
+                "environment setup",
+                "system dependencies",
+                "workspace",
+                "entrypoint"
+            ],
+            "file_dependencies": [],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/docker/build_docker.sh": {
+        "checksum": "34261c4270547a5780f6582aad2b044a71486cb8063bf90ab7fbb91ce779f68f",
+        "summary": {
+            "file_content_summary": "This Bash script builds a Docker image for the FreeCAD Python project. It sets up error handling, determines the project name, calculates a content-based hash for versioning, and builds the Docker image with multiple tags. It also provides a command to test the built image.",
+            "file_keywords": [
+                "Docker",
+                "Bash",
+                "FreeCAD",
+                "image build",
+                "versioning",
+                "hash calculation"
+            ],
+            "file_dependencies": [
+                "shellforgepy/tools/container_hash_calculator.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/test_materialized_connectors.py": {
+        "checksum": "535c2de9195196065bec5885f8aad2bed6982d2ae3fb4985bdc6831a76d4d932",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for the materialized connectors in the ShellForgePy project. It tests functions that compute transformations, create connector parts, and generate screw connectors using a simple hint structure. The tests ensure that the created objects have valid properties and volumes, verifying the functionality of the connector creation logic.",
+            "file_keywords": [
+                "unit tests",
+                "materialized connectors",
+                "CAD",
+                "connector creation",
+                "pytest"
+            ],
+            "file_dependencies": [
+                "shellforgepy.shells.materialized_connectors",
+                "shellforgepy.simple"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/adapters/freecad/test_freecad_basic_transformations.py": {
+        "checksum": "3d42ca1e171bac5d0415a095d2eba34b3907c769024ba5903b5b526076bccf9e",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for basic geometric transformations, specifically translation and rotation of 3D boxes using FreeCAD. It checks the correctness of these transformations by asserting expected outcomes against actual results. The tests are conditionally executed based on the availability of FreeCAD, ensuring compatibility.",
+            "file_keywords": [
+                "FreeCAD",
+                "unit tests",
+                "geometry",
+                "translation",
+                "rotation",
+                "3D boxes",
+                "pytest"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": [
+                "shellforgepy/simple.py"
+            ]
+        }
+    },
+    "shellforgepy/tests/unit/adapters/freecad/test_freecad_arrange_and_export.py": {
+        "checksum": "cb3c84aeb55acf48468792a7dd0aa47824e908ddd1ba0dd9b7b8395938a8985f",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for the PartCollector and NamedPart classes in the shellforgepy library, utilizing pytest. It tests functionalities such as fusing parts, cutting, translating, and rotating named parts, as well as managing a list of parts with unique names. The tests ensure that the FreeCAD environment is available before execution.",
+            "file_keywords": [
+                "pytest",
+                "unit tests",
+                "PartCollector",
+                "NamedPart",
+                "FreeCAD",
+                "geometry",
+                "fusing parts",
+                "cutting parts",
+                "translation",
+                "rotation"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": [
+                "shellforgepy.simple"
+            ]
+        }
+    },
+    "shellforgepy/tests/unit/adapters/freecad/test_freecad_objects_creation.py": {
+        "checksum": "2c1a8748434762356257525e6f4ce536ee8c668d3013b46d408d71216faf207e",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for geometric shape creation in FreeCAD using pytest. It tests the creation of basic shapes like boxes, dodecahedrons, cylinders, spheres, and cones, as well as bounding box utilities and vertex extraction functions. The tests ensure that the shapes are created correctly and validate their properties such as volume and bounding box dimensions.",
+            "file_keywords": [
+                "FreeCAD",
+                "pytest",
+                "unit tests",
+                "geometric shapes",
+                "bounding box",
+                "volume calculation",
+                "shape creation"
+            ],
+            "file_dependencies": [
+                "shellforgepy/simple.py",
+                "shellforgepy/geometry/mesh_builders.py",
+                "shellforgepy/adapters/freecad/freecad_adapter.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/adapters/freecad/test_debug_transforms.py": {
+        "checksum": "e28bec5448f9237adf2bbf63f092d9cfa7c05fe2db2488388064f3b574b36832",
+        "summary": {
+            "file_content_summary": "This file contains test functions for debugging translation and rotation operations on geometric parts using the ShellForgePy library. It verifies the behavior of the NamedPart class and its methods, ensuring that translations and rotations produce expected results. The tests utilize assertions to confirm that the transformations are applied correctly to both native and named parts.",
+            "file_keywords": [
+                "testing",
+                "geometry",
+                "translation",
+                "rotation",
+                "NamedPart",
+                "assertions",
+                "ShellForgePy"
+            ],
+            "file_dependencies": [
+                "shellforgepy/construct/named_part.py",
+                "shellforgepy/simple.py",
+                "shellforgepy/adapters/simple.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/adapters/cadquery/test_cadquery_basic_transformations.py": {
+        "checksum": "24f2b126c51b4efdc0ef2abcba48ccdc40d1efef9cdc034da01a846009ed14a8",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for translation and rotation functions using CadQuery in the ShellForgePy project. It tests basic transformations on 3D boxes, ensuring that translations and rotations behave as expected. The tests are conditionally executed based on the availability of the CadQuery library.",
+            "file_keywords": [
+                "unit tests",
+                "CadQuery",
+                "3D transformations",
+                "translation",
+                "rotation",
+                "ShellForgePy"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": [
+                "shellforgepy/simple.py"
+            ]
+        }
+    },
+    "shellforgepy/tests/unit/adapters/cadquery/test_cadquery_objects_creation.py": {
+        "checksum": "b1e48c351c1b1ffcb954987f921f537d630794114a0af33eba9ba44041e6d14e",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for geometric shape creation using CadQuery, including basic shapes like boxes, cylinders, and dodecahedrons. It tests the validity and volume calculations of these shapes, as well as bounding box and vertex extraction functions. The tests are conditionally executed based on the availability of the CadQuery library.",
+            "file_keywords": [
+                "unit tests",
+                "CadQuery",
+                "geometric shapes",
+                "volume calculations",
+                "bounding box",
+                "vertex extraction"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": [
+                "shellforgepy/geometry/mesh_builders.py",
+                "shellforgepy/simple.py",
+                "shellforgepy/construct/alignment.py",
+                "shellforgepy/adapters/cadquery/cadquery_adapter.py"
+            ]
+        }
+    },
+    "shellforgepy/tests/unit/adapters/cadquery/test_cadquery_arrange_and_export.py": {
+        "checksum": "77936d4b2f6befd2921e708ef7aef7a0489fccea14fac61034eeab2c9d65370e",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for the `PartCollector` and `NamedPart` classes from the `shellforgepy.simple` module, utilizing the CadQuery library for 3D modeling. It tests functionalities such as part creation, fusion, cutting, translation, rotation, and handling of part lists, ensuring that the classes behave as expected under various conditions.",
+            "file_keywords": [
+                "unit tests",
+                "PartCollector",
+                "NamedPart",
+                "CadQuery",
+                "3D modeling",
+                "pytest",
+                "fusion",
+                "cutting",
+                "translation",
+                "rotation"
+            ],
+            "file_dependencies": [
+                "shellforgepy/simple.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/construct_lib/test_mesh_utils.py": {
+        "checksum": "8ff834be29c9ff1d9cf5680844eb5670f622d46c72f14b0559d3b4deb14e0dab",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for vector operations and STL binary writing functions used in a 3D geometry processing context. It tests operations like vector subtraction, cross product, normalization, and the writing of STL files for both single and multiple triangles. The tests ensure the correctness of geometric computations and file output formats.",
+            "file_keywords": [
+                "unit tests",
+                "vector operations",
+                "STL writing",
+                "geometry processing",
+                "3D modeling"
+            ],
+            "file_dependencies": [
+                "shellforgepy/geometry/mesh_utils.py",
+                "shellforgepy/construct/construct_utils.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/construct_lib/test_construct_utils.py": {
+        "checksum": "87ee9aaaa9f5dde3cc9d86db229350d1a1f6f05e6609a0e55d54b4e83339738a",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for the function `split_triangle_topologically`, which splits a triangle into smaller triangles based on specified edge cuts. It verifies the correctness of the splitting process, ensuring that the area is preserved and that the resulting triangles are well-formed. The tests cover various scenarios, including one, two, and three edge splits, as well as no splits.",
+            "file_keywords": [
+                "triangle splitting",
+                "unit tests",
+                "geometry",
+                "area preservation",
+                "topological operations"
+            ],
+            "file_dependencies": [
+                "shellforgepy/construct/construct_utils.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/construct_lib/test_mesh_partition.py": {
+        "checksum": "5e0afb3ac81d23fc5464c376ca709f250bbfce4aa31b6f200ca8d1af08de07b0",
+        "summary": {
+            "file_content_summary": "This file contains functions for visualizing 2D projections of mesh edges and testing mesh partitioning and connector merging functionalities. It utilizes geometric constructs like dodecahedrons and employs classes for mesh partitioning and connector hints. The tests ensure the integrity of mesh operations and validate the merging of collinear connectors.",
+            "file_keywords": [
+                "mesh partitioning",
+                "visualization",
+                "connector hints",
+                "dodecahedron",
+                "testing",
+                "geometry"
+            ],
+            "file_dependencies": [
+                "shellforgepy/construct/construct_utils.py",
+                "shellforgepy/geometry/mesh_builders.py",
+                "shellforgepy/shells/partitionable_spheroid_triangle_mesh.py",
+                "shellforgepy/shells/mesh_partition.py",
+                "shellforgepy/shells/connector_hint.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/construct_lib/test_geometries.py": {
+        "checksum": "f2cae08986d9c074edf2295001b170fcaf2d72a4bd38d1ee980722b1144e511b",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for various geometry creation functions, including cubes, tetrahedrons, dodecahedrons, icosahedrons, and Fibonacci spheres. Each test checks the number of points and faces generated, ensuring correct geometry and face connectivity. It also verifies that the triangles are correctly oriented for use in a partitionable mesh structure.",
+            "file_keywords": [
+                "unit tests",
+                "geometry creation",
+                "cube",
+                "tetrahedron",
+                "dodecahedron",
+                "icosahedron",
+                "Fibonacci sphere",
+                "mesh",
+                "partitionable mesh"
+            ],
+            "file_dependencies": [
+                "shellforgepy.geometry.mesh_builders",
+                "shellforgepy.shells.partitionable_spheroid_triangle_mesh"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/construct_lib/test_spherical_tools.py": {
+        "checksum": "5a59679b03617e7b7fb872e618199b26cf953fc2a78d4942ebb27eb63507ce8c",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for various geometric transformations and intersection functions, including conversions between Cartesian and spherical coordinates, ray-triangle and ray-plane polygon intersections. It also defines classes for representing rotated and translated objects. The tests ensure the correctness of these geometric operations, which are essential for 3D modeling and computational geometry.",
+            "file_keywords": [
+                "unit tests",
+                "geometric transformations",
+                "Cartesian to spherical",
+                "ray intersection",
+                "3D modeling",
+                "numpy"
+            ],
+            "file_dependencies": [
+                "shellforgepy/geometry/spherical_tools.py",
+                "shellforgepy/construct/construct_utils.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/construct_lib/test_connector_utils.py": {
+        "checksum": "0264c90a474b4a15ffd36d52be5760c9ee81b2b24d0812a15c3d40b0633d6e9d",
+        "summary": {
+            "file_content_summary": "This file contains a test function for validating the computation of connector hints from a tetrahedron shell map. It defines the tetrahedron's vertices and faces, creates a shell map, and checks that the computed hints are valid instances of ConnectorHint, ensuring they meet specific conditions related to regions and count.",
+            "file_keywords": [
+                "test",
+                "connector hints",
+                "tetrahedron",
+                "shell map",
+                "geometry",
+                "numpy",
+                "assertions"
+            ],
+            "file_dependencies": [
+                "shellforgepy/geometry/face_point_cloud.py",
+                "shellforgepy/geometry/mesh_builders.py",
+                "shellforgepy/shells/connector_hint.py",
+                "shellforgepy/shells/connector_utils.py",
+                "shellforgepy/shells/partitionable_spheroid_triangle_mesh.py",
+                "shellforgepy/shells/transformed_region_view.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/construct_lib/test_partitionable_spheroid_triangle_mesh.py": {
+        "checksum": "331f0973ca9045657a90ade5d7d6b9bd3f937060d040bcd6c1dedfd1a69ffee8",
+        "summary": {
+            "file_content_summary": "This file contains a series of test functions for the `PartitionableSpheroidTriangleMesh` class, focusing on mesh partitioning and vertex manipulation. It includes tests for splitting regions, adding vertices, and perforating meshes along planes, ensuring the integrity of mesh structures and their properties.",
+            "file_keywords": [
+                "mesh partitioning",
+                "triangle mesh",
+                "vertex manipulation",
+                "test functions",
+                "geometry",
+                "spheroid mesh"
+            ],
+            "file_dependencies": [
+                "shellforgepy/shells/partitionable_spheroid_triangle_mesh.py",
+                "shellforgepy/shells/mesh_partition.py",
+                "shellforgepy/shells/transformed_region_view.py",
+                "shellforgepy/geometry/mesh_builders.py",
+                "shellforgepy/construct/construct_utils.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/construct_lib/test_trapezoidal_snake_geometry.py": {
+        "checksum": "66cf2708856ab9dff050d1259a1ef44bc552602a1ca71c175982e40d3374164f",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for geometric operations related to trapezoidal snake geometry, including functions for normalizing vectors, creating local coordinate systems, and transforming 2D cross-sections to 3D. It also includes a function to convert traditional face-vertex maps to STL format. The tests ensure the correctness of these geometric computations.",
+            "file_keywords": [
+                "geometry",
+                "trapezoidal snake",
+                "STL format",
+                "unit tests",
+                "vector normalization",
+                "3D transformation"
+            ],
+            "file_dependencies": [
+                "shellforgepy/construct/construct_utils.py",
+                "shellforgepy/geometry/mesh_utils.py",
+                "shellforgepy/geometry/treapezoidal_snake_geometry.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/construct_lib/test_transformed_region_view.py": {
+        "checksum": "533f634542efb5ee27cf00253da938c35b5266125622674a727a23df7104c63e",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for geometric transformations and connector hints in a 3D modeling context. It tests functionalities such as creating geometries, partitioning meshes, and computing transformed shell maps and connector hints. The tests ensure the integrity and correctness of the geometric operations and transformations applied to the mesh structures.",
+            "file_keywords": [
+                "unit tests",
+                "geometry",
+                "mesh partitioning",
+                "connector hints",
+                "3D modeling",
+                "transformed region view"
+            ],
+            "file_dependencies": [
+                "shellforgepy/geometry/face_point_cloud.py",
+                "shellforgepy/geometry/mesh_builders.py",
+                "shellforgepy/geometry/spherical_tools.py",
+                "shellforgepy/shells/connector_hint.py",
+                "shellforgepy/shells/connector_utils.py",
+                "shellforgepy/shells/mesh_partition.py",
+                "shellforgepy/shells/partitionable_spheroid_triangle_mesh.py",
+                "shellforgepy/shells/transformed_region_view.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/geometry/test_higher_order_solids.py": {
+        "checksum": "bea71cac3180a30dd8d0c0423b83e70e07022bd93cd0db232eb1b8e5055a0da0",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for geometric solid creation functions, specifically testing the creation of hexagonal prisms, trapezoids, and directed cylinders. It verifies that the created shapes are not None and checks the volume calculations for directed cylinders against expected values using assertions.",
+            "file_keywords": [
+                "unit tests",
+                "geometric solids",
+                "hexagonal prism",
+                "trapezoid",
+                "directed cylinder",
+                "volume calculation"
+            ],
+            "file_dependencies": [
+                "shellforgepy/adapters/simple.py",
+                "shellforgepy/geometry/higher_order_solids.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/construct/test_alignment_operations.py": {
+        "checksum": "aa9a2a6067822cbca67623c48180d68f5c986ad042ca53428e1e0585eed3849c",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for geometric transformations, specifically translation and rotation, applied to 3D parts created using the ShellForgePy library. It verifies the correctness of transformations on basic shapes, named parts, and leader-follower structures, ensuring consistent behavior across different object types.",
+            "file_keywords": [
+                "unit tests",
+                "geometric transformations",
+                "translation",
+                "rotation",
+                "3D parts",
+                "ShellForgePy",
+                "named parts",
+                "leader-followers"
+            ],
+            "file_dependencies": [
+                "shellforgepy.construct.alignment_operations",
+                "shellforgepy.simple",
+                "shellforgepy.construct.named_part",
+                "shellforgepy.construct.leaders_followers_cutters_part"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/construct/test_comprehensive_leader_followers_cutters.py": {
+        "checksum": "b7c2f7105795b91d1d2ac682713fa37ddd7f431f41857c774d8b167407978705",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for the rotation and translation of components in a LeaderFollowersCuttersPart group. It verifies that all parts (leader, followers, cutters, non-production parts) are correctly manipulated using geometric transformations, ensuring their dimensions and positions are accurately updated after operations.",
+            "file_keywords": [
+                "unit tests",
+                "rotation",
+                "translation",
+                "LeaderFollowersCuttersPart",
+                "geometry",
+                "bounding box"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": [
+                "shellforgepy.construct.leaders_followers_cutters_part",
+                "shellforgepy.construct.named_part",
+                "shellforgepy.simple"
+            ]
+        }
+    },
+    "shellforgepy/tests/unit/construct/test_leaders_followers_cutters_comprehensive.py": {
+        "checksum": "7b5e2ea54255f8f4c3286b52bcc12b5853e6dc9d6a2fad2c619f32a33c1f5f45",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for the `LeaderFollowersCuttersPart` class, testing its creation, copying, translation, and rotation functionalities. It uses the `pytest` framework and includes assertions to verify that the operations behave as expected, ensuring the integrity of the class's methods and properties.",
+            "file_keywords": [
+                "unit tests",
+                "LeaderFollowersCuttersPart",
+                "pytest",
+                "translation",
+                "rotation",
+                "geometry",
+                "bounding box"
+            ],
+            "file_dependencies": [
+                "shellforgepy/construct/alignment_operations.py",
+                "shellforgepy/construct/leaders_followers_cutters_part.py",
+                "shellforgepy/construct/named_part.py",
+                "shellforgepy/simple.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/construct/test_named_part.py": {
+        "checksum": "09bc543acc221091725d3450ab5bde05bd9dbd7cf06fae7f6ea17c5ec527001c",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for the NamedPart class in the shellforgepy project. It tests functionalities such as creation, copying, translation, rotation, and consistency of transformations for NamedPart objects. The tests ensure that NamedPart behaves correctly when manipulated using various geometric operations.",
+            "file_keywords": [
+                "NamedPart",
+                "unit tests",
+                "geometry",
+                "translation",
+                "rotation",
+                "copying",
+                "bounding box"
+            ],
+            "file_dependencies": [
+                "shellforgepy.construct.alignment_operations",
+                "shellforgepy.construct.named_part",
+                "shellforgepy.simple"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/tests/unit/construct/test_leaders_followers_cutters.py": {
+        "checksum": "21de2e03440e5c9dae5d43676fae393e1ff72cd267c0663ebbd20038b4911259",
+        "summary": {
+            "file_content_summary": "This file contains unit tests for the `PartList` and `LeaderFollowersCuttersPart` classes in the `shellforgepy` project. It tests functionalities such as adding parts to a list, handling duplicate names, translating and rotating parts, and fusing leader and follower components. The tests ensure that the parts behave as expected during transformations and combinations.",
+            "file_keywords": [
+                "unit tests",
+                "PartList",
+                "LeaderFollowersCuttersPart",
+                "geometry",
+                "transformation",
+                "fusing",
+                "pytest"
+            ],
+            "file_dependencies": [
+                "shellforgepy.construct.leaders_followers_cutters_part",
+                "shellforgepy.construct.named_part",
+                "shellforgepy.produce.arrange_and_export",
+                "shellforgepy.simple"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/examples/filleted_boxes_example.py": {
+        "checksum": "53ca0c534506efa934f90c5049ab0dcd9515dc46110e8703ba5d00435ae95fea",
+        "summary": {
+            "file_content_summary": "This script demonstrates the creation of various filleted box configurations for 3D printing, utilizing the `create_filleted_box` function from the `shellforgepy.simple` module. It organizes the boxes on a build plate and exports them as STL files, showcasing different fillet arrangements and dimensions.",
+            "file_keywords": [
+                "3D printing",
+                "filleted box",
+                "create_filleted_box",
+                "arrange and export",
+                "STL export",
+                "shellforgepy",
+                "example script"
+            ],
+            "file_dependencies": [
+                "shellforgepy/simple.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/__init__.py": {
+        "checksum": "a47e62e058f5b5b5cba8bb53548768a238a9959b2c427d279ee77cf875e87511",
+        "summary": {
+            "file_content_summary": "This file manages the import of the `version` function and `PackageNotFoundError` exception from the appropriate library based on the Python version. It attempts to retrieve the package version using the package name and sets it to `__version__`, defaulting to 'unknown' if the package is not found.",
+            "file_keywords": [
+                "versioning",
+                "package management",
+                "Python version compatibility",
+                "importlib",
+                "metadata"
+            ],
+            "file_dependencies": [
+                "shellforgepy/pyproject.toml"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/simple.py": {
+        "checksum": "03fc35d22947606ff4d3c6b7d88f7de734919b25d1af085b30aad66db9909276",
+        "summary": {
+            "file_content_summary": "This file, part of the shellforgepy package, provides a simplified interface for importing key classes and functions related to alignment, geometry, and CAD operations. It dynamically loads CAD adapter functions and exposes them for easy access, facilitating solid modeling and part arrangement functionalities.",
+            "file_keywords": [
+                "shellforgepy",
+                "CAD",
+                "geometry",
+                "alignment",
+                "solid modeling",
+                "part arrangement",
+                "dynamic loading"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": [
+                "shellforgepy/construct/alignment.py",
+                "shellforgepy/construct/alignment_operations.py",
+                "shellforgepy/construct/construct_utils.py",
+                "shellforgepy/construct/leaders_followers_cutters_part.py",
+                "shellforgepy/construct/named_part.py",
+                "shellforgepy/construct/part_collector.py",
+                "shellforgepy/geometry/face_point_cloud.py",
+                "shellforgepy/geometry/higher_order_solids.py",
+                "shellforgepy/geometry/spherical_tools.py",
+                "shellforgepy/geometry/treapezoidal_snake_geometry.py",
+                "shellforgepy/produce/arrange_and_export.py",
+                "shellforgepy/produce/production_parts_model.py",
+                "shellforgepy/shells/materialized_connectors.py",
+                "shellforgepy/shells/mesh_partition.py",
+                "shellforgepy/shells/partitionable_spheroid_triangle_mesh.py",
+                "shellforgepy/adapters/adapter_chooser.py"
+            ]
+        }
+    },
+    "shellforgepy/src/shellforgepy/shells/connector_hint.py": {
+        "checksum": "d69abb1e77b71a4b20b81b352d266c72e508a17965554203a41ca99a258ff98d",
+        "summary": {
+            "file_content_summary": "This file defines a data class named `ConnectorHint`, which encapsulates information about connections between two regions in a geometric context. It includes attributes for vertices, normals, edge vectors, and provenance tracking. The class also has a custom string representation for easier debugging and visualization of its state.",
+            "file_keywords": [
+                "ConnectorHint",
+                "data class",
+                "geometry",
+                "vertices",
+                "normals",
+                "edge vector",
+                "provenance tracking"
+            ],
+            "file_dependencies": [
+                "numpy"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/shells/transformed_region_view.py": {
+        "checksum": "cfd549f1f8de879ec285e78fa87cdf7085733057fbc9b543ed9f27d9323a98d8",
+        "summary": {
+            "file_content_summary": "The file defines the `TransformedRegionView` class, which manages a 3D region's transformation in a mesh partition. It includes methods for applying transformations, retrieving transformed vertices and faces, and handling rotations and translations. The class ensures valid transformations and caches results for efficiency.",
+            "file_keywords": [
+                "3D transformation",
+                "mesh partition",
+                "affine transformation",
+                "geometry",
+                "numpy",
+                "region view"
+            ],
+            "file_dependencies": [
+                "shellforgepy/construct/construct_utils.py",
+                "shellforgepy/geometry/spherical_tools.py",
+                "shellforgepy/shells/connector_utils.py",
+                "shellforgepy/shells/mesh_partition.py",
+                "shellforgepy/shells/region_edge_feature.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/shells/partitionable_spheroid_triangle_mesh.py": {
+        "checksum": "131f58aee4530326b1bdbdcd5992c0e5acbd23ad78c7d55f0ff0f5e09428fdb9",
+        "summary": {
+            "file_content_summary": "This file implements functions for managing 3D mesh triangles, ensuring consistent vertex winding order, and calculating geometric properties. Key components include functions for edge-triangle mapping, breadth-first traversal for winding propagation, and triangle manipulation. It also includes utilities for validating paths and calculating lengths in edge graphs, as well as handling triangle shrinking based on border width.",
+            "file_keywords": [
+                "3D mesh",
+                "triangle winding",
+                "geometry",
+                "edge graph",
+                "path validation",
+                "triangle manipulation"
+            ],
+            "file_dependencies": [
+                "shellforgepy/construct/construct_utils.py",
+                "shellforgepy/geometry/spherical_tools.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/shells/region_edge_feature.py": {
+        "checksum": "ebf3d4a6eabdd91652c67012f91c18824a0ef5b6fae4f2eebb7ee8e6e331676e",
+        "summary": {
+            "file_content_summary": "This file defines the `RegionEdgeFeature` data class, which represents a geometric edge in a 3D region. It includes attributes for edge vertices, coordinates, vector, centroid, and associated face information. The class also provides a method to calculate the edge length using NumPy for vector operations.",
+            "file_keywords": [
+                "RegionEdgeFeature",
+                "3D geometry",
+                "edge length",
+                "data class",
+                "NumPy"
+            ],
+            "file_dependencies": [
+                "numpy"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/shells/connector_utils.py": {
+        "checksum": "2c15fa8f6cf724fbb409f744a21e8281ef7920d0210fa027941372566cb36829",
+        "summary": {
+            "file_content_summary": "This file defines a function `merge_collinear_connectors` that processes a list of `ConnectorHint` objects, merging those that are collinear based on specified angle and distance tolerances. It utilizes geometric calculations to ensure the integrity of the merged connectors, handling potential edge cases such as degenerate connectors.",
+            "file_keywords": [
+                "connector merging",
+                "collinear connectors",
+                "geometry",
+                "numpy",
+                "ConnectorHint",
+                "normal vectors"
+            ],
+            "file_dependencies": [
+                "shellforgepy/construct/construct_utils.py",
+                "shellforgepy/shells/connector_hint.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/shells/materialized_connectors.py": {
+        "checksum": "2d24ef213f3bd3cc58c074b535fd2ada784c8d4f5ee1f1b6ee8b06f733a51c88",
+        "summary": {
+            "file_content_summary": "This file provides CAD-agnostic utilities for generating connectors, including functions for creating geometric shapes like boxes and nuts, performing coordinate transformations, and normalizing vectors. It includes data structures for transformations and a mapping for screw sizes, facilitating the creation of various 3D shapes and components in CAD applications.",
+            "file_keywords": [
+                "CAD",
+                "connector generation",
+                "geometry",
+                "3D shapes",
+                "transformations",
+                "screw sizes"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": [
+                "shellforgepy/adapters/simple.py",
+                "shellforgepy/construct/alignment.py",
+                "shellforgepy/construct/alignment_operations.py",
+                "shellforgepy/geometry/higher_order_solids.py"
+            ]
+        }
+    },
+    "shellforgepy/src/shellforgepy/shells/mesh_partition.py": {
+        "checksum": "9edb223365ff148f58182e645eebeeab9cc999322a35685370a9554122fb16f8",
+        "summary": {
+            "file_content_summary": "This file defines a `MeshPartition` class for managing and analyzing partitionable spheroid triangle meshes. It includes methods for checking point containment in cylinders, collinearity of line segments, and constructing closed paths from vertices. The class utilizes NetworkX for graph operations related to mesh faces and edges.",
+            "file_keywords": [
+                "MeshPartition",
+                "triangle mesh",
+                "NetworkX",
+                "geometry",
+                "graph theory",
+                "path construction",
+                "collinearity",
+                "cylinder containment"
+            ],
+            "file_dependencies": [
+                "shellforgepy/construct/construct_utils.py",
+                "shellforgepy/geometry/spherical_tools.py",
+                "shellforgepy/shells/partitionable_spheroid_triangle_mesh.py",
+                "shellforgepy/shells/connector_utils.py",
+                "shellforgepy/shells/connector_hint.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/adapters/adapter_chooser.py": {
+        "checksum": "37a77797f2835e59265829c7acde24549f293c980ccee08ae13432888e6a6fcf",
+        "summary": {
+            "file_content_summary": "This file contains functions to detect the available CAD environment (CadQuery or FreeCAD) and import the corresponding adapter module. It allows for manual override of the detection via an environment variable and caches the adapter for efficiency. The main components include `detect_cad_environment`, `import_adapter_module`, and `get_cad_adapter`.",
+            "file_keywords": [
+                "CAD",
+                "adapter",
+                "environment detection",
+                "CadQuery",
+                "FreeCAD",
+                "import",
+                "shellforgepy"
+            ],
+            "file_dependencies": [
+                "shellforgepy/adapters/cadquery/cadquery_adapter.py",
+                "shellforgepy/adapters/freecad/freecad_adapter.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/adapters/simple.py": {
+        "checksum": "4878110c41d4662cd122c21fd1d8f8428a6af15cde6572e4357b4655047e93ac",
+        "summary": {
+            "file_content_summary": "This file imports various functions from the 'adapter_chooser' module to facilitate the creation and manipulation of 3D geometric shapes and solids. It defines a set of functions for creating basic shapes, performing transformations, and exporting solids, making it a key component for 3D modeling operations in the project.",
+            "file_keywords": [
+                "3D modeling",
+                "geometric shapes",
+                "CAD adapter",
+                "solid creation",
+                "transformations",
+                "exporting"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": [
+                "shellforgepy/adapters/adapter_chooser.py"
+            ]
+        }
+    },
+    "shellforgepy/src/shellforgepy/adapters/freecad/freecad_adapter.py": {
+        "checksum": "3ad577ba1d58f5e784bd126bbca7c77770efef0bea8f6d8e0d517166d80ce399",
+        "summary": {
+            "file_content_summary": "This file contains functions for creating solids from face-vertex maps and calculating bounding boxes for geometry objects in FreeCAD. It includes methods to retrieve bounding box dimensions, center, and vertices, utilizing FreeCAD's Part module and numpy for numerical operations. The code is designed to facilitate geometric computations in a CAD environment.",
+            "file_keywords": [
+                "FreeCAD",
+                "geometry",
+                "bounding box",
+                "solid creation",
+                "face-vertex maps",
+                "numpy",
+                "CAD",
+                "Part module"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": [
+                "shellforgepy/construct/alignment.py"
+            ]
+        }
+    },
+    "shellforgepy/src/shellforgepy/adapters/cadquery/cadquery_adapter.py": {
+        "checksum": "0c6301e7920c96213a86066fd357b225163cbe452339399fcf66f07628ac3f31",
+        "summary": {
+            "file_content_summary": "This file provides utility functions for working with CadQuery geometry objects, specifically for obtaining bounding box properties, vertex coordinates, and their respective sizes. It includes functions to retrieve minimum, maximum, and center points of bounding boxes, as well as converting results to numpy arrays for easier computation.",
+            "file_keywords": [
+                "CadQuery",
+                "geometry",
+                "bounding box",
+                "vertices",
+                "numpy",
+                "utility functions"
+            ],
+            "file_dependencies": [
+                "cadquery",
+                "numpy"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/geometry/higher_order_solids.py": {
+        "checksum": "02a15c088aa4e21dfb36816b858c9ddd58e3c1112e93cf19e60501ea555765ea",
+        "summary": {
+            "file_content_summary": "This file defines functions for creating geometric shapes, specifically a hexagonal prism, a trapezoidal prism, and a directed cylinder in a CAD environment. It utilizes functions from the shellforgepy library to handle geometric transformations and alignments, allowing for flexible shape creation based on specified parameters.",
+            "file_keywords": [
+                "CAD",
+                "geometry",
+                "hexagonal prism",
+                "trapezoidal prism",
+                "cylinder",
+                "transformations",
+                "shape creation"
+            ],
+            "file_dependencies": [
+                "shellforgepy/adapters/simple.py",
+                "shellforgepy/construct/alignment_operations.py",
+                "shellforgepy/geometry/spherical_tools.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/geometry/mesh_builders.py": {
+        "checksum": "3c9a57580c6589f95bdc66e3e676a482893ce95d3081c3ec29a5df2acac7fff2",
+        "summary": {
+            "file_content_summary": "This file defines functions to create geometries for various polyhedra, including icosahedron, dodecahedron, cube, tetrahedron, and Fibonacci sphere. Each function returns vertex coordinates and face indices for the respective shapes, allowing for 3D modeling and visualization. The use of NumPy and SciPy facilitates efficient numerical computations and geometric operations.",
+            "file_keywords": [
+                "geometry",
+                "polyhedra",
+                "icosahedron",
+                "dodecahedron",
+                "cube",
+                "tetrahedron",
+                "Fibonacci sphere",
+                "NumPy",
+                "SciPy"
+            ],
+            "file_dependencies": [
+                "numpy",
+                "scipy.spatial.ConvexHull"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/geometry/treapezoidal_snake_geometry.py": {
+        "checksum": "75009d52be538e0d9102aa9b863b162d36f76c2e8e081a8909c35d3961596528",
+        "summary": {
+            "file_content_summary": "This file defines functions for creating 3D geometries based on 2D trapezoidal cross-sections, transforming them into 3D space using specified base points and normals. Key functions include creating snake vertices, local coordinate systems, and transforming cross-sections, facilitating the generation of complex mesh structures for computational geometry applications.",
+            "file_keywords": [
+                "3D geometry",
+                "trapezoidal",
+                "cross-section",
+                "mesh generation",
+                "coordinate transformation",
+                "normal vectors"
+            ],
+            "file_dependencies": [
+                "shellforgepy/construct/construct_utils.py",
+                "shellforgepy/geometry/mesh_utils.py",
+                "shellforgepy/geometry/spherical_tools.py",
+                "shellforgepy/shells/partitionable_spheroid_triangle_mesh.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/geometry/face_point_cloud.py": {
+        "checksum": "97f371c545893d059a2685ef33d32d425a5fc0b14960bbb0cd6a8b7b4362400d",
+        "summary": {
+            "file_content_summary": "This file defines parameters and functions for generating 3D facial features using spherical coordinates. It includes methods for converting between azimuthal and Cartesian coordinates, building a grid of facial points based on specified parameters, and ensuring points are not too close together. It utilizes numpy for numerical operations and imports utility functions from the shellforgepy library.",
+            "file_keywords": [
+                "3D modeling",
+                "facial features",
+                "spherical coordinates",
+                "numpy",
+                "geometry",
+                "parameterization"
+            ],
+            "file_dependencies": [
+                "shellforgepy/construct/construct_utils.py",
+                "shellforgepy/geometry/spherical_tools.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/geometry/mesh_utils.py": {
+        "checksum": "d09d18c93500d0e4a4e230e18c20429338ed3d7023da06cc24632db75b69ad90",
+        "summary": {
+            "file_content_summary": "This file implements a minimal binary STL writer in Python, allowing for the merging of 3D mesh data and exporting it in STL format. Key functions include merging meshes with tolerance, writing binary STL files, and converting shell maps into a unified mesh suitable for 3D printing.",
+            "file_keywords": [
+                "STL writer",
+                "3D mesh",
+                "binary file",
+                "mesh merging",
+                "geometry",
+                "Python"
+            ],
+            "file_dependencies": [
+                "numpy"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/geometry/spherical_tools.py": {
+        "checksum": "12a96e4c5be9b8122255e0390f9410b4a09bcb8ed393ad7131771796873c0b3e",
+        "summary": {
+            "file_content_summary": "This file contains functions for converting between spherical and Cartesian coordinates, shrinking triangles, creating shell triangle geometries, and performing ray-triangle intersection tests. It includes mathematical operations for geometric computations, particularly in 3D space, and is likely used in applications involving 3D modeling or simulations.",
+            "file_keywords": [
+                "spherical coordinates",
+                "Cartesian coordinates",
+                "triangle geometry",
+                "ray intersection",
+                "3D modeling"
+            ],
+            "file_dependencies": [
+                "numpy",
+                "scipy.spatial.ConvexHull"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/produce/arrange_and_export.py": {
+        "checksum": "31dd121819a918b41971db79d8f1057df2f6bd48a2ebfe931fa8bec1f09001ec",
+        "summary": {
+            "file_content_summary": "This file provides CAD-agnostic helpers for arranging parts and exporting them as STL files. It includes functions for exporting solids, arranging parts in rows based on specified gaps and bed width, and managing production-related constraints. The main components are the `export_solid_to_stl`, `_arrange_parts_in_rows`, and `arrange_and_export_parts` functions.",
+            "file_keywords": [
+                "CAD",
+                "STL export",
+                "part arrangement",
+                "3D printing",
+                "geometry",
+                "production",
+                "export",
+                "Python"
+            ],
+            "file_dependencies": [
+                "shellforgepy/adapters/simple",
+                "shellforgepy/construct/alignment_operations",
+                "shellforgepy/construct/part_collector",
+                "shellforgepy/produce/production_parts_model"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/produce/production_parts_model.py": {
+        "checksum": "54f1558239856e5c3343f9adaf61e4d9bdbf06e810a5b2abd5cfe51d78dedddf",
+        "summary": {
+            "file_content_summary": "This file defines a `PartInfo` data class for managing information about production parts and a `PartList` class for handling collections of these parts. It includes methods for adding parts, checking for duplicates, and retrieving part information in a structured format.",
+            "file_keywords": [
+                "PartInfo",
+                "PartList",
+                "CAD",
+                "production arrangement",
+                "LeaderFollowersCuttersPart",
+                "data class",
+                "part management"
+            ],
+            "file_dependencies": [
+                "shellforgepy/construct/leaders_followers_cutters_part.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/construct/alignment.py": {
+        "checksum": "331f8cb69d6a9e63ed50f4766fae2f19a93ec53db9d4b3ec1e3314336ee417cb",
+        "summary": {
+            "file_content_summary": "This file defines an enumeration called 'Alignment' representing various alignment options (e.g., LEFT, RIGHT, CENTER) and a dictionary mapping these options to their corresponding sign values. It also dynamically adds a 'sign' attribute to each alignment option based on the dictionary values.",
+            "file_keywords": [
+                "Alignment",
+                "Enum",
+                "sign values",
+                "alignment options",
+                "dictionary mapping"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": []
+        }
+    },
+    "shellforgepy/src/shellforgepy/construct/leaders_followers_cutters_part.py": {
+        "checksum": "e549831ac07169478ce8dd479b027fe3933d356d2cb77707e0200e6df1fa0aa8",
+        "summary": {
+            "file_content_summary": "This file defines the `LeaderFollowersCuttersPart` class, which manages a composite of parts including a leader, followers, cutters, and non-production parts. It provides methods for normalization, fusion, translation, rotation, and reconstruction of these parts, utilizing helper functions from the `shellforgepy` library.",
+            "file_keywords": [
+                "LeaderFollowersCuttersPart",
+                "composite",
+                "parts management",
+                "normalization",
+                "fusion",
+                "translation",
+                "rotation"
+            ],
+            "file_dependencies": [
+                "shellforgepy/adapters/simple.py",
+                "shellforgepy/construct/named_part.py",
+                "shellforgepy/construct/part_collector.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/construct/named_part.py": {
+        "checksum": "428503be0aa3d95cb57e61dd8aabf7c9913a32c62d6f6f2a266d0147eb9e5b43",
+        "summary": {
+            "file_content_summary": "This file defines the `NamedPart` class, which represents a part with a name for tracking in assemblies. It includes methods for copying, translating, rotating, reconstructing, and fusing parts, utilizing functions from the `simple` adapter. The class facilitates in-place updates and logging for transformations, enhancing CAD system interactions.",
+            "file_keywords": [
+                "NamedPart",
+                "CAD",
+                "copy",
+                "translate",
+                "rotate",
+                "fuse",
+                "logging",
+                "part management"
+            ],
+            "file_dependencies": [
+                "shellforgepy/adapters/simple.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/construct/construct_utils.py": {
+        "checksum": "32bf90ff9704d3c05c0a80a57f5e529c7da1de607630f71bbc0a30e635351663",
+        "summary": {
+            "file_content_summary": "This file contains functions for geometric computations, including validation of rigid transformations, triangle area calculations, normal checks, and point-in-triangle tests. It also implements Fibonacci sphere sampling for generating points on a sphere. The main components include functions for triangle manipulation, barycentric coordinates, and edge normalization.",
+            "file_keywords": [
+                "geometry",
+                "rigid transformation",
+                "triangle",
+                "Fibonacci sphere",
+                "barycentric coordinates",
+                "normal vector",
+                "numpy"
+            ],
+            "file_dependencies": [
+                "shellforgepy/geometry/spherical_tools.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/construct/alignment_operations.py": {
+        "checksum": "d651de368da141213db7ec5363b5f9bb029370d7433ec7091ffa5e73deed2312",
+        "summary": {
+            "file_content_summary": "This file defines functions for translating and rotating 3D parts, aligning them based on specified criteria, and chaining multiple transformations. It utilizes adapter functions to ensure framework independence and includes error handling for alignment types. Key components include translation and rotation functions, alignment handling, and utility functions for bounding box calculations.",
+            "file_keywords": [
+                "3D transformation",
+                "alignment",
+                "translation",
+                "rotation",
+                "bounding box",
+                "geometry",
+                "adapter functions"
+            ],
+            "file_dependencies": [
+                "shellforgepy/adapters/simple.py",
+                "shellforgepy/construct/alignment.py",
+                "shellforgepy/construct/bounding_box_helpers.py"
+            ],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/construct/bounding_box_helpers.py": {
+        "checksum": "8bd95f827695759ea4da35c8255fa54acadbda079d9f3496a55c973eb9394d4a",
+        "summary": {
+            "file_content_summary": "This file contains functions for calculating various properties of a bounding box, including its center, dimensions (lengths along x, y, z axes), and minimum and maximum coordinates. Each function takes a bounding box defined by minimum and maximum points and returns the respective value.",
+            "file_keywords": [
+                "bounding box",
+                "geometry",
+                "center calculation",
+                "dimensions",
+                "min/max coordinates"
+            ],
+            "file_dependencies": [],
+            "relevance": "HIGH"
+        }
+    },
+    "shellforgepy/src/shellforgepy/construct/part_collector.py": {
+        "checksum": "89666810a04b53594908466dfdadc9bf67328a7473985823adfaed2daa426b40",
+        "summary": {
+            "file_content_summary": "This file defines a `PartCollector` class that manages CAD parts, allowing for operations such as fusing and cutting parts together. It utilizes methods to combine or subtract parts, ensuring that operations are performed on valid parts only.",
+            "file_keywords": [
+                "CAD",
+                "parts",
+                "fuse",
+                "cut",
+                "PartCollector",
+                "geometry"
+            ],
+            "relevance": "HIGH",
+            "file_dependencies": []
+        }
+    }
+}

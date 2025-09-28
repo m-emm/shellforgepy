@@ -106,6 +106,24 @@ src/shellforgepy/
 
 ---
 
+## Examples
+
+The `examples/` directory contains working code demonstrating shellforgepy capabilities:
+
+- **`filleted_boxes_example.py`** - CAD adapter usage with parametric filleted boxes
+- **`create_cylinder_stl.py`** - Basic mesh generation from point clouds
+- **`create_face_stl.py`** - Complex organic shapes with mesh partitioning
+- **`create_trapezoidal_snake_stl.py`** - Path-following geometries (coils, spirals, Möbius strips)
+
+Run any example:
+```bash
+python3 examples/filleted_boxes_example.py
+```
+
+All examples generate STL files ready for 3D printing. See `examples/README.md` for detailed descriptions.
+
+---
+
 ## Contributing & Development
 
 Run linters/tests before pushing:
