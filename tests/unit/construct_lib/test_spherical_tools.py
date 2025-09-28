@@ -513,18 +513,21 @@ def test_filter_outside_spherical_cap():
         ]
     )
 
-    try:
-        result = filter_outside_spherical_cap(cap_theta_phi, test_points)
+    # Function returns (filtered_points, mask, hull_vertices)
+    filtered_points, mask_outside, hull_vertices = filter_outside_spherical_cap(
+        cap_theta_phi, test_points
+    )
 
-        assert isinstance(result, np.ndarray)
-        assert result.ndim == 2  # Should return points, not boolean mask
-        assert result.shape[1] == 2  # theta, phi coordinates
+    assert isinstance(filtered_points, np.ndarray)
+    assert filtered_points.ndim == 2  # Should return points, not boolean mask
+    assert filtered_points.shape[1] == 2  # theta, phi coordinates
 
-        # The function returns points that are outside the cap
-        # Farther points should be more likely to be in the result
-    except Exception as e:
-        # The function might have complex requirements, skip if it fails
-        pytest.skip(f"filter_outside_spherical_cap has complex requirements: {e}")
+    assert isinstance(mask_outside, np.ndarray)
+    assert isinstance(hull_vertices, np.ndarray)
+
+    # The function returns points that are outside the cap
+    # Farther points should be more likely to be in the result
+    assert filtered_points.shape[0] <= test_points.shape[0]
 
 
 def test_coordinate_system_transform_to_matrix():

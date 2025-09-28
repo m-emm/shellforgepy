@@ -74,70 +74,49 @@ def test_azimuthal_to_cartesian():
 
 def test_build_face_cap_grid_with_deltas():
     """Test face cap grid building with deltas."""
-    # Use the proper parameter structure based on the function expectations
-    test_params = {
-        "parameters_in_face_percent": {
-            "nose_length": 10,
-            "nose_height": 15,
-            "eye_distance": 20,
-            "chin_width": 8,
-        }
-    }
+    # Use the actual parameter structure from parameters_n
+    from shellforgepy.geometry.face_point_cloud import parameters_n
 
-    try:
-        # Test with default outer_deltar
-        points, deltas = build_face_cap_grid_with_deltas(test_params)
+    # Test with default outer_deltar
+    points, deltas, labels = build_face_cap_grid_with_deltas(parameters_n)
 
-        assert isinstance(points, np.ndarray)
-        assert isinstance(deltas, np.ndarray)
-        assert points.ndim == 2
-        assert deltas.ndim == 2
-        assert points.shape[1] == 3  # xyz coordinates
-        assert deltas.shape[1] == 3  # delta xyz
-        assert points.shape[0] == deltas.shape[0]  # same number of points
+    assert isinstance(points, np.ndarray)
+    assert isinstance(deltas, np.ndarray)
+    assert isinstance(labels, list)
+    assert points.ndim == 2
+    assert deltas.ndim == 1  # 1D array of delta_r values
+    assert points.shape[1] == 2  # 2D azimuthal projection points
+    assert points.shape[0] == deltas.shape[0] == len(labels)
+    assert np.all(np.isfinite(points))
+    assert np.all(np.isfinite(deltas))
 
-        # Check that points are finite
-        assert np.all(np.isfinite(points))
-        assert np.all(np.isfinite(deltas))
+    # Test with non-zero outer_deltar
+    points_outer, deltas_outer, labels_outer = build_face_cap_grid_with_deltas(
+        parameters_n, outer_deltar=0.1
+    )
 
-        # Test with non-zero outer_deltar
-        points_outer, deltas_outer = build_face_cap_grid_with_deltas(
-            test_params, outer_deltar=0.1
-        )
-
-        assert isinstance(points_outer, np.ndarray)
-        assert isinstance(deltas_outer, np.ndarray)
-        assert points_outer.shape[0] == deltas_outer.shape[0]
-        assert np.all(np.isfinite(points_outer))
-        assert np.all(np.isfinite(deltas_outer))
-
-    except Exception as e:
-        # If the function has more complex requirements, skip gracefully
-        pytest.skip(f"build_face_cap_grid_with_deltas requires more complex setup: {e}")
+    assert isinstance(points_outer, np.ndarray)
+    assert isinstance(deltas_outer, np.ndarray)
+    assert isinstance(labels_outer, list)
+    assert points_outer.shape[0] == deltas_outer.shape[0] == len(labels_outer)
+    assert np.all(np.isfinite(points_outer))
+    assert np.all(np.isfinite(deltas_outer))
 
 
 def test_face_point_cloud_basic_keys():
-    """Test face_point_cloud function with basic face keys."""
-    # Test with different face keys
-    face_keys = ["front", "left", "right", "top", "bottom"]
+    """Test face_point_cloud function with valid face keys."""
+    # Test with actually supported face keys
+    face_keys = ["n", "m"]
 
     for face_key in face_keys:
-        try:
-            points, deltas = face_point_cloud(face_key)
+        points, labels = face_point_cloud(face_key)
 
-            assert isinstance(points, np.ndarray)
-            assert isinstance(deltas, np.ndarray)
-            assert points.ndim == 2
-            assert deltas.ndim == 2
-            assert points.shape[1] == 3
-            assert deltas.shape[1] == 3
-            assert points.shape[0] == deltas.shape[0]
-            assert np.all(np.isfinite(points))
-            assert np.all(np.isfinite(deltas))
-
-        except Exception as e:
-            # Some face keys might not be implemented, that's ok for testing
-            pytest.skip(f"Face key '{face_key}' not implemented: {e}")
+        assert isinstance(points, np.ndarray)
+        assert isinstance(labels, list)
+        assert points.ndim == 2
+        assert points.shape[1] == 3  # 3D points
+        assert points.shape[0] == len(labels)
+        assert np.all(np.isfinite(points))
 
 
 def test_face_point_cloud_invalid_key():
@@ -178,18 +157,15 @@ def test_sphere_radius_constant():
 
 def test_build_face_cap_grid_edge_cases():
     """Test edge cases for build_face_cap_grid_with_deltas."""
-    # Test with minimal parameters
-    minimal_params = {"nose_length": 1}
+    from shellforgepy.geometry.face_point_cloud import parameters_m
 
-    try:
-        points, deltas = build_face_cap_grid_with_deltas(minimal_params)
-        assert isinstance(points, np.ndarray)
-        assert isinstance(deltas, np.ndarray)
-    except (KeyError, AttributeError) as e:
-        # Some parameters might be required
-        pytest.skip(f"Minimal parameters not sufficient: {e}")
+    # Test with parameters_m (different from parameters_n)
+    points, deltas, labels = build_face_cap_grid_with_deltas(parameters_m)
+    assert isinstance(points, np.ndarray)
+    assert isinstance(deltas, np.ndarray)
+    assert isinstance(labels, list)
 
-    # Test with empty parameters
+    # Test with empty parameters - should raise KeyError
     with pytest.raises((KeyError, AttributeError)):
         build_face_cap_grid_with_deltas({})
 
@@ -242,28 +218,22 @@ def test_projection_symmetry():
 
 def test_face_point_cloud_output_properties():
     """Test properties of face_point_cloud outputs."""
-    # Test with a known working face key
-    try:
-        points, deltas = face_point_cloud("front")
+    # Test with a valid face key
+    points, labels = face_point_cloud("n")
 
-        # Check output properties
-        assert points.shape[0] > 0  # Should have some points
-        assert points.shape[0] == deltas.shape[0]
+    # Check output properties
+    assert points.shape[0] > 0  # Should have some points
+    assert points.shape[0] == len(labels)
 
-        # Check coordinate ranges are reasonable for face modeling
-        x_range = np.ptp(points[:, 0])  # peak-to-peak in x
-        y_range = np.ptp(points[:, 1])  # peak-to-peak in y
-        z_range = np.ptp(points[:, 2])  # peak-to-peak in z
+    # Check coordinate ranges are reasonable for face modeling
+    x_range = np.ptp(points[:, 0])  # peak-to-peak in x
+    y_range = np.ptp(points[:, 1])  # peak-to-peak in y
+    z_range = np.ptp(points[:, 2])  # peak-to-peak in z
 
-        # All ranges should be finite and positive
-        assert x_range >= 0 and np.isfinite(x_range)
-        assert y_range >= 0 and np.isfinite(y_range)
-        assert z_range >= 0 and np.isfinite(z_range)
+    # All ranges should be finite and positive
+    assert x_range >= 0 and np.isfinite(x_range)
+    assert y_range >= 0 and np.isfinite(y_range)
+    assert z_range >= 0 and np.isfinite(z_range)
 
-        # Deltas should be reasonable modifications
-        delta_magnitudes = np.linalg.norm(deltas, axis=1)
-        assert np.all(np.isfinite(delta_magnitudes))
-        assert np.all(delta_magnitudes >= 0)
-
-    except Exception as e:
-        pytest.skip(f"face_point_cloud('front') not available: {e}")
+    # Labels should be strings
+    assert all(isinstance(label, str) for label in labels)
