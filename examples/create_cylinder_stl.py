@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-Simple example: Create a cylinder point cloud, mesh it, and save as STL.
+Cylinder Mesh Example
 
-This script demonstrates a basic workflow:
-1. Generate a point cloud for a cylinder (50mm radius, 100mm height)
-2. Create a triangulated mesh from the point cloud
-3. Create a single partition covering the whole mesh
-4. Export the complete mesh as STL (not just a shell)
+Creates cylinder point clouds, triangulated meshes, and exports as STL.
+Demonstrates basic mesh generation workflow with 4 cylinders arranged in a row.
+
+Usage:
+    python examples/create_cylinder_stl.py
+
+Output:
+    output/cylinder_mesh.stl
 """
 
 import os

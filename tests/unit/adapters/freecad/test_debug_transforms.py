@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 from shellforgepy.construct.named_part import NamedPart
 from shellforgepy.simple import (
     create_basic_box,

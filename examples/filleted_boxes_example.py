@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 """
-Example script demonstrating create_filleted_box functionality.
+Filleted Boxes Example
 
-This script creates an assortment of filleted boxes with different configurations
+Demonstrates create_filleted_box functionality with 12 different fillet configurations
 and arranges them on a 200x200mm build plate for 3D printing.
+
+Usage:
+    python examples/filleted_boxes_example.py
+
+Output:
+    Individual STL files: filleted_boxes_example_*.stl
+    Combined layout: filleted_boxes_example.stl
+    Process data: filleted_boxes_example_process.json
 """
 
 import time

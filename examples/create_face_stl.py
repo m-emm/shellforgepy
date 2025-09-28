@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-Example script that creates a 3D face mesh and exports it as STL files.
+Face Mesh Example
 
-This script demonstrates the complete workflow:
-1. Generate a face point cloud using face_point_cloud.py
-2. Create a triangulated mesh from the point cloud
-3. Partition the mesh into upper and lower halves
-4. Generate 3D printable shells with thickness
-5. Export each partition as separate STL files for 3D printing
+Creates complex organic face shapes with mesh partitioning for multi-part printing.
+Demonstrates advanced mesh processing with front/back splitting and shell generation.
 
-The resulting STL files can be viewed in any STL viewer (like MeshLab,
-3D Builder, or web-based viewers) and are ready for 3D printing.
+Usage:
+    python examples/create_face_stl.py
+
+Output:
+    face_stl_output/face_m_front.stl
+    face_stl_output/face_m_back.stl
+    face_stl_output/face_m_complete.stl
 """
 
 import os

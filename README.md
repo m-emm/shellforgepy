@@ -6,6 +6,22 @@ provides a layered architecture — from NumPy-based geometry utilities through
 alignment-centric construction helpers and production-focused exporters — with
 optional adapters for CadQuery and FreeCAD.
 
+## 🚀 **Try the Examples!**
+
+**Get started in 30 seconds:**
+
+```bash
+# Beginner-friendly parametric CAD
+python examples/filleted_boxes_example.py
+
+# Amazing mathematical surfaces
+python examples/mobius_strip.py
+
+# All 8 examples ready to run!
+```
+
+**[👉 See All Examples →](examples/README.md)** | **[🎯 Quick Examples Guide →](#examples)**
+
 ---
 
 ## Why ShellForgePy?
@@ -106,21 +122,33 @@ src/shellforgepy/
 
 ---
 
-## Examples
+## 🎯 Examples
 
-The `examples/` directory contains working code demonstrating shellforgepy capabilities:
+**8 working examples** that demonstrate shellforgepy's full capabilities - from beginner CAD to advanced mathematical surfaces!
 
-- **`filleted_boxes_example.py`** - CAD adapter usage with parametric filleted boxes
-- **`create_cylinder_stl.py`** - Basic mesh generation from point clouds
-- **`create_face_stl.py`** - Complex organic shapes with mesh partitioning
-- **`create_trapezoidal_snake_stl.py`** - Path-following geometries (coils, spirals, Möbius strips)
-
-Run any example:
+### 🔰 **Beginner Examples**
 ```bash
-python3 examples/filleted_boxes_example.py
+python examples/filleted_boxes_example.py    # Parametric CAD with fillets
+python examples/create_cylinder_stl.py       # Basic mesh generation
+python examples/straight_snake.py            # Simple path following
 ```
 
-All examples generate STL files ready for 3D printing. See `examples/README.md` for detailed descriptions.
+### 🔥 **Advanced Path-Following**
+```bash
+python examples/curved_snake.py              # Sine wave channels
+python examples/cylindrical_coil.py          # Helical coils
+python examples/conical_coil.py              # Tapering coils
+python examples/mobius_strip.py              # One-sided surfaces! 🤯
+```
+
+### 🧠 **Complex Meshes**
+```bash
+python examples/create_face_stl.py           # Organic shapes + partitioning
+```
+
+**📁 Output:** All examples generate STL files ready for 3D printing!
+
+**[📖 Complete Examples Guide →](examples/README.md)** - Detailed descriptions, features, and outputs for all examples.
 
 ---
 
