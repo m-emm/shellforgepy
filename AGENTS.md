@@ -3,7 +3,7 @@
 This repository (`shellforgepy`) hosts the Python runtime for the ShellForge toolchain. It offers a geometry-first core (`geometry/`), alignment and construction helpers (`construct/`), production utilities (`produce/`), and pluggable CAD adapters (`adapters/`) for CadQuery and FreeCAD. The goal is backend-agnostic modelling with optional materialisation in real CAD kernels.
 
 ## Code Style
-- The codebase targets Python 3.11. Follow the existing conventions: Black (line length 88) and isort are the canonical formatters.
+- The codebase targets Python 3.12. Follow the existing conventions: Black (line length 88) and isort are the canonical formatters.
 - Prefer descriptive names over comments. Add docstrings for user-facing functions or adapters.
 - Type hints are used where they improve readability or are required by adapters, but do not blanket-annotate obvious primitives.
 - Keep adapter-specific dependencies inside their respective modules so core layers stay dependency-light.
