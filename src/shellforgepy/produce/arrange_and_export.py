@@ -5,21 +5,19 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any, Optional, Tuple
 
-# Import the adapter to delegate CAD-specific operations
-from shellforgepy.adapters.simple import copy_part, cut_parts
 from shellforgepy.adapters.simple import (
     export_solid_to_stl as adapter_export_solid_to_stl,
 )
-from shellforgepy.adapters.simple import (
-    get_bounding_box,
-)
-
-from shellforgepy.construct.alignment_operations import translate, rotate
+from shellforgepy.adapters.simple import get_bounding_box
+from shellforgepy.construct.alignment_operations import translate
 from shellforgepy.construct.leaders_followers_cutters_part import (
     LeaderFollowersCuttersPart,
 )
+
+# Import the adapter to delegate CAD-specific operations
+from shellforgepy.construct.part_collector import PartCollector
 
 
 @dataclass

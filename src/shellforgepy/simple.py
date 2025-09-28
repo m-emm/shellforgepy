@@ -28,6 +28,8 @@ from .construct.alignment_operations import (
     translate,
 )
 from .construct.construct_utils import fibonacci_sphere, normalize
+from .construct.named_part import NamedPart
+from .construct.part_collector import PartCollector
 from .geometry.face_point_cloud import face_point_cloud
 from .geometry.higher_order_solids import (
     create_hex_prism,
@@ -40,12 +42,8 @@ from .geometry.spherical_tools import (
     coordinate_system_transformation_function,
 )
 from .geometry.treapezoidal_snake_geometry import create_trapezoidal_snake_geometry
-
-# Part arrangement and export functionality
 from .produce.arrange_and_export import (
     LeaderFollowersCuttersPart,
-    NamedPart,
-    PartCollector,
     PartInfo,
     PartList,
     arrange_and_export_parts,
@@ -57,7 +55,21 @@ from .shells.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
 )
 
-# Note: Materialized connectors functionality is not yet implemented
+ADAPTER_FUNTIONS = [
+    "create_basic_box",
+    "create_basic_cone",
+    "create_basic_cylinder",
+    "create_basic_sphere",
+    "create_solid_from_traditional_face_vertex_maps",
+    "create_text_object",
+    "get_bounding_box",
+    "get_bounding_box_center",
+    "get_vertex_coordinates",
+    "get_z_min",
+    "create_extruded_polygon",
+    "create_filleted_box",
+    "get_volume",
+]
 
 
 # Dynamically load CAD adapter functions
@@ -68,19 +80,7 @@ def _load_cad_functions():
     try:
         adapter = get_cad_adapter()
         return {
-            "create_basic_box": adapter.create_basic_box,
-            "create_basic_cone": adapter.create_basic_cone,
-            "create_basic_cylinder": adapter.create_basic_cylinder,
-            "create_basic_sphere": adapter.create_basic_sphere,
-            "create_solid_from_traditional_face_vertex_maps": adapter.create_solid_from_traditional_face_vertex_maps,
-            "create_text_object": adapter.create_text_object,
-            "get_bounding_box": adapter.get_bounding_box,
-            "get_bounding_box_center": adapter.get_bounding_box_center,
-            "get_vertex_coordinates": adapter.get_vertex_coordinates,
-            "get_z_min": adapter.get_z_min,
-            "create_extruded_polygon": adapter.create_extruded_polygon,
-            "create_filleted_box": adapter.create_filleted_box,
-            "get_volume": getattr(adapter, "get_volume", None),
+            func_name: getattr(adapter, func_name) for func_name in ADAPTER_FUNTIONS
         }
     except ImportError as e:
         # Return stub functions that provide helpful error messages
@@ -96,20 +96,7 @@ def _load_cad_functions():
             return stub
 
         return {
-            "create_basic_box": _missing_cad_error("create_basic_box"),
-            "create_basic_cone": _missing_cad_error("create_basic_cone"),
-            "create_basic_cylinder": _missing_cad_error("create_basic_cylinder"),
-            "create_basic_sphere": _missing_cad_error("create_basic_sphere"),
-            "create_solid_from_traditional_face_vertex_maps": _missing_cad_error(
-                "create_solid_from_traditional_face_vertex_maps"
-            ),
-            "create_text_object": _missing_cad_error("create_text_object"),
-            "directed_cylinder_at": _missing_cad_error("directed_cylinder_at"),
-            "get_bounding_box": _missing_cad_error("get_bounding_box"),
-            "create_extruded_polygon": _missing_cad_error("create_extruded_polygon"),
-            "get_bounding_box_center": _missing_cad_error("get_bounding_box_center"),
-            "get_volume": _missing_cad_error("get_volume"),
-            "create_filleted_box": _missing_cad_error("create_filleted_box"),
+            func_name: _missing_cad_error(func_name) for func_name in ADAPTER_FUNTIONS
         }
 
 
@@ -125,7 +112,6 @@ create_solid_from_traditional_face_vertex_maps = _cad_functions[
     "create_solid_from_traditional_face_vertex_maps"
 ]
 create_text_object = _cad_functions["create_text_object"]
-
 get_bounding_box = _cad_functions["get_bounding_box"]
 get_bounding_box_center = _cad_functions["get_bounding_box_center"]
 get_vertex_coordinates = _cad_functions["get_vertex_coordinates"]
@@ -147,12 +133,6 @@ __all__ = [
     "align",
     "chain_translations",
     # Solid builders
-    "create_solid_from_traditional_face_vertex_maps",
-    "create_basic_box",
-    "create_basic_cylinder",
-    "create_basic_sphere",
-    "create_basic_cone",
-    "create_text_object",
     "directed_cylinder_at",
     "get_bounding_box",
     # Arrange and export
@@ -180,6 +160,4 @@ __all__ = [
     "create_trapezoid",
     "create_screw_connector_normal",
     "create_extruded_polygon",
-    "get_volume",
-    "create_filleted_box",
-]
+] + ADAPTER_FUNTIONS

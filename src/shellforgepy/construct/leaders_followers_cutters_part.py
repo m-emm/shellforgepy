@@ -1,10 +1,9 @@
-
 from typing import Mapping
-from shellforgepy.construct.alignment_operations import (
- translate, rotate
-)
 
+from shellforgepy.construct.alignment_operations import copy_part, rotate, translate
 from shellforgepy.construct.named_part import NamedPart
+from shellforgepy.construct.part_collector import PartCollector
+
 
 def _normalize_named_parts(
     parts,
@@ -81,11 +80,11 @@ class LeaderFollowersCuttersPart:
     ):
 
         if isinstance(other, LeaderFollowersCuttersPart):
-            new_leader = fuse_parts(self.leader, other.leader)
-            new_followers = [f.copy() for f in (self.followers + other.followers)]
-            new_cutters = [c.copy() for c in (self.cutters + other.cutters)]
+            new_leader = self.leader.fuse(other.leader)
+            new_followers = [copy_part(f) for f in (self.followers + other.followers)]
+            new_cutters = [copy_part(c) for c in (self.cutters + other.cutters)]
             new_non_prod = [
-                n.copy()
+                copy_part(n)
                 for n in (self.non_production_parts + other.non_production_parts)
             ]
             return LeaderFollowersCuttersPart(
@@ -93,22 +92,23 @@ class LeaderFollowersCuttersPart:
             )
 
         other_shape = other
-        new_leader = fuse_parts(self.leader, other_shape)
+        new_leader = self.leader.fuse(other_shape)
         return LeaderFollowersCuttersPart(
             new_leader,
-            [f.copy() for f in self.followers],
-            [c.copy() for c in self.cutters],
-            [n.copy() for n in self.non_production_parts],
+            [copy_part(f) for f in self.followers],
+            [copy_part(c) for c in self.cutters],
+            [copy_part(n) for n in self.non_production_parts],
         )
 
     def translate(self, vector):
 
         vec = vector
-        self.leader = translate_part(self.leader, vec)
-        self.followers = [follower.translate(vec) for follower in self.followers]
-        self.cutters = [cutter.translate(vec) for cutter in self.cutters]
+        translate_func = translate(*vec)
+        self.leader = translate_func(self.leader)
+        self.followers = [translate_func(follower) for follower in self.followers]
+        self.cutters = [translate_func(cutter) for cutter in self.cutters]
         self.non_production_parts = [
-            part.translate(vec) for part in self.non_production_parts
+            translate_func(part) for part in self.non_production_parts
         ]
         return self
 
@@ -119,23 +119,11 @@ class LeaderFollowersCuttersPart:
         axis=(0.0, 0.0, 1.0),
     ):
 
-        center_vec = center
-        axis_vec = axis
-        self.leader = rotate_part(self.leader, angle, center_vec, axis_vec)
-        self.followers = [
-            follower.rotate(angle, center_vec, axis_vec) for follower in self.followers
-        ]
-        self.cutters = [
-            cutter.rotate(angle, center_vec, axis_vec) for cutter in self.cutters
-        ]
+        rotation_func = rotate(angle, center=center, axis=axis)
+        self.leader = rotation_func(self.leader)
+        self.followers = [rotation_func(follower) for follower in self.followers]
+        self.cutters = [rotation_func(cutter) for cutter in self.cutters]
         self.non_production_parts = [
-            part.rotate(angle, center_vec, axis_vec)
-            for part in self.non_production_parts
+            rotation_func(part) for part in self.non_production_parts
         ]
         return self
-
-    @property
-    def BoundBox(self):
-
-        return get_bounding_box(self.leader)
-

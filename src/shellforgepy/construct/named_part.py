@@ -1,7 +1,7 @@
-
 from dataclasses import dataclass
 from typing import Any
-from shellforgepy.construct.alignment_operations import copy_part, translate, rotate
+
+from shellforgepy.construct.alignment_operations import copy_part, rotate, translate
 
 
 @dataclass
@@ -19,7 +19,7 @@ class NamedPart:
     def translate(self, vector):
         """Translate this part by the given vector."""
 
-        translated_part = translate( *vector)(self.part)
+        translated_part = translate(*vector)(self.part)
         return NamedPart(self.name, translated_part)
 
     def rotate(
@@ -30,6 +30,5 @@ class NamedPart:
     ):
         """Rotate this part around the given axis."""
 
-        rotated_part = rotate( angle, center, axis)(self.part)
+        rotated_part = rotate(angle, center, axis)(self.part)
         return NamedPart(self.name, rotated_part)
-    
