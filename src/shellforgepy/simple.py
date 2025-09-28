@@ -28,6 +28,7 @@ from .construct.alignment_operations import (
     translate,
 )
 from .construct.construct_utils import fibonacci_sphere, normalize
+from .construct.leaders_followers_cutters_part import LeaderFollowersCuttersPart
 from .construct.named_part import NamedPart
 from .construct.part_collector import PartCollector
 from .geometry.face_point_cloud import face_point_cloud
@@ -42,13 +43,8 @@ from .geometry.spherical_tools import (
     coordinate_system_transformation_function,
 )
 from .geometry.treapezoidal_snake_geometry import create_trapezoidal_snake_geometry
-from .produce.arrange_and_export import (
-    LeaderFollowersCuttersPart,
-    PartInfo,
-    PartList,
-    arrange_and_export_parts,
-    export_solid_to_stl,
-)
+from .produce.arrange_and_export import arrange_and_export_parts, export_solid_to_stl
+from .produce.production_parts_model import PartInfo, PartList
 from .shells.materialized_connectors import create_screw_connector_normal
 from .shells.mesh_partition import MeshPartition
 from .shells.partitionable_spheroid_triangle_mesh import (

@@ -121,9 +121,15 @@ class LeaderFollowersCuttersPart:
 
         rotation_func = rotate(angle, center=center, axis=axis)
         self.leader = rotation_func(self.leader)
-        self.followers = [rotation_func(follower) for follower in self.followers]
-        self.cutters = [rotation_func(cutter) for cutter in self.cutters]
+        self.followers = [
+            follower.rotate(angle, center=center, axis=axis)
+            for follower in self.followers
+        ]
+        self.cutters = [
+            cutter.rotate(angle, center=center, axis=axis) for cutter in self.cutters
+        ]
         self.non_production_parts = [
-            rotation_func(part) for part in self.non_production_parts
+            part.rotate(angle, center=center, axis=axis)
+            for part in self.non_production_parts
         ]
         return self

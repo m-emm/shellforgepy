@@ -30,5 +30,5 @@ class NamedPart:
     ):
         """Rotate this part around the given axis."""
 
-        rotated_part = rotate(angle, center, axis)(self.part)
+        rotated_part = rotate(angle, center=center, axis=axis)(self.part)
         return NamedPart(self.name, rotated_part)

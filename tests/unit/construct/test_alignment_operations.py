@@ -1,5 +1,3 @@
-from webbrowser import get
-
 import numpy as np
 from shellforgepy.construct.alignment_operations import rotate, translate
 from shellforgepy.simple import (
@@ -40,3 +38,117 @@ def test_rotate():
     assert np.allclose(len_x, 20)
     assert np.allclose(len_y, 10)
     assert np.allclose(len_z, 30)
+
+
+def test_rotate_different_parameter_orders():
+    """Test different ways of calling rotate to see if there are parameter order issues."""
+    part = create_basic_box(10, 20, 30)
+
+    # Test 1: keyword arguments in different orders
+    rotated1 = rotate(90, axis=(0, 0, 1), center=(0, 0, 0))(part)
+    rotated2 = rotate(90, center=(0, 0, 0), axis=(0, 0, 1))(part)
+
+    # Both should give the same result
+    bbox1 = get_bounding_box(rotated1)
+    bbox2 = get_bounding_box(rotated2)
+
+    assert np.allclose(bbox1[0], bbox2[0])  # min bounds should match
+    assert np.allclose(bbox1[1], bbox2[1])  # max bounds should match
+
+
+def test_functional_consistency_with_named_parts():
+    """Test that functional transformations work consistently with NamedPart objects."""
+    from shellforgepy.construct.named_part import NamedPart
+
+    part = create_basic_box(10, 20, 30)
+    named_part = NamedPart("test", part)
+
+    # Functional transformations should work on both native parts and NamedParts
+    native_translated = translate(5, 0, 0)(part)
+    named_translated = translate(5, 0, 0)(named_part)
+
+    # NamedPart should still be a NamedPart after transformation
+    assert isinstance(named_translated, NamedPart)
+    assert named_translated.name == "test"
+
+    # Results should be equivalent
+    native_center = get_bounding_box_center(native_translated)
+    named_center = get_bounding_box_center(named_translated.part)
+    assert np.allclose(native_center, named_center)
+
+
+def test_functional_consistency_with_leader_followers():
+    """Test that functional transformations work consistently with LeaderFollowersCuttersPart."""
+    from shellforgepy.construct.leaders_followers_cutters_part import (
+        LeaderFollowersCuttersPart,
+    )
+    from shellforgepy.construct.named_part import NamedPart
+
+    leader = create_basic_box(2, 2, 2)
+    follower = NamedPart("follower", create_basic_box(1, 1, 1))
+    group = LeaderFollowersCuttersPart(leader, followers=[follower])
+
+    # Functional transformations should work on the group
+    translated_group = translate(5, 0, 0)(group)
+
+    # Should still be a LeaderFollowersCuttersPart
+    assert isinstance(translated_group, LeaderFollowersCuttersPart)
+
+    # Check that both leader and followers were translated
+    original_leader_center = get_bounding_box_center(leader)
+    original_follower_center = get_bounding_box_center(follower.part)
+
+    translated_leader_center = get_bounding_box_center(translated_group.leader)
+    translated_follower_center = get_bounding_box_center(
+        translated_group.followers[0].part
+    )
+
+    assert np.allclose(
+        translated_leader_center,
+        (
+            original_leader_center[0] + 5,
+            original_leader_center[1],
+            original_leader_center[2],
+        ),
+    )
+    assert np.allclose(
+        translated_follower_center,
+        (
+            original_follower_center[0] + 5,
+            original_follower_center[1],
+            original_follower_center[2],
+        ),
+    )
+
+
+def test_chained_transformations_consistency():
+    """Test that chained transformations work consistently across all object types."""
+    from shellforgepy.construct.leaders_followers_cutters_part import (
+        LeaderFollowersCuttersPart,
+    )
+    from shellforgepy.construct.named_part import NamedPart
+
+    # Test with native part
+    native_part = create_basic_box(10, 10, 10)
+    native_result = rotate(45, axis=(0, 0, 1))(translate(10, 0, 0)(native_part))
+
+    # Test with NamedPart
+    named_part = NamedPart("test", create_basic_box(10, 10, 10))
+    named_result = rotate(45, axis=(0, 0, 1))(translate(10, 0, 0)(named_part))
+
+    # Test with LeaderFollowersCuttersPart
+    group_part = LeaderFollowersCuttersPart(create_basic_box(10, 10, 10))
+    group_result = rotate(45, axis=(0, 0, 1))(translate(10, 0, 0)(group_part))
+
+    # All should preserve their types
+    assert isinstance(named_result, NamedPart)
+    assert isinstance(group_result, LeaderFollowersCuttersPart)
+
+    # Centers should be similar (accounting for the different starting positions)
+    native_center = get_bounding_box_center(native_result)
+    named_center = get_bounding_box_center(named_result.part)
+    group_center = get_bounding_box_center(group_result.leader)
+
+    # They should all be at approximately the same position
+    assert np.allclose(native_center, named_center, atol=1e-10)
+    assert np.allclose(native_center, group_center, atol=1e-10)

@@ -20,7 +20,18 @@ def translate(x, y, z):
     """Create a translation transformation function."""
 
     def retval(body):
+        # Handle special framework objects
+        from shellforgepy.construct.leaders_followers_cutters_part import (
+            LeaderFollowersCuttersPart,
+        )
+        from shellforgepy.construct.named_part import NamedPart
 
+        if isinstance(body, NamedPart):
+            return body.translate((x, y, z))
+        elif isinstance(body, LeaderFollowersCuttersPart):
+            return body.translate((x, y, z))
+
+        # Handle raw parts
         return translate_part(body, (x, y, z))
 
     return retval
@@ -30,8 +41,19 @@ def rotate(angle, center=None, axis=None):
     """Create a rotation transformation function."""
 
     def retval(body):
+        # Handle special framework objects
+        from shellforgepy.construct.leaders_followers_cutters_part import (
+            LeaderFollowersCuttersPart,
+        )
+        from shellforgepy.construct.named_part import NamedPart
 
-        return rotate_part(body, angle, axis=axis, center=center)
+        if isinstance(body, NamedPart):
+            return body.rotate(angle, center=center, axis=axis)
+        elif isinstance(body, LeaderFollowersCuttersPart):
+            return body.rotate(angle, center=center, axis=axis)
+
+        # Handle raw parts
+        return rotate_part(body, angle, center=center, axis=axis)
 
     return retval
 
