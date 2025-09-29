@@ -6,7 +6,6 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.spatial import ConvexHull
 from shellforgepy.construct.construct_utils import (
-    CylinderSpec,
     intersect_edge_with_cylinder,
     normalize,
     normalize_edge,
@@ -15,6 +14,7 @@ from shellforgepy.construct.construct_utils import (
     triangle_edges,
     triangle_min_angle,
 )
+from shellforgepy.construct.cylinder_spec import CylinderSpec
 from shellforgepy.geometry.spherical_tools import (
     cartesian_to_spherical_jackson,
     spherical_to_cartesian_jackson,

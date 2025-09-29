@@ -1,5 +1,4 @@
 import numpy as np
-from shellforgepy.construct.construct_utils import normalize
 from shellforgepy.geometry.mesh_utils import validate_and_fix_mesh_segment
 from shellforgepy.geometry.spherical_tools import (
     coordinate_system_transform,
@@ -8,6 +7,15 @@ from shellforgepy.geometry.spherical_tools import (
 from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
     propagate_consistent_winding,
 )
+
+
+def normalize(v):
+    """Normalize a vector. Local copy to avoid circular imports."""
+    vec = np.asarray(v, dtype=float)
+    norm = np.linalg.norm(vec)
+    if norm == 0:
+        return vec
+    return vec / norm
 
 
 def create_snake_vertices(cross_section, base_points, normals):

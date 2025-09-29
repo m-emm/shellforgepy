@@ -9,9 +9,7 @@ from shellforgepy.adapters.simple import (
     export_solid_to_stl as adapter_export_solid_to_stl,
 )
 from shellforgepy.adapters.simple import get_bounding_box
-from shellforgepy.construct.alignment_operations import translate
-
-# Import the adapter to delegate CAD-specific operations
+from shellforgepy.construct.alignment_operations import rotate_part, translate
 from shellforgepy.construct.part_collector import PartCollector
 from shellforgepy.produce.production_parts_model import PartList
 
@@ -37,56 +35,162 @@ def _safe_name(name):
     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in name)
 
 
-def _arrange_parts_in_rows(
-    parts,
+def _arrange_parts_for_production(
+    parts_list,
     *,
     gap,
     bed_width,
+    bed_depth=None,
+    verbose=False,
+    max_build_height=None,
 ):
+    """
+    Arrange parts for production with proper flipping and rotation support.
+    Based on the sophisticated FreeCAD arrange_for_production function.
+    """
+    if bed_depth is None:
+        bed_depth = bed_width  # assume square bed
 
+    def _print(msg):
+        if verbose:
+            print(msg)
+
+    # Prepare parts as rectangles with dimensions, applying production transformations
+    rects = []
+    for part_entry in parts_list:
+        shape = part_entry["part"]
+
+        # Apply flip transformation if needed (180° rotation around Y-axis)
+        if part_entry.get("flip", False):
+            _print(f"Flipping part '{part_entry['name']}'")
+            # Rotate 180° around Y-axis to flip for printing
+            shape = rotate_part(shape, angle=180, axis=(0, 1, 0))
+
+        # Apply production rotation if specified
+        if (
+            part_entry.get("prod_rotation_angle") is not None
+            and part_entry.get("prod_rotation_axis") is not None
+        ):
+            angle = part_entry["prod_rotation_angle"]
+            axis = part_entry["prod_rotation_axis"]
+            _print(
+                f"Rotating part '{part_entry['name']}' by {angle}° around axis {axis}"
+            )
+            shape = rotate_part(shape, angle=angle, axis=axis)
+        else:
+            _print(f"No production rotation for part '{part_entry['name']}'")
+
+        # Get bounding box after transformations
+        min_point, max_point = get_bounding_box(shape)
+        width = max_point[0] - min_point[0]
+        height = max_point[1] - min_point[1]
+        depth = max_point[2] - min_point[2]
+
+        # Check build height constraints
+        if max_build_height is not None and depth > max_build_height:
+            raise ValueError(
+                f"Part {part_entry['name']} exceeds max_build_height ({max_build_height} mm)"
+            )
+
+        rects.append(
+            {
+                "name": part_entry["name"],
+                "shape": shape,
+                "width": width,
+                "height": height,
+                "depth": depth,
+                "min_point": min_point,
+                "max_point": max_point,
+                "original": part_entry,
+            }
+        )
+
+    # Sort parts by area descending (largest first for better packing)
+    rects.sort(key=lambda r: -(r["width"] * r["height"]))
+
+    # Simple shelf-based arrangement algorithm
     arranged = []
     x_cursor = 0.0
     y_cursor = 0.0
     row_depth = 0.0
 
-    for shape in parts:
-        min_point, max_point = get_bounding_box(shape)
-        width = max_point[0] - min_point[0]
-        depth = max_point[1] - min_point[1]
+    for rect in rects:
+        width = rect["width"]
+        height = rect["height"]
 
-        if bed_width is not None and arranged:
-            projected_width = x_cursor + width
-            if projected_width > bed_width:
-                x_cursor = 0.0
-                y_cursor += row_depth + gap
-                row_depth = 0.0
+        if width > bed_width:
+            raise ValueError(
+                f"Part '{rect['name']}' too wide for bed ({width:.1f}mm > {bed_width}mm)"
+            )
 
-        move_vector = (
-            x_cursor - min_point[0],
-            y_cursor - min_point[1],
-            -min_point[2],
+        # Check if we need a new row
+        if arranged and x_cursor + width > bed_width:
+            y_cursor += row_depth + gap
+            x_cursor = 0.0
+            row_depth = 0.0
+
+        _print(f"Placing '{rect['name']}' at ({x_cursor:.1f}, {y_cursor:.1f})")
+
+        # Position the part: move to origin first, then to final position
+        shape = rect["shape"]
+        min_point = rect["min_point"]
+
+        # Move so bottom-left-back corner is at origin
+        shape = translate(-min_point[0], -min_point[1], -min_point[2])(shape)
+
+        # Move to final position on the bed
+        shape = translate(x_cursor, y_cursor, 0)(shape)
+
+        arranged.append(
+            {
+                "name": rect["name"],
+                "shape": shape,
+                "x": x_cursor,
+                "y": y_cursor,
+                "width": width,
+                "height": height,
+            }
         )
-        arranged_shape = translate(*move_vector)(shape)
-        arranged.append(arranged_shape)
 
         x_cursor += width + gap
-        row_depth = max(row_depth, depth)
+        row_depth = max(row_depth, height)
 
-    return arranged
+    # Center the arrangement on the bed
+    if arranged:
+        # Calculate total bounds
+        min_x = min(item["x"] for item in arranged)
+        max_x = max(item["x"] + item["width"] for item in arranged)
+        min_y = min(item["y"] for item in arranged)
+        max_y = max(item["y"] + item["height"] for item in arranged)
+
+        total_width = max_x - min_x
+        total_height = max_y - min_y
+
+        # Calculate centering offset
+        offset_x = (bed_width - total_width) / 2 - min_x
+        offset_y = (bed_depth - total_height) / 2 - min_y
+
+        # Apply centering offset to all parts
+        for item in arranged:
+            item["shape"] = translate(offset_x, offset_y, 0)(item["shape"])
+
+    _print(f"Arranged {len(arranged)} parts for production")
+    return [{"name": item["name"], "part": item["shape"]} for item in arranged]
 
 
 def arrange_and_export_parts(
     parts,
     prod_gap,
-    bed_with,
+    bed_width,
     script_file,
-    export_directory=None,
     *,
+    export_directory=None,
     prod=False,
     process_data=None,
     max_build_height=None,
+    verbose=False,
 ):
-    """Arrange named parts, export individual STLs, and a fused assembly."""
+    """Arrange named parts with production support, export individual STLs, and a fused assembly."""
 
     if isinstance(parts, PartList):
         parts_iterable = parts.as_list()
@@ -94,32 +198,48 @@ def arrange_and_export_parts(
         parts_iterable = parts
 
     parts_list = [dict(item) for item in parts_iterable]
+
+    # Filter out parts that should be skipped in production
     if prod:
         parts_list = [p for p in parts_list if not p.get("skip_in_production", False)]
         print("Arranging for production")
+    else:
+        print("Leaving parts where they are")
 
     if not parts_list:
         raise ValueError("No parts provided for arrangement and export")
 
-    shapes = []
-    names = []
-    for entry in parts_list:
-        if "name" not in entry or "part" not in entry:
-            raise KeyError("Each part mapping must include 'name' and 'part'")
-        shape = entry["part"]
-        min_point, max_point = get_bounding_box(shape)
-        if (
-            prod
-            and max_build_height is not None
-            and max_point[2] - min_point[2] > max_build_height
-        ):
-            raise ValueError(
-                f"Part {entry['name']} exceeds max_build_height ({max_build_height} mm)"
-            )
-        shapes.append(shape)
-        names.append(str(entry["name"]))
+    # Use production arrangement or simple positioning
+    if prod:
+        # Use sophisticated production arrangement with flipping and rotation
+        arranged_parts = _arrange_parts_for_production(
+            parts_list,
+            gap=prod_gap,
+            bed_width=bed_width,
+            max_build_height=max_build_height,
+            verbose=verbose,
+        )
+        arranged_shapes = [item["part"] for item in arranged_parts]
+        names = [item["name"] for item in arranged_parts]
+    else:
+        # Simple arrangement - just extract shapes and names
+        shapes = []
+        names = []
+        for entry in parts_list:
+            if "name" not in entry or "part" not in entry:
+                raise KeyError("Each part mapping must include 'name' and 'part'")
+            shape = entry["part"]
+            # Check build height even in non-production mode
+            if max_build_height is not None:
+                min_point, max_point = get_bounding_box(shape)
+                if max_point[2] - min_point[2] > max_build_height:
+                    raise ValueError(
+                        f"Part {entry['name']} exceeds max_build_height ({max_build_height} mm)"
+                    )
+            shapes.append(shape)
+            names.append(str(entry["name"]))
 
-    arranged_shapes = _arrange_parts_in_rows(shapes, gap=prod_gap, bed_width=bed_with)
+        arranged_shapes = shapes
 
     export_dir = Path(export_directory) if export_directory is not None else Path.home()
     export_dir.mkdir(parents=True, exist_ok=True)

@@ -7,12 +7,10 @@ from shellforgepy.construct.construct_utils import (
     fibonacci_sphere,
     is_valid_rigid_transform,
     normalize,
+    rotation_matrix_from_vectors,
     triangle_area,
 )
-from shellforgepy.geometry.spherical_tools import (
-    ray_triangle_intersect,
-    rotation_matrix_from_vectors,
-)
+from shellforgepy.geometry.spherical_tools import ray_triangle_intersect
 from shellforgepy.shells.connector_utils import transform_connector_hint
 from shellforgepy.shells.mesh_partition import MeshPartition
 from shellforgepy.shells.region_edge_feature import RegionEdgeFeature

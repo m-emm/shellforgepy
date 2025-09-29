@@ -160,6 +160,33 @@ Demonstrates advanced CAD adapter usage with complex alignments, boolean operati
 
 ---
 
+#### **M-Screws Production Assembly** (`m_screws_production_example.py`)
+Comprehensive metric fastener library with dual assembly/production modes.
+
+```bash
+python examples/m_screws_production_example.py
+```
+
+**Output:**
+- Individual STL files: `m_screws_production_example_*.stl`
+- Combined layout: `m_screws_production_example.stl`
+- 14 individual parts (screws, nuts, hex pieces, threaded components)
+
+**Features:**
+- Complete M2-M12 metric screw specifications (ISO standards)
+- Dual mode operation:
+  - `PRODUCTION=False`: Beautiful 3D assembly view with aligned components
+  - `PRODUCTION=True`: Optimized 3D printing layout with proper part flipping
+- Automatic screw head flipping for printable orientation
+- 3D printing optimized nuts with configurable slack tolerances
+- Threaded bolt and screw generation with minimal thread options
+- Clearance hole diameter calculations (close/normal/loose fits)
+- Smart production arrangement with centering and gap control
+
+Perfect for creating custom fasteners, educational demonstrations, or rapid prototyping of mechanical assemblies!
+
+---
+
 #### **Face Mesh** (`create_face_stl.py`)
 Complex organic shapes with mesh partitioning.
 
@@ -203,6 +230,7 @@ python examples/cylindrical_coil.py
 python examples/conical_coil.py
 python examples/mobius_strip.py
 python examples/bottle_cap_example.py
+python examples/m_screws_production_example.py
 python examples/create_face_stl.py
 ```
 
@@ -230,14 +258,15 @@ Examples create STL files in these locations:
 │   └── face_m_complete.stl
 ├── bottle_cap_example.stl          # Bottle cap (current directory)
 ├── bottle_cap_example_process.json # Process parameters
+├── m_screws_production_example_*.stl # M-screws fasteners (current directory)
+├── m_screws_production_example.stl   # Combined m-screws assembly
 └── filleted_boxes_example_*.stl    # Filleted boxes (current directory)
 ```
 
 ## 📊 Example Complexity
 
 | Example | Complexity | Focus | Output Files |
-|---------|------------|-------|--------------|
-| `filleted_boxes_example.py` | 🔰 Beginner | CAD adapter usage, production workflow | 13 STL files |
+|---------|------------|-------|--------------|\n| `filleted_boxes_example.py` | 🔰 Beginner | CAD adapter usage, production workflow | 13 STL files |
 | `create_cylinder_stl.py` | 🔰 Beginner | Basic mesh workflows | 1 STL file |
 | `straight_snake.py` | 🔰 Beginner | Path-following basics | 1 STL file |
 | `curved_snake.py` | 🔶 Intermediate | Curved path following | 1 STL file |
@@ -245,6 +274,7 @@ Examples create STL files in these locations:
 | `conical_coil.py` | 🔶 Intermediate | Advanced helical paths | 1 STL file |
 | `mobius_strip.py` | 🔶 Intermediate | Topological surfaces | 1 STL file |
 | `bottle_cap_example.py` | 🔴 Advanced | Functional parts, screw threads, production | 2 files |
+| `m_screws_production_example.py` | 🔴 Advanced | Metric fasteners, dual-mode production | 15 files |
 | `create_face_stl.py` | 🔴 Advanced | Organic shapes, mesh partitioning | 3 STL files |
 
 ## 🛠️ Technologies Demonstrated
@@ -253,6 +283,9 @@ Examples create STL files in these locations:
 - ✅ CAD adapter system (CadQuery/FreeCAD backend selection)
 - ✅ Parametric solid modeling with filleted edges
 - ✅ Precision screw thread generation with custom pitch
+- ✅ Complete metric fastener library (M2-M12 ISO standards)
+- ✅ Dual-mode production system (assembly view vs 3D printing layout)
+- ✅ Advanced part arrangement with automatic flipping and rotation
 - ✅ Point cloud generation for various geometries
 - ✅ Mesh triangulation and conversion to printable meshes
 - ✅ Mesh partitioning for multi-part printing
@@ -276,8 +309,10 @@ These examples are perfect for:
 - **Decorative moldings and trim pieces**
 - **Custom coils and spiral structures**
 - **Functional parts with screw threads (bottle caps, lids, containers)**
+- **Metric fasteners and mechanical hardware (bolts, nuts, screws)**
+- **Rapid prototyping of mechanical assemblies**
 - **Mathematical models and educational demonstrations**
-- **Rapid prototyping and 3D printing projects**
+- **3D printing projects with optimized part orientation**
 
 ## 🖨️ 3D Printing Ready
 

@@ -203,7 +203,7 @@ assembly = [
 arrange_and_export_parts(
     parts=assembly,
     prod_gap=5.0,
-    bed_with=200.0,
+    bed_width=200.0,
     script_file="examples/pedestal.py",
     export_directory="output",
 )

@@ -9,12 +9,10 @@ from shellforgepy.construct.construct_utils import (
     fibonacci_sphere,
     normalize,
     normalize_edge,
+    rotation_matrix_from_vectors,
     triangle_edges,
 )
-from shellforgepy.geometry.spherical_tools import (
-    cartesian_to_spherical_jackson,
-    rotation_matrix_from_vectors,
-)
+from shellforgepy.geometry.spherical_tools import cartesian_to_spherical_jackson
 from shellforgepy.shells.connector_hint import ConnectorHint
 from shellforgepy.shells.connector_utils import (
     compute_connector_hints_from_shell_maps,

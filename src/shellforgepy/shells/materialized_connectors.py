@@ -21,6 +21,7 @@ from shellforgepy.construct.alignment_operations import (
     rotate,
     translate,
 )
+from shellforgepy.construct.construct_utils import normalize
 from shellforgepy.geometry.higher_order_solids import (
     create_trapezoid,
     directed_cylinder_at,
@@ -36,14 +37,6 @@ def _to_tuple3(value):
     if arr.shape != (3,):  # pragma: no cover - defensive
         raise ValueError(f"Expected 3D vector, got shape {arr.shape}")
     return (float(arr[0]), float(arr[1]), float(arr[2]))
-
-
-def normalize(v):
-    vec = np.asarray(v, dtype=float)
-    norm = np.linalg.norm(vec)
-    if norm == 0:
-        return vec
-    return vec / norm
 
 
 def compute_out_vector(

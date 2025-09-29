@@ -1,10 +1,10 @@
 import numpy as np
+from shellforgepy.construct.construct_utils import rotation_matrix_from_vectors
 from shellforgepy.geometry.spherical_tools import (
     cartesian_to_spherical_jackson,
     coordinate_system_transformation_function,
     ray_plane_polygon_intersect,
     ray_triangle_intersect,
-    rotation_matrix_from_vectors,
     spherical_to_cartesian_jackson,
 )
 

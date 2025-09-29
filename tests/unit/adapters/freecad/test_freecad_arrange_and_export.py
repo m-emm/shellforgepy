@@ -225,7 +225,7 @@ def test_arrange_and_export_parts_basic():
         result_path = arrange_and_export_parts(
             parts_list,
             prod_gap=2.0,
-            bed_with=50.0,
+            bed_width=50.0,
             script_file="test_script.py",
             export_directory=temp_dir,
         )
@@ -255,7 +255,7 @@ def test_arrange_and_export_with_part_list():
         result_path = arrange_and_export_parts(
             part_list,
             prod_gap=2.0,
-            bed_with=50.0,
+            bed_width=50.0,
             script_file="test_script.py",
             export_directory=temp_dir,
         )
@@ -266,7 +266,7 @@ def test_arrange_and_export_with_part_list():
         result_path_prod = arrange_and_export_parts(
             part_list,
             prod_gap=2.0,
-            bed_with=50.0,
+            bed_width=50.0,
             script_file="test_prod.py",
             export_directory=temp_dir,
             prod=True,
@@ -292,7 +292,7 @@ def test_arrange_and_export_with_process_data():
         result_path = arrange_and_export_parts(
             parts_list,
             prod_gap=2.0,
-            bed_with=50.0,
+            bed_width=50.0,
             script_file="test_script.py",
             export_directory=temp_dir,
             process_data=process_data,
@@ -325,7 +325,7 @@ def test_arrange_and_export_max_build_height():
             arrange_and_export_parts(
                 parts_list,
                 prod_gap=2.0,
-                bed_with=50.0,
+                bed_width=50.0,
                 script_file="test_script.py",
                 export_directory=temp_dir,
                 prod=True,
@@ -341,7 +341,7 @@ def test_arrange_and_export_empty_parts():
             arrange_and_export_parts(
                 [],
                 prod_gap=2.0,
-                bed_with=50.0,
+                bed_width=50.0,
                 script_file="test_script.py",
                 export_directory=temp_dir,
             )
