@@ -6,12 +6,14 @@ This repository (`shellforgepy`) hosts the Python runtime for the ShellForge too
 - The codebase targets Python 3.12. Follow the existing conventions: Black (line length 88) and isort are the canonical formatters.
 - Prefer descriptive names over comments. Add docstrings for user-facing functions or adapters.
 - Type hints are used where they improve readability or are required by adapters, but do not blanket-annotate obvious primitives.
+- Implementing algorithms in cad-library agnostic way is preferred, so try this first.
 - Keep adapter-specific dependencies inside their respective modules so core layers stay dependency-light.
 
 ## Testing
+- Prefer creating proper pytest tests, not ad-hoc scripts. Avoid running quick debug/test scripts.
 - Pytest lives under `tests/unit`. Add `test_*.py` functions (no classes needed) and keep adapter-dependent tests behind the relevant extras if they require CadQuery/FreeCAD.
-- Ensure tests are deterministic and runnable with only the base install unless you explicitly mark them for an optional extra.
-- Run `python -m pytest` from the repo root before sending patches.
+- Run `python -m pytest` from the repo root before sending patches
+- For full testing, test with both adapters, that is, also run `./freecad_python.sh -m pytest` in the root dir. This will run in a freecad python interpreter and use the freecad engine.
 
 ## Repository Layout
 - `src/shellforgepy/`
@@ -31,12 +33,12 @@ This repository (`shellforgepy`) hosts the Python runtime for the ShellForge too
 ## Common Tasks
 - Run tests: `pytest`
 - Format code: `black src/ tests/` and `isort src/ tests/`
-- Verify adapters: import `shellforgepy.simple` and ensure `get_cad_adapter()` selects the expected backend.
+- Verify functionality: run examples as documented in README.md: `python examples/filleted_boxes_example.py`
 - Export example: use helpers in `produce/arrange_and_export.py` together with primitives from `construct` and `geometry`.
 
 ## Integration Points
 - Geometry routines reuse utilities mirrored from `py_3d_construct_lib`. Keep shared logic consistent across repositories.
 - Adapters rely on CadQuery/FreeCAD APIs; when updating them, check `tests/unit/adapters/*` for coverage and update both adapters for feature parity when possible.
-- `shellforgepy.simple` is the public entry point; ensure new capabilities surface there or document why they remain backend-specific.
+- `shellforgepy.simple` is the public entry point; ensure new capabilities surface there with clean imports. Users should import specific functions they need rather than accessing internal adapter details.
 
 Keep this guide current as the ShellForge pipeline evolves.

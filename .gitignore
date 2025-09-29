@@ -67,6 +67,17 @@ venv/
 .env
 htmlcov/
 .mypy_cache/
-.claude
-output
-face_stl_output
+
+# Development and build artifacts
+.claude/
+tools/
+file_summaries.json
+FILES.md
+
+# Output directories
+output/
+face_stl_output/
+
+# Example outputs
+*.stl
+*_process.json

@@ -13,9 +13,9 @@ except ImportError:
 from shellforgepy.simple import (
     ALIGNMENT_SIGNS,
     Alignment,
-    aligment_signs,
     align,
     align_translation,
+    alignment_signs,
     chain_translations,
     create_basic_box,
     rotate,
@@ -524,32 +524,32 @@ def test_chain_translations():
 def test_alignment_signs():
     """Test the alignment signs utility function."""
     # Test single alignment
-    signs = aligment_signs(Alignment.LEFT)
+    signs = alignment_signs(Alignment.LEFT)
     assert signs == (-1, 0, 0)
 
-    signs = aligment_signs(Alignment.RIGHT)
+    signs = alignment_signs(Alignment.RIGHT)
     assert signs == (1, 0, 0)
 
-    signs = aligment_signs(Alignment.TOP)
+    signs = alignment_signs(Alignment.TOP)
     assert signs == (0, 0, 1)
 
-    signs = aligment_signs(Alignment.BOTTOM)
+    signs = alignment_signs(Alignment.BOTTOM)
     assert signs == (0, 0, -1)
 
-    signs = aligment_signs(Alignment.FRONT)
+    signs = alignment_signs(Alignment.FRONT)
     assert signs == (0, -1, 0)
 
-    signs = aligment_signs(Alignment.BACK)
+    signs = alignment_signs(Alignment.BACK)
     assert signs == (0, 1, 0)
 
-    signs = aligment_signs(Alignment.CENTER)
+    signs = alignment_signs(Alignment.CENTER)
     assert signs == (0, 0, 0)
 
     # Test multiple alignments
-    signs = aligment_signs([Alignment.LEFT, Alignment.TOP])
+    signs = alignment_signs([Alignment.LEFT, Alignment.TOP])
     assert signs == (-1, 0, 1)
 
-    signs = aligment_signs([Alignment.RIGHT, Alignment.BACK, Alignment.BOTTOM])
+    signs = alignment_signs([Alignment.RIGHT, Alignment.BACK, Alignment.BOTTOM])
     assert signs == (1, 1, -1)
 
 

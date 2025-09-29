@@ -148,7 +148,7 @@ def align_translation(part, to, alignment: Alignment, axes=None):
         raise ValueError(f"Unknown alignment: {alignment}")
 
 
-def aligment_signs(aligmment_list):
+def alignment_signs(aligmment_list):
 
     if isinstance(aligmment_list, Alignment):
         aligmment_list = [aligmment_list]

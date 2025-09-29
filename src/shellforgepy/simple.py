@@ -19,9 +19,9 @@ from shellforgepy.shells.transformed_region_view import TransformedRegionView
 # Core alignment functionality
 from .construct.alignment import ALIGNMENT_SIGNS, Alignment
 from .construct.alignment_operations import (
-    aligment_signs,
     align,
     align_translation,
+    alignment_signs,
     chain_translations,
     rotate,
     stack_alignment_of,
@@ -138,7 +138,7 @@ __all__ = [
     "Alignment",
     "ALIGNMENT_SIGNS",
     "stack_alignment_of",
-    "aligment_signs",
+    "alignment_signs",
     "translate",
     "rotate",
     "align_translation",
