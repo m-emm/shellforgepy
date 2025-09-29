@@ -24,6 +24,8 @@ copy_part = adapter.copy_part
 create_filleted_box = adapter.create_filleted_box
 translate_part_native = adapter.translate_part_native
 rotate_part_native = adapter.rotate_part_native
+filter_edges_by_z_position = adapter.filter_edges_by_z_position
+apply_fillet_to_edges = adapter.apply_fillet_to_edges
 
 __all__ = [
     "create_basic_box",
@@ -44,4 +46,6 @@ __all__ = [
     "create_filleted_box",
     "translate_part_native",
     "rotate_part_native",
+    "filter_edges_by_z_position",
+    "apply_fillet_to_edges",
 ]

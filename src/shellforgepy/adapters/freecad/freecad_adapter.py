@@ -19,6 +19,12 @@ import logging
 
 _logger = logging.getLogger(__name__)
 
+# FreeCAD specific adapter implementations
+# Here, cad-backend-specific should be implemented
+# Any code that can be implemented backend-agnostic should go in geometry/ or construct/ or produce/ or similar
+# To test this functionality, run in a FreeCAD Python environment, such as
+# ./freecad_python.sh -m pytest tests/unit/adapters/freecad/test_freecad_basic_transformations.py
+
 
 def create_solid_from_traditional_face_vertex_maps(maps):
     """
@@ -648,3 +654,226 @@ def create_filleted_box(
     box = box.makeFillet(fillet_radius, edges)
 
     return box
+
+
+def filter_edges_by_z_position(solid, z_threshold, below=True):
+    """Filter edges based on their Z position.
+
+    Args:
+        solid: FreeCAD solid
+        z_threshold: Z coordinate threshold
+        below: If True, return edges with all vertices <= threshold;
+               if False, return edges with all vertices >= threshold
+
+    Returns:
+        List of edges that meet the criteria
+    """
+    edges = []
+    try:
+        for edge in solid.Edges:
+            # Get edge's vertices
+            vertices = edge.Vertexes
+            if vertices:
+                # Check if all vertices meet the criteria
+                vertex_z_coords = [v.Point.z for v in vertices]
+
+                if below:
+                    # All vertices must be at or below the threshold
+                    if all(z <= z_threshold for z in vertex_z_coords):
+                        edges.append(edge)
+                else:
+                    # All vertices must be at or above the threshold
+                    if all(z >= z_threshold for z in vertex_z_coords):
+                        edges.append(edge)
+
+    except Exception as e:
+        _logger.warning(f"Error filtering edges: {e}")
+
+    return edges
+
+
+def filter_edges_by_alignment(solid, fillets_at=None, no_fillets_at=None):
+    """Filter edges based on alignment positions (top, bottom, left, right, front, back).
+
+    Args:
+        solid: FreeCAD solid
+        fillets_at: List of Alignment values indicating which faces/edges to include
+        no_fillets_at: List of Alignment values indicating which faces/edges to exclude
+
+    Returns:
+        List of edges that meet the criteria
+    """
+    from shellforgepy.construct.alignment import Alignment
+
+    # Get bounding box for alignment calculations
+    bbox = solid.BoundBox
+    length = bbox.XLength
+    width = bbox.YLength
+    height = bbox.ZLength
+    x_min, y_min, z_min = bbox.XMin, bbox.YMin, bbox.ZMin
+
+    def edge_is_at(edge, alignment):
+        """Check if an edge is at a specific alignment position."""
+        tolerance = 1e-3
+
+        # Get edge bounding box for circular edges
+        edge_bbox = edge.BoundBox
+
+        # For circular edges, check if the edge is at constant Z/X/Y within tolerance
+        if alignment == Alignment.TOP:
+            # Edge is at top if its Z range is at the top of the solid
+            return (
+                abs(edge_bbox.ZMax - (z_min + height)) < tolerance
+                and abs(edge_bbox.ZMin - (z_min + height)) < tolerance
+            )
+        elif alignment == Alignment.BOTTOM:
+            # Edge is at bottom if its Z range is at the bottom of the solid
+            return (
+                abs(edge_bbox.ZMax - z_min) < tolerance
+                and abs(edge_bbox.ZMin - z_min) < tolerance
+            )
+        elif alignment == Alignment.LEFT:
+            # Edge is at left if its X range is at the left of the solid
+            return (
+                abs(edge_bbox.XMax - x_min) < tolerance
+                and abs(edge_bbox.XMin - x_min) < tolerance
+            )
+        elif alignment == Alignment.RIGHT:
+            # Edge is at right if its X range is at the right of the solid
+            return (
+                abs(edge_bbox.XMax - (x_min + length)) < tolerance
+                and abs(edge_bbox.XMin - (x_min + length)) < tolerance
+            )
+        elif alignment == Alignment.FRONT:
+            # Edge is at front if its Y range is at the front of the solid
+            return (
+                abs(edge_bbox.YMax - y_min) < tolerance
+                and abs(edge_bbox.YMin - y_min) < tolerance
+            )
+        elif alignment == Alignment.BACK:
+            # Edge is at back if its Y range is at the back of the solid
+            return (
+                abs(edge_bbox.YMax - (y_min + width)) < tolerance
+                and abs(edge_bbox.YMin - (y_min + width)) < tolerance
+            )
+        else:
+            return False
+
+    def edge_is_at_one_of(edge, alignments):
+        """Check if an edge is at any of the specified alignments."""
+        for alignment in alignments:
+            if edge_is_at(edge, alignment):
+                return True
+        return False
+
+    edges = []
+    try:
+        for edge in solid.Edges:
+            # Include edge if it matches fillets_at criteria
+            include_edge = True
+            if fillets_at is not None:
+                include_edge = edge_is_at_one_of(edge, fillets_at)
+
+            # Exclude edge if it matches no_fillets_at criteria
+            if include_edge and no_fillets_at is not None:
+                include_edge = not edge_is_at_one_of(edge, no_fillets_at)
+
+            if include_edge:
+                edges.append(edge)
+
+    except Exception as e:
+        _logger.warning(f"Error filtering edges by alignment: {e}")
+
+    return edges
+
+
+def filter_edges_by_function(solid, edge_filter_func):
+    """Filter edges using a custom function.
+
+    Args:
+        solid: FreeCAD solid
+        edge_filter_func: Function that takes (bbox, v0_point, v1_point) and returns bool
+                         bbox: bounding box as (min_point, max_point) tuples
+                         v0_point: first vertex as (x, y, z) tuple
+                         v1_point: second vertex as (x, y, z) tuple
+
+    Returns:
+        List of edges that meet the criteria
+    """
+    edges = []
+    try:
+        # Get bounding box
+        bbox = get_bounding_box(solid)
+
+        for edge in solid.Edges:
+            vertices = edge.Vertexes
+            if len(vertices) >= 2:
+                v0 = vertices[0].Point
+                v1 = vertices[1].Point
+
+                # Convert vertices to tuples
+                v0_point = (v0.x, v0.y, v0.z)
+                v1_point = (v1.x, v1.y, v1.z)
+
+                # Call user's filter function
+                if edge_filter_func(bbox, v0_point, v1_point):
+                    edges.append(edge)
+
+    except Exception as e:
+        _logger.warning(f"Error filtering edges by function: {e}")
+
+    return edges
+
+
+def apply_fillet_to_edges(solid, fillet_radius, edges):
+    """Apply fillet to specific edges of a solid.
+
+    Args:
+        solid: FreeCAD solid
+        fillet_radius: Radius of the fillet
+        edges: List of edges to fillet
+
+    Returns:
+        Filleted solid
+    """
+    if not edges:
+        return solid
+
+    try:
+        return solid.makeFillet(fillet_radius, edges)
+    except Exception as e:
+        _logger.warning(f"Error applying fillet: {e}")
+        return solid
+
+
+def apply_fillet_by_alignment(
+    solid, fillet_radius, fillets_at=None, no_fillets_at=None
+):
+    """Apply fillet to edges based on alignment positions.
+
+    Args:
+        solid: FreeCAD solid
+        fillet_radius: Radius of the fillet
+        fillets_at: List of Alignment values indicating which edges to fillet
+        no_fillets_at: List of Alignment values indicating which edges NOT to fillet
+
+    Returns:
+        Filleted solid
+    """
+    edges = filter_edges_by_alignment(solid, fillets_at, no_fillets_at)
+    return apply_fillet_to_edges(solid, fillet_radius, edges)
+
+
+def apply_fillet_by_function(solid, fillet_radius, edge_filter_func):
+    """Apply fillet to edges selected by a custom function.
+
+    Args:
+        solid: FreeCAD solid
+        fillet_radius: Radius of the fillet
+        edge_filter_func: Function that takes (bbox, v0_point, v1_point) and returns bool
+
+    Returns:
+        Filleted solid
+    """
+    edges = filter_edges_by_function(solid, edge_filter_func)
+    return apply_fillet_to_edges(solid, fillet_radius, edges)

@@ -139,6 +139,46 @@ pip install -e ".[testing]"
 
 ---
 
+## Using FreeCAD
+
+ShellForgePy can use an existing FreeCAD installation as a CAD backend. This requires some additional setup since FreeCAD uses its own Python environment.
+
+### FreeCAD Python wrapper script
+
+The repository includes `freecad_python.sh` (macOS) that allows running Python scripts within FreeCAD's environment:
+
+```bash
+# Interactive FreeCAD Python REPL
+./freecad_python.sh
+
+# Run pytest with FreeCAD modules
+./freecad_python.sh -m pytest tests/unit/adapters/freecad/ -v
+
+# Execute code
+./freecad_python.sh -c "import FreeCAD; print('FreeCAD available!')"
+
+# Run a script
+./freecad_python.sh examples/filleted_boxes_example.py
+```
+
+### Platform-specific setup
+
+**macOS:** The script assumes FreeCAD is installed at `/Applications/FreeCAD.app`. Modify the path in `freecad_python.sh` if needed.
+
+**Linux/Windows:** Adapt the script by:
+1. Changing the FreeCAD executable path (typically `/usr/bin/freecad` on Linux)
+2. Adjusting the macro file path as needed
+
+### Requirements
+
+- System FreeCAD installation
+- Python environment with `shellforgepy[freecad]` installed
+- FreeCAD's Python modules discoverable by the wrapper script
+
+The wrapper script handles environment setup and provides a standard Python-like interface while giving access to FreeCAD modules (`FreeCAD`, `Part`, etc.).
+
+---
+
 ## Quick start
 
 ```python
@@ -244,6 +284,25 @@ and keep adapter-specific code isolated so ShellForgePy stays backend-agnostic b
 default.
 
 ---
+
+## Code Nutrition Facts
+```
+Serving size: 1 pip install
+
+Amount per serving:
+- Human effort .................. 72%
+- AI seasoning .................. 18%
+- PLA dust & failed prints ....... 7%
+- Duct tape & hotfix glue ........ 2%
+- Mystery ingredients ............ 1%
+
+* Percentages are approximate and may vary between commits.
+
+Allergen Information:
+⚠️ May contain traces of AI-generated code.  
+Sensitive developers could experience mild irritation, spontaneous refactoring urges, or existential dread.
+
+````
 
 ## License
 

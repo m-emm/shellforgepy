@@ -34,6 +34,8 @@ from .construct.part_collector import PartCollector
 from .geometry.face_point_cloud import face_point_cloud
 from .geometry.higher_order_solids import (
     create_hex_prism,
+    create_ring,
+    create_screw_thread,
     create_trapezoid,
     directed_cylinder_at,
 )
@@ -65,6 +67,12 @@ ADAPTER_FUNTIONS = [
     "create_extruded_polygon",
     "create_filleted_box",
     "get_volume",
+    "filter_edges_by_z_position",
+    "filter_edges_by_alignment",
+    "filter_edges_by_function",
+    "apply_fillet_to_edges",
+    "apply_fillet_by_alignment",
+    "apply_fillet_by_function",
 ]
 
 
@@ -115,6 +123,12 @@ get_z_min = _cad_functions.get("get_z_min")
 create_extruded_polygon = _cad_functions["create_extruded_polygon"]
 create_filleted_box = _cad_functions["create_filleted_box"]
 get_volume = _cad_functions.get("get_volume")
+filter_edges_by_z_position = _cad_functions["filter_edges_by_z_position"]
+filter_edges_by_alignment = _cad_functions["filter_edges_by_alignment"]
+filter_edges_by_function = _cad_functions["filter_edges_by_function"]
+apply_fillet_to_edges = _cad_functions["apply_fillet_to_edges"]
+apply_fillet_by_alignment = _cad_functions["apply_fillet_by_alignment"]
+apply_fillet_by_function = _cad_functions["apply_fillet_by_function"]
 
 # Define what gets exported with "from simple import *"
 __all__ = [
@@ -153,6 +167,8 @@ __all__ = [
     "TransformedRegionView",
     "create_trapezoidal_snake_geometry",
     "create_hex_prism",
+    "create_ring",
+    "create_screw_thread",
     "create_trapezoid",
     "create_screw_connector_normal",
     "create_extruded_polygon",

@@ -1147,3 +1147,157 @@ def test_close_loop_maintains_mesh_quality():
 
             # Area should be greater than zero (non-degenerate)
             assert area > 1e-10, f"Mesh {i} has degenerate triangle with area {area}"
+
+
+def test_helical_snake_solid_fusion():
+    """Test creating a helical snake geometry and fusing it into a single solid."""
+    from shellforgepy.adapters.simple import (
+        create_solid_from_traditional_face_vertex_maps,
+        get_volume,
+    )
+
+    # Create a helical path for screw thread
+    num_turns = 2
+    resolution = 16  # Lower resolution for faster testing
+    pitch = 2.0
+    inner_radius = 5.0
+    outer_radius = 7.0
+
+    # Generate helical path
+    total_points = int(num_turns * resolution)
+    theta_values = np.linspace(0, 2 * np.pi * num_turns, total_points)
+
+    # Calculate helical coordinates
+    x_values = inner_radius * np.cos(theta_values)
+    y_values = inner_radius * np.sin(theta_values)
+    z_values = (pitch / (2 * np.pi)) * theta_values
+
+    base_points = np.column_stack([x_values, y_values, z_values])
+
+    # Calculate outward-pointing normals (radial direction)
+    normals = np.zeros_like(base_points)
+    for i in range(len(base_points)):
+        normals[i, 0] = np.cos(theta_values[i])
+        normals[i, 1] = np.sin(theta_values[i])
+        normals[i, 2] = 0.0
+
+    # Create trapezoidal cross-section for thread
+    thread_depth = outer_radius - inner_radius
+    outer_thickness = 0.4
+    inner_thickness = 0.4
+    cross_section = np.array(
+        [
+            [-outer_thickness / 2, 0.0],  # Bottom left
+            [outer_thickness / 2, 0.0],  # Bottom right
+            [inner_thickness / 2, thread_depth],  # Top right
+            [-inner_thickness / 2, thread_depth],  # Top left
+        ]
+    )
+
+    # Generate snake geometry
+    meshes = create_trapezoidal_snake_geometry(cross_section, base_points, normals)
+
+    # Verify we got mesh segments
+    assert len(meshes) > 0, "Should generate mesh segments"
+    print(f"Generated {len(meshes)} mesh segments")
+
+    # Convert each mesh segment to a solid and fuse them
+    solids = []
+    for i, mesh in enumerate(meshes):
+        try:
+            solid = create_solid_from_traditional_face_vertex_maps(mesh)
+            assert solid is not None, f"Mesh segment {i} should create a valid solid"
+            volume = get_volume(solid)
+            assert volume > 0, f"Solid {i} should have positive volume"
+            solids.append(solid)
+            print(f"Segment {i}: Volume = {volume:.6f}")
+        except Exception as e:
+            print(f"Failed to create solid from segment {i}: {e}")
+            raise
+
+    assert len(solids) > 0, "Should create at least one solid"
+
+    # Fuse all solids together
+    fused_solid = solids[0]
+    for i, solid in enumerate(solids[1:], 1):
+        try:
+            fused_solid = fused_solid.fuse(solid)
+            fused_volume = get_volume(fused_solid)
+            print(f"Fused {i+1} solids, volume = {fused_volume:.6f}")
+        except Exception as e:
+            print(f"Failed to fuse solid {i}: {e}")
+            raise
+
+    # Verify the final fused solid
+    assert fused_solid is not None, "Fused solid should not be None"
+    final_volume = get_volume(fused_solid)
+    assert final_volume > 0, "Fused solid should have positive volume"
+    print(f"Final fused solid volume: {final_volume:.6f}")
+
+    # The fused solid should have a reasonable volume for a helical thread
+    expected_min_volume = (
+        num_turns * pitch * inner_radius * outer_thickness * 0.1
+    )  # Conservative estimate
+    assert (
+        final_volume > expected_min_volume
+    ), f"Volume {final_volume} seems too small for helical thread"
+
+
+def test_circular_snake_solid_fusion():
+    """Test creating a circular snake geometry and fusing it into a single solid."""
+    from shellforgepy.adapters.simple import (
+        create_solid_from_traditional_face_vertex_maps,
+        get_volume,
+    )
+
+    # Create a circular path
+    radius = 10.0
+    num_segments = 12
+    theta = np.linspace(0, 2 * np.pi, num_segments, endpoint=False)
+
+    base_points = np.array([[radius * np.cos(t), radius * np.sin(t), 0] for t in theta])
+
+    # Normals pointing outward
+    normals = np.array([[np.cos(t), np.sin(t), 0] for t in theta])
+
+    # Rectangular cross-section
+    width = 2.0
+    height = 1.0
+    cross_section = np.array(
+        [[-width / 2, 0], [width / 2, 0], [width / 2, height], [-width / 2, height]]
+    )
+
+    # Generate snake geometry with closed loop
+    meshes = create_trapezoidal_snake_geometry(
+        cross_section, base_points, normals, close_loop=True
+    )
+
+    # Verify we got the expected number of segments (including closing segment)
+    assert (
+        len(meshes) == num_segments
+    ), f"Expected {num_segments} segments, got {len(meshes)}"
+
+    # Convert each mesh to solid and fuse
+    solids = []
+    for i, mesh in enumerate(meshes):
+        solid = create_solid_from_traditional_face_vertex_maps(mesh)
+        assert solid is not None, f"Segment {i} should create valid solid"
+        volume = get_volume(solid)
+        assert volume > 0, f"Segment {i} should have positive volume"
+        solids.append(solid)
+
+    # Fuse all solids
+    fused_solid = solids[0]
+    for solid in solids[1:]:
+        fused_solid = fused_solid.fuse(solid)
+
+    # Verify final result
+    assert fused_solid is not None
+    final_volume = get_volume(fused_solid)
+    assert final_volume > 0
+
+    # Should have reasonable volume for a torus-like shape
+    expected_volume = 2 * np.pi * radius * width * height
+    final_fused_volume = get_volume(fused_solid)
+    volume_ratio = final_fused_volume / expected_volume
+    assert 0.5 < volume_ratio < 2.0, f"Volume ratio {volume_ratio} seems unreasonable"
