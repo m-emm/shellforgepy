@@ -299,8 +299,10 @@ Amount per serving:
 * Percentages are approximate and may vary between commits.
 
 Allergen Information:
-⚠️ May contain traces of AI-generated code.  
-Sensitive developers could experience mild irritation, spontaneous refactoring urges, or existential dread.
+⚠️ May contain traces of AI-generated code.
+Sensitive developers could experience
+mild irritation, spontaneous refactoring urges,
+or existential dread.
 
 ````
 
