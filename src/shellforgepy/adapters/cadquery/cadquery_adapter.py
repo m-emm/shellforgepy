@@ -12,6 +12,11 @@ _logger = logging.getLogger(__name__)
 # Any code that can be implemented backend-agnostic should go in geometry/ or construct/ or produce/ or similar
 
 
+def get_adapter_id():
+    """Return a string identifying this adapter."""
+    return "cadquery"
+
+
 def _as_cq_vector(value) -> cq.Vector:
     if isinstance(value, cq.Vector):
         return value

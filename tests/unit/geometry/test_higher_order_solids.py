@@ -98,8 +98,8 @@ def test_create_screw_thread_parameters():
         outer_thickness=0.3,
         num_turns=2,
         resolution=16,
-        core_offset=1.0,
-        core_height=3.0,
+        core_offset=0.2,  # Smaller core offset
+        core_height=7.0,  # Larger core height to accommodate offset
     )
 
     assert screw_offset is not None

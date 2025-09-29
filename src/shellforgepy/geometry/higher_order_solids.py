@@ -156,7 +156,7 @@ def create_screw_thread(
     """Create a helical screw thread using trapezoidal snake geometry.
 
     Creates a realistic helical thread by generating a trapezoidal cross-section
-    and sweeping it along a helical path.
+    and sweeping it along a helical path, following the original FreeCAD implementation.
 
     Args:
         pitch: Distance between thread peaks
@@ -165,8 +165,8 @@ def create_screw_thread(
         outer_thickness: Thickness of the thread at outer radius
         num_turns: Number of complete turns
         with_core: Whether to include a solid core
-        inner_thickness: Thickness of thread at inner radius (defaults to outer_thickness)
-        core_height: Height of the core (defaults to thread height)
+        inner_thickness: Thickness of thread at inner radius (defaults to pitch - outer_thickness)
+        core_height: Height of the core (defaults to calculated minimum)
         resolution: Number of segments per turn
         optimize_start: Whether to optimize the thread start
         optimize_start_angle: Angle over which to optimize start (degrees)
@@ -175,81 +175,164 @@ def create_screw_thread(
     Returns:
         Solid representing the screw thread
     """
+    # Fix the default inner_thickness to match original implementation
     if inner_thickness is None:
-        inner_thickness = outer_thickness
+        inner_thickness = pitch - outer_thickness
 
-    # Calculate thread geometry
-    thread_height = num_turns * pitch
-    total_points = int(num_turns * resolution)  # Ensure integer
+    # Calculate turn structure like the original
+    whole_turns = int(num_turns)
+    partial_turn = num_turns - whole_turns
+    partial_turn_segments = 0
+    if partial_turn > 0:
+        partial_turn_segments = int(resolution * partial_turn)
 
-    # Create trapezoidal cross-section for the thread
-    thread_depth = outer_radius - inner_radius
-    cross_section = np.array(
-        [
-            [-outer_thickness / 2, 0.0],  # Bottom left
-            [outer_thickness / 2, 0.0],  # Bottom right
-            [inner_thickness / 2, thread_depth],  # Top right
-            [-inner_thickness / 2, thread_depth],  # Top left
-        ]
-    )
+    # Convert angles to radians
+    optimize_start_angle_rad = math.radians(optimize_start_angle)
 
-    # Generate helical path
-    theta_values = np.linspace(0, 2 * np.pi * num_turns, total_points)
+    def construct_thread_for_turn(turn_index, is_partial=False, num_segments=None):
+        """Construct thread geometry for one turn using snake geometry."""
+        if num_segments is None:
+            num_segments = resolution
 
-    # Apply start optimization if requested
-    if optimize_start and total_points > 0:
-        optimize_points = int(
-            resolution * optimize_start_angle / 360.0
-        )  # Ensure integer
-        optimize_points = min(
-            optimize_points, total_points // 4
-        )  # Don't optimize more than 1/4 turn
+        # Create path points for this turn
+        base_points = []
+        normals = []
 
-        # Create a smooth transition for the first few points
-        for i in range(optimize_points):
-            scale_factor = i / optimize_points
-            theta_values[i] *= scale_factor
+        for i in range(num_segments + 1):
+            # Calculate angle for this segment
+            angle = 2 * math.pi * i / resolution
 
-    # Calculate helical coordinates
-    x_values = inner_radius * np.cos(theta_values)
-    y_values = inner_radius * np.sin(theta_values)
-    z_values = (pitch / (2 * np.pi)) * theta_values
+            # Apply optimization for first turn if requested
+            current_outer_radius = outer_radius
+            if turn_index == 0 and optimize_start and angle < optimize_start_angle_rad:
+                # Gradually transition from inner to outer radius
+                radius_factor = angle / optimize_start_angle_rad
+                current_outer_radius = (inner_radius + outer_radius) / 2 + (
+                    outer_radius - inner_radius
+                ) / 2 * radius_factor
 
-    base_points = np.column_stack([x_values, y_values, z_values])
+            # Use the middle radius between inner and outer for the helical path
+            # This matches the original's approach of having separate inner/outer paths
+            path_radius = (inner_radius + current_outer_radius) / 2
 
-    # Calculate outward-pointing normals (radial direction from thread axis)
-    normals = np.zeros_like(base_points)
-    for i in range(len(base_points)):
-        normals[i, 0] = np.cos(theta_values[i])  # X component
-        normals[i, 1] = np.sin(theta_values[i])  # Y component
-        normals[i, 2] = 0.0  # Z component (purely radial)
+            x = path_radius * math.cos(angle)
+            y = path_radius * math.sin(angle)
+            z = pitch * i / resolution + turn_index * pitch
 
-    # Generate thread geometry using snake geometry
-    thread_meshes = create_trapezoidal_snake_geometry(
-        cross_section, base_points, normals
-    )
+            base_points.append([x, y, z])
 
-    # Convert each mesh segment to a solid and fuse them
-    thread_solids = []
-    for mesh in thread_meshes:
-        mesh_data = {"vertexes": mesh["vertexes"], "faces": mesh["faces"]}
-        solid = create_solid_from_traditional_face_vertex_maps(mesh_data)
-        thread_solids.append(solid)
+            # Normal points radially outward
+            normals.append([math.cos(angle), math.sin(angle), 0.0])
 
-    # Fuse all thread segments together
-    thread_solid = thread_solids[0]
-    for solid in thread_solids[1:]:
-        thread_solid = thread_solid.fuse(solid)
+        base_points = np.array(base_points)
+        normals = np.array(normals)
 
-    # Add core if requested
-    if with_core:
-        if core_height is None:
-            core_height = thread_height
+        # Create proper trapezoidal cross-section for thread profile
+        # The cross-section represents the thread's shape in the radial-axial plane
+        thread_radial_extent = outer_radius - inner_radius
 
-        core = create_basic_cylinder(
-            radius=inner_radius, height=core_height, origin=(0, 0, core_offset)
+        cross_section = np.array(
+            [
+                # Bottom of thread (at inner radius side)
+                [-inner_thickness / 2, -thread_radial_extent / 2],  # Bottom left
+                [inner_thickness / 2, -thread_radial_extent / 2],  # Bottom right
+                # Top of thread (at outer radius side)
+                [outer_thickness / 2, thread_radial_extent / 2],  # Top right
+                [-outer_thickness / 2, thread_radial_extent / 2],  # Top left
+            ]
         )
 
-        thread_solid = thread_solid.fuse(core)
+        # Generate mesh using snake geometry
+        try:
+            thread_meshes = create_trapezoidal_snake_geometry(
+                cross_section, base_points, normals
+            )
 
-    return thread_solid
+            # Convert meshes to solids and fuse
+            turn_solids = []
+            for mesh in thread_meshes:
+                mesh_data = {"vertexes": mesh["vertexes"], "faces": mesh["faces"]}
+                solid = create_solid_from_traditional_face_vertex_maps(mesh_data)
+                if solid is not None:
+                    turn_solids.append(solid)
+
+            if not turn_solids:
+                return None
+
+            # Fuse all segments for this turn
+            turn_solid = turn_solids[0]
+            for solid in turn_solids[1:]:
+                turn_solid = turn_solid.fuse(solid)
+
+            return turn_solid
+
+        except Exception as e:
+            print(f"Error creating thread turn {turn_index}: {e}")
+            return None
+
+    # Build the complete thread
+    thread_parts = []
+
+    # Create full turns
+    for turn_index in range(whole_turns):
+        if turn_index == 0 and optimize_start:
+            # First turn with optimization
+            turn_solid = construct_thread_for_turn(turn_index, is_partial=False)
+        else:
+            # Regular turn
+            turn_solid = construct_thread_for_turn(turn_index, is_partial=False)
+
+        if turn_solid is not None:
+            thread_parts.append(turn_solid)
+
+    # Create partial turn if needed
+    if partial_turn > 0:
+        partial_solid = construct_thread_for_turn(
+            whole_turns, is_partial=True, num_segments=partial_turn_segments
+        )
+        if partial_solid is not None:
+            thread_parts.append(partial_solid)
+
+    if not thread_parts:
+        raise ValueError("Failed to create any thread geometry")
+
+    # Fuse all thread parts
+    final_thread = thread_parts[0]
+    for part in thread_parts[1:]:
+        final_thread = final_thread.fuse(part)
+
+    # Add core if requested (following original logic)
+    if with_core:
+        from shellforgepy.adapters.simple import get_bounding_box
+
+        bbox = get_bounding_box(final_thread)
+        lowest_z = bbox[0][2]  # (xmin, ymin, zmin) -> zmin
+        highest_z = bbox[1][2]  # (xmax, ymax, zmax) -> zmax
+
+        core_height_tolerance = 0.05
+        min_core_height = highest_z - lowest_z
+
+        if core_height is None:
+            core_height = min_core_height + core_height_tolerance
+
+        if core_height < min_core_height:
+            raise ValueError(
+                f"Core height ({core_height}) must be greater than the minimum core height ({min_core_height})"
+            )
+
+        core_top = lowest_z + core_height - core_offset
+        core_bottom = lowest_z - core_offset
+
+        if core_top < highest_z:
+            raise ValueError(
+                f"Core top ({core_top}) must be greater than the highest point ({highest_z})"
+            )
+
+        # Create and position the core
+        core = create_basic_cylinder(
+            radius=inner_radius, height=core_height, origin=(0, 0, core_bottom)
+        )
+
+        final_thread = final_thread.fuse(core)
+
+    return final_thread

@@ -73,6 +73,7 @@ ADAPTER_FUNTIONS = [
     "apply_fillet_to_edges",
     "apply_fillet_by_alignment",
     "apply_fillet_by_function",
+    "get_adapter_id",
 ]
 
 
@@ -129,6 +130,7 @@ filter_edges_by_function = _cad_functions["filter_edges_by_function"]
 apply_fillet_to_edges = _cad_functions["apply_fillet_to_edges"]
 apply_fillet_by_alignment = _cad_functions["apply_fillet_by_alignment"]
 apply_fillet_by_function = _cad_functions["apply_fillet_by_function"]
+get_adapter_id = _cad_functions["get_adapter_id"]
 
 # Define what gets exported with "from simple import *"
 __all__ = [

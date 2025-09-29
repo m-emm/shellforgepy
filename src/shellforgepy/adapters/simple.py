@@ -26,6 +26,7 @@ translate_part_native = adapter.translate_part_native
 rotate_part_native = adapter.rotate_part_native
 filter_edges_by_z_position = adapter.filter_edges_by_z_position
 apply_fillet_to_edges = adapter.apply_fillet_to_edges
+get_adapter_id = adapter.get_adapter_id
 
 __all__ = [
     "create_basic_box",
@@ -48,4 +49,5 @@ __all__ = [
     "rotate_part_native",
     "filter_edges_by_z_position",
     "apply_fillet_to_edges",
+    "get_adapter_id",
 ]

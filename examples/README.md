@@ -134,6 +134,32 @@ The ultimate demonstration of coordinate transformation capabilities.
 
 ### 🧠 Advanced Examples
 
+#### **Hawaii Bottle Cap** (`bottle_cap_example.py`)
+Real-world functional part with screw threads and grip textures.
+
+```bash
+python examples/bottle_cap_example.py
+```
+
+**Output:**
+- `bottle_cap_example.stl`
+- `bottle_cap_example_process.json`
+
+**Features:**
+- Precision screw thread generation (4.3mm pitch)
+- 24 grip ripples around the circumference
+- Multi-stage ring and cylinder construction
+- Strategic geometry filleting for clean edges
+- Production-ready 3D printing parameters
+- Tested and validated with real bottle compatibility
+
+![Bottle Cap STL](bottle_cap_example.png)
+![Real Printed Cap](bottle_cap_real.jpeg)
+
+Demonstrates advanced CAD adapter usage with complex alignments, boolean operations, and functional threading for real-world applications!
+
+---
+
 #### **Face Mesh** (`create_face_stl.py`)
 Complex organic shapes with mesh partitioning.
 
@@ -160,6 +186,13 @@ python examples/create_face_stl.py
 
 Want to see everything in action?
 
+### 🚀 **Quick Script (Recommended)**
+```bash
+# Run all examples with one command
+./run_examples.sh
+```
+
+### 📋 **Individual Commands**
 ```bash
 # Run each example individually
 python examples/filleted_boxes_example.py
@@ -169,8 +202,16 @@ python examples/curved_snake.py
 python examples/cylindrical_coil.py
 python examples/conical_coil.py
 python examples/mobius_strip.py
+python examples/bottle_cap_example.py
 python examples/create_face_stl.py
 ```
+
+The `run_examples.sh` script provides:
+- ✅ **Progress tracking** with clear success/failure indicators
+- ✅ **Organized output** by example category (Beginner → Advanced)
+- ✅ **Summary statistics** showing total passed/failed
+- ✅ **Automatic error handling** - stops on first failure
+- ✅ **CI/CD integration** - used in GitHub Actions workflow
 
 ## 📁 Output Files
 
@@ -187,6 +228,8 @@ Examples create STL files in these locations:
 │   ├── face_m_front.stl
 │   ├── face_m_back.stl
 │   └── face_m_complete.stl
+├── bottle_cap_example.stl          # Bottle cap (current directory)
+├── bottle_cap_example_process.json # Process parameters
 └── filleted_boxes_example_*.stl    # Filleted boxes (current directory)
 ```
 
@@ -201,6 +244,7 @@ Examples create STL files in these locations:
 | `cylindrical_coil.py` | 🔶 Intermediate | Helical geometries | 1 STL file |
 | `conical_coil.py` | 🔶 Intermediate | Advanced helical paths | 1 STL file |
 | `mobius_strip.py` | 🔶 Intermediate | Topological surfaces | 1 STL file |
+| `bottle_cap_example.py` | 🔴 Advanced | Functional parts, screw threads, production | 2 files |
 | `create_face_stl.py` | 🔴 Advanced | Organic shapes, mesh partitioning | 3 STL files |
 
 ## 🛠️ Technologies Demonstrated
@@ -208,6 +252,7 @@ Examples create STL files in these locations:
 ### Core Features:
 - ✅ CAD adapter system (CadQuery/FreeCAD backend selection)
 - ✅ Parametric solid modeling with filleted edges
+- ✅ Precision screw thread generation with custom pitch
 - ✅ Point cloud generation for various geometries
 - ✅ Mesh triangulation and conversion to printable meshes
 - ✅ Mesh partitioning for multi-part printing
@@ -230,6 +275,7 @@ These examples are perfect for:
 - **Cable management and wire routing**
 - **Decorative moldings and trim pieces**
 - **Custom coils and spiral structures**
+- **Functional parts with screw threads (bottle caps, lids, containers)**
 - **Mathematical models and educational demonstrations**
 - **Rapid prototyping and 3D printing projects**
 
@@ -244,11 +290,13 @@ All examples generate STL files optimized for 3D printing:
 
 ## 🚀 Next Steps
 
-1. **Start with `filleted_boxes_example.py`** for CAD adapter basics
-2. **Try `create_cylinder_stl.py`** for mesh fundamentals
-3. **Explore path-following** with snake and coil examples
-4. **Challenge yourself** with the advanced face mesh example
-5. **Modify the examples** for your own projects!
+1. **Try all examples at once** with `./run_examples.sh`
+2. **Start with `filleted_boxes_example.py`** for CAD adapter basics
+3. **Try `create_cylinder_stl.py`** for mesh fundamentals
+4. **Explore path-following** with snake and coil examples
+5. **Build functional parts** with the bottle cap example
+6. **Challenge yourself** with the advanced face mesh example
+7. **Modify the examples** for your own projects!
 
 ---
 

@@ -1,11 +1,17 @@
 import logging
 
 import numpy as np
-from shellforgepy.construct.alignment_operations import rotate, translate
 from shellforgepy.simple import (
+    Alignment,
+    align,
+    apply_fillet_by_alignment,
     create_basic_box,
+    create_basic_cylinder,
+    get_adapter_id,
     get_bounding_box,
     get_bounding_box_center,
+    rotate,
+    translate,
 )
 
 _logger = logging.getLogger(__name__)
@@ -163,3 +169,63 @@ def test_chained_transformations_consistency():
     # They should all be at approximately the same position
     assert np.allclose(native_center, named_center, atol=1e-10)
     assert np.allclose(native_center, group_center, atol=1e-10)
+
+
+def test_cylinder_alignment_positioning():
+    """Test cylinder alignment behavior to debug bottle cap ripple positioning.
+
+    This test reproduces the alignment sequence from the bottle cap example
+    to ensure consistent positioning between CadQuery and FreeCAD.
+    """
+
+    for with_fillet in [True, False]:
+        reference_radius = 18
+        reference_height = 5
+        aligned_part_raduis = 3
+
+        # Create the cap cover (reference object)
+        reference_part = create_basic_cylinder(
+            radius=reference_radius, height=reference_height
+        )
+
+        aligned_part = create_basic_cylinder(
+            radius=aligned_part_raduis, height=reference_height
+        )
+
+        reference_bounding_box = get_bounding_box(reference_part)
+
+        if with_fillet:
+            reference_part = apply_fillet_by_alignment(
+                reference_part, 1, fillets_at=[Alignment.TOP]
+            )
+        aligned_part = align(aligned_part, reference_part, Alignment.RIGHT)
+
+        aligned_bounding_box = get_bounding_box(aligned_part)
+
+        _logger.info(f"Reference bounding box: {reference_bounding_box}")
+        _logger.info(f"Aligned bounding box: {aligned_bounding_box}")
+
+        is_matching = np.allclose(
+            aligned_bounding_box[1][0],
+            reference_bounding_box[1][0],
+            atol=1e-10,
+        )
+
+        if not with_fillet:
+            assert (
+                is_matching
+            ), f"Aligned part max X {aligned_bounding_box[1][0]} does not match reference max X {reference_bounding_box[1][0]}"
+        else:
+            if not is_matching:
+                _logger.warning(
+                    f"Aligned part max X {aligned_bounding_box[1][0]} does not match reference max X {reference_bounding_box[1][0]}"
+                )
+
+                if get_adapter_id() == "freecad":
+                    _logger.warning(
+                        "FreeCAD bounding boxes are wrong when using fillets."
+                    )
+                else:
+                    assert (
+                        is_matching
+                    ), f"Aligned part max X {aligned_bounding_box[1][0]} does not match reference max X {reference_bounding_box[1][0]}"

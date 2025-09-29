@@ -26,6 +26,11 @@ _logger = logging.getLogger(__name__)
 # ./freecad_python.sh -m pytest tests/unit/adapters/freecad/test_freecad_basic_transformations.py
 
 
+def get_adapter_id():
+    """Return a string identifying this adapter."""
+    return "freecad"
+
+
 def create_solid_from_traditional_face_vertex_maps(maps):
     """
     Create a solid from traditional face-vertex maps.
