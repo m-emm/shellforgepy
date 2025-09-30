@@ -144,10 +144,10 @@ When the workflow runs:
 
 Use this mechanism for per-part tweaks such as:
 
-- Lower layer heights for surface detail
-- Temporary temperature or flow changes for a specific filament batch
-- Machine constraints (e.g., reduced Z height) for special fixtures
-
+- Lower layer heights for higher surface detail in a decorative part
+- Use a higher infill percentage, a more mechanically stable infill pattern and more walls to produce a rugged functional part
+- Reduce infill percentage and walls and use a fast running infill pattern to use less filament to quickly print a decorative part
+- Print faster for a draft part, and slower and finer for production part
 
 ## 5. Tips & customisation
 
