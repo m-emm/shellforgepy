@@ -1,7 +1,7 @@
 """Unit tests for the fixed create_screw_thread implementation."""
 
 import pytest
-from shellforgepy.adapters.simple import get_volume
+from shellforgepy.adapters._adapter import get_volume
 from shellforgepy.geometry.higher_order_solids import create_screw_thread
 
 

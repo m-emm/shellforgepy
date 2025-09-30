@@ -1151,7 +1151,7 @@ def test_close_loop_maintains_mesh_quality():
 
 def test_helical_snake_solid_fusion():
     """Test creating a helical snake geometry and fusing it into a single solid."""
-    from shellforgepy.adapters.simple import (
+    from shellforgepy.adapters._adapter import (
         create_solid_from_traditional_face_vertex_maps,
         get_volume,
     )
@@ -1245,7 +1245,7 @@ def test_helical_snake_solid_fusion():
 
 def test_circular_snake_solid_fusion():
     """Test creating a circular snake geometry and fusing it into a single solid."""
-    from shellforgepy.adapters.simple import (
+    from shellforgepy.adapters._adapter import (
         create_solid_from_traditional_face_vertex_maps,
         get_volume,
     )

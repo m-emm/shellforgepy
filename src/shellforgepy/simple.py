@@ -14,6 +14,19 @@ Usage:
     # - Part arrangement and export functions
 """
 
+from shellforgepy.geometry.m_screws import (
+    create_bolt_thread,
+    create_cylinder_screw,
+    create_nut,
+    get_clearance_hole_diameter,
+    get_screw_info,
+    list_supported_sizes,
+)
+from shellforgepy.geometry.mesh_utils import (
+    merge_meshes,
+    write_shell_maps_to_stl,
+    write_stl_binary,
+)
 from shellforgepy.shells.transformed_region_view import TransformedRegionView
 
 # Core alignment functionality
@@ -174,4 +187,12 @@ __all__ = [
     "create_trapezoid",
     "create_screw_connector_normal",
     "create_extruded_polygon",
+    "create_bolt_thread",
+    "create_cylinder_screw",
+    "create_nut",
+    "get_clearance_hole_diameter",
+    "get_screw_info",
+    "list_supported_sizes",
+    "write_stl_binary",
+    "merge_meshes",
 ] + ADAPTER_FUNTIONS

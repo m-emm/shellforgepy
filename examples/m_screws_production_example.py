@@ -11,18 +11,19 @@ using the comprehensive m_screws module.
 
 import os
 
-from shellforgepy.construct.alignment import Alignment
-from shellforgepy.construct.alignment_operations import align, translate
-from shellforgepy.geometry.m_screws import (
+from shellforgepy.simple import (
+    Alignment,
+    PartList,
+    align,
+    arrange_and_export_parts,
     create_bolt_thread,
     create_cylinder_screw,
     create_nut,
     get_clearance_hole_diameter,
     get_screw_info,
     list_supported_sizes,
+    translate,
 )
-from shellforgepy.produce.arrange_and_export import arrange_and_export_parts
-from shellforgepy.produce.production_parts_model import PartList
 
 # Production mode toggle
 PRODUCTION = False  # Set to False for assembly view, True for 3D printing layout

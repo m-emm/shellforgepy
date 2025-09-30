@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 import numpy as np
-from shellforgepy.adapters.simple import (
+from shellforgepy.adapters._adapter import (
     copy_part,
     get_bounding_box,
     rotate_part,

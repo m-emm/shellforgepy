@@ -15,12 +15,13 @@ Output:
 import os
 
 import numpy as np
-from shellforgepy.geometry.mesh_utils import merge_meshes, write_stl_binary
-from shellforgepy.shells.mesh_partition import MeshPartition
-from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
-    PartitionableSpheroidTriangleMesh,
-)
 from shellforgepy.shells.transformed_region_view import TransformedRegionView
+from shellforgepy.simple import (
+    MeshPartition,
+    PartitionableSpheroidTriangleMesh,
+    merge_meshes,
+    write_stl_binary,
+)
 
 
 def generate_cylinder_point_cloud(

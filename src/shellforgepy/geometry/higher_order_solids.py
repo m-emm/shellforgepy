@@ -2,7 +2,7 @@ import math
 from typing import Optional
 
 import numpy as np
-from shellforgepy.adapters.simple import (
+from shellforgepy.adapters._adapter import (
     create_basic_cylinder,
     create_extruded_polygon,
     create_solid_from_traditional_face_vertex_maps,
@@ -303,7 +303,7 @@ def create_screw_thread(
 
     # Add core if requested (following original logic)
     if with_core:
-        from shellforgepy.adapters.simple import get_bounding_box
+        from shellforgepy.adapters._adapter import get_bounding_box
 
         bbox = get_bounding_box(final_thread)
         lowest_z = bbox[0][2]  # (xmin, ymin, zmin) -> zmin

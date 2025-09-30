@@ -1,5 +1,5 @@
 import numpy as np
-from shellforgepy.adapters.simple import get_volume
+from shellforgepy.adapters._adapter import get_volume
 from shellforgepy.geometry.higher_order_solids import (
     create_hex_prism,
     create_ring,

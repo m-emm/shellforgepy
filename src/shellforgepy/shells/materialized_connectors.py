@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Sequence, Tuple, Union
 
 import numpy as np
-from shellforgepy.adapters.simple import (
+from shellforgepy.adapters._adapter import (
     create_basic_box,
     create_basic_cylinder,
     create_extruded_polygon,

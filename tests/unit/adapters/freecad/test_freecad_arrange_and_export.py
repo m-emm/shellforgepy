@@ -3,7 +3,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from shellforgepy.adapters.simple import get_volume
+from shellforgepy.adapters._adapter import get_volume
 from shellforgepy.simple import *
 
 try:

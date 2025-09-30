@@ -18,7 +18,7 @@ allowing them to work with any supported CAD backend.
 
 import math
 
-from shellforgepy.adapters.simple import (
+from shellforgepy.adapters._adapter import (
     create_basic_cylinder,
     create_extruded_polygon,
     cut_parts,

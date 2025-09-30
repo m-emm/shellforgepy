@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
-from shellforgepy.adapters.simple import (
+from shellforgepy.adapters._adapter import (
     export_solid_to_stl as adapter_export_solid_to_stl,
 )
-from shellforgepy.adapters.simple import get_bounding_box
+from shellforgepy.adapters._adapter import get_bounding_box
 from shellforgepy.construct.alignment_operations import rotate_part, translate
 from shellforgepy.construct.part_collector import PartCollector
 from shellforgepy.produce.production_parts_model import PartList
@@ -192,6 +193,23 @@ def arrange_and_export_parts(
 ):
     """Arrange named parts with production support, export individual STLs, and a fused assembly."""
 
+    env_export_dir = os.environ.get("SHELLFORGEPY_EXPORT_DIR")
+    manifest_path_env = os.environ.get("SHELLFORGEPY_WORKFLOW_MANIFEST")
+    manifest_path: Path | None = (
+        Path(manifest_path_env).expanduser() if manifest_path_env else None
+    )
+    manifest_data: dict[str, object] | None = None
+
+    if manifest_path is not None:
+        manifest_data = {
+            "run_id": os.environ.get("SHELLFORGEPY_RUN_ID"),
+            "script_file": str(script_file),
+            "parts": [],
+        }
+
+    if env_export_dir:
+        export_directory = env_export_dir
+
     if isinstance(parts, PartList):
         parts_iterable = parts.as_list()
     else:
@@ -242,7 +260,11 @@ def arrange_and_export_parts(
         arranged_shapes = shapes
 
     export_dir = Path(export_directory) if export_directory is not None else Path.home()
+    export_dir = export_dir.expanduser()
     export_dir.mkdir(parents=True, exist_ok=True)
+
+    if manifest_data is not None:
+        manifest_data["export_dir"] = str(export_dir.resolve())
 
     base_name = Path(script_file).stem or "cadquery_parts"
     fused_collector = PartCollector()
@@ -256,6 +278,11 @@ def arrange_and_export_parts(
         export_solid_to_stl(arranged_shape, part_filename)
         print(f"Exported {name} to {part_filename}")
 
+        if manifest_data is not None:
+            manifest_parts = manifest_data.setdefault("part_files", [])
+            if isinstance(manifest_parts, list):
+                manifest_parts.append(str(part_filename.resolve()))
+
     fused_shape = fused_collector.part
     assert fused_shape is not None  # fused_collector received at least one part
 
@@ -263,11 +290,23 @@ def arrange_and_export_parts(
     export_solid_to_stl(fused_shape, assembly_path)
     print(f"Exported whole part to {assembly_path}")
 
+    if manifest_data is not None:
+        manifest_data["assembly_path"] = str(assembly_path.resolve())
+
     if process_data is not None:
         process_data["part_file"] = assembly_path.resolve().as_posix()
         process_filename = assembly_path.with_name(f"{assembly_path.stem}_process.json")
         with process_filename.open("w", encoding="utf-8") as handle:
             json.dump(process_data, handle, indent=4)
         print(f"Exported process data to {process_filename}")
+
+        if manifest_data is not None:
+            manifest_data["process_data_path"] = str(process_filename.resolve())
+
+    if manifest_path is not None and manifest_data is not None:
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        with manifest_path.open("w", encoding="utf-8") as handle:
+            json.dump(manifest_data, handle, indent=2, sort_keys=True)
+        print(f"Wrote workflow manifest to {manifest_path}")
 
     return assembly_path

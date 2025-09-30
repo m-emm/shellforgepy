@@ -15,10 +15,7 @@ Output:
 import os
 
 import numpy as np
-from shellforgepy.geometry.mesh_utils import write_stl_binary
-from shellforgepy.geometry.treapezoidal_snake_geometry import (
-    create_trapezoidal_snake_geometry,
-)
+from shellforgepy.simple import create_trapezoidal_snake_geometry, write_stl_binary
 
 
 def combine_segments(meshes):

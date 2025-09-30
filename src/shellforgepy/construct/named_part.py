@@ -1,6 +1,6 @@
 import logging
 
-from shellforgepy.adapters.simple import (
+from shellforgepy.adapters._adapter import (
     copy_part,
     rotate_part_native,
     translate_part_native,

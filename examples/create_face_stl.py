@@ -17,13 +17,13 @@ Output:
 import os
 
 import numpy as np
-from shellforgepy.geometry.face_point_cloud import face_point_cloud
-from shellforgepy.geometry.mesh_utils import write_shell_maps_to_stl
-from shellforgepy.shells.mesh_partition import MeshPartition
-from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
+from shellforgepy.simple import (
+    MeshPartition,
     PartitionableSpheroidTriangleMesh,
+    TransformedRegionView,
+    face_point_cloud,
+    write_shell_maps_to_stl,
 )
-from shellforgepy.shells.transformed_region_view import TransformedRegionView
 
 
 def create_face_mesh_stl(face_key="m", output_dir="output"):

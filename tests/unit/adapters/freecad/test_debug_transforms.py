@@ -42,7 +42,7 @@ def test_debug_translation():
     print(f"named_part.part.copy() type: {type(underlying_copy)}")
 
     # Debug: Check what translate_part does to a NamedPart (using a fresh copy)
-    from shellforgepy.adapters.simple import translate_part
+    from shellforgepy.adapters._adapter import translate_part
 
     fresh_named_part_1 = NamedPart("test", create_basic_box(10, 20, 30))
     try:
