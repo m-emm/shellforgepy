@@ -45,6 +45,7 @@ python examples/mobius_strip.py
 - **STL export with process data** for 3D printing (PLA settings, layer heights)
 - **Multi-part splitting** for large models that exceed printer bed sizes
 - **Shell generation** with customizable thickness for hollow prints
+- **Full OrcaSlicer automation pipeline**: launch geometry scripts, materialise printer/process/filament profiles from version-controlled YAML masters, run OrcaSlicer CLI, mirror STLs to viewers, and even upload G-code in one shot ([details](README_SLICER_INTEGRATION.md))
 
 **🧠 Advanced Mesh Processing**
 - **Partitionable spheroid meshes** for complex organic shapes

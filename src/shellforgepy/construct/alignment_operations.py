@@ -79,6 +79,25 @@ def align_translation(part, to, alignment: Alignment, axes=None):
     # Extract the solid from workplane if needed
 
     bb = get_bounding_box(part)
+
+    if to is None:
+        if alignment == Alignment.CENTER:
+            translation_vector = (
+                (get_xmin(bb) + get_xmax(bb)) / -2,
+                (get_ymin(bb) + get_ymax(bb)) / -2,
+                (get_zmin(bb) + get_zmax(bb)) / -2,
+            )
+            translation_vector = [
+                0 if axes is not None and i not in axes else v
+                for i, v in enumerate(translation_vector)
+            ]
+
+            return translate(*translation_vector)
+        else:
+            raise ValueError(
+                "If 'to' is None, only CENTER alignment is supported and will center at origin."
+            )
+
     to_bb = get_bounding_box(to)
 
     part_width = get_xlen(bb)

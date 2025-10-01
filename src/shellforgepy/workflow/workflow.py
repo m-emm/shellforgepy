@@ -17,6 +17,7 @@ from typing import Dict, Iterable, List, Optional
 
 from shellforgepy.slicing.orca_slicer_settings_generator import generate_settings
 from shellforgepy.workflow import upload_to_printer
+from shellforgepy.workflow.preview_generator import render_stl_to_png
 
 _logger = logging.getLogger(__name__)
 
@@ -494,8 +495,10 @@ def run_workflow(args: argparse.Namespace) -> int:
     execute_subprocess(slicer_cmd, env=orca_env)
 
     render_script = _resolve_dotted_lookup(config, "render.script")
+    preview_path = run_directory / "plate_1_preview.png"
+
+    preview_generated = False
     if render_script:
-        preview_path = run_directory / "plate_1_preview.png"
         render_exec = _resolve_dotted_lookup(config, "render.executable")
         render_args = _resolve_dotted_lookup(config, "render.args") or []
         if isinstance(render_args, str):
@@ -522,7 +525,20 @@ def run_workflow(args: argparse.Namespace) -> int:
         )
         try:
             execute_subprocess(render_cmd)
+            preview_generated = preview_path.exists()
         except WorkflowError as exc:
+            _logger.warning("Preview generation failed: %s", exc)
+
+    if not preview_generated and part_path.suffix.lower() == ".stl":
+        try:
+            render_stl_to_png(
+                stl_path=part_path,
+                out_path=preview_path,
+                bed_mm=(220.0, 220.0, 220.0),
+                model_offset=(0, 0, 0),
+            )
+            _logger.info("Generated preview image: %s", preview_path)
+        except Exception as exc:  # pragma: no cover - best effort
             _logger.warning("Preview generation failed: %s", exc)
 
     created_files = _list_created_files(run_directory)

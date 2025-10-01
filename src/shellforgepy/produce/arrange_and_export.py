@@ -247,13 +247,6 @@ def arrange_and_export_parts(
             if "name" not in entry or "part" not in entry:
                 raise KeyError("Each part mapping must include 'name' and 'part'")
             shape = entry["part"]
-            # Check build height even in non-production mode
-            if max_build_height is not None:
-                min_point, max_point = get_bounding_box(shape)
-                if max_point[2] - min_point[2] > max_build_height:
-                    raise ValueError(
-                        f"Part {entry['name']} exceeds max_build_height ({max_build_height} mm)"
-                    )
             shapes.append(shape)
             names.append(str(entry["name"]))
 

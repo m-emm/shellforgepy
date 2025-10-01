@@ -1,6 +1,6 @@
 import numpy as np
 from shellforgepy.construct.alignment_operations import rotate, translate
-from shellforgepy.construct.leaders_followers_cutters_part import (
+from shellforgepy.construct.leader_followers_cutters_part import (
     LeaderFollowersCuttersPart,
 )
 from shellforgepy.construct.named_part import NamedPart
@@ -251,3 +251,91 @@ def test_leader_followers_complex_nested_operations():
     assert result.leader is not None
     assert result.followers[0].part is not None
     assert result.cutters[0].part is not None
+
+
+def _point_to_tuple(point):
+    """Map various CAD point/vector types to a numeric tuple for assertions."""
+
+    if isinstance(point, (tuple, list)) and len(point) == 3:
+        return tuple(float(c) for c in point)
+
+    if hasattr(point, "toTuple"):
+        value = point.toTuple
+        coords = value() if callable(value) else value
+        if coords is not None:
+            return tuple(float(c) for c in coords)
+
+    for attr_names in (("x", "y", "z"), ("X", "Y", "Z")):
+        values = []
+        for attr in attr_names:
+            if not hasattr(point, attr):
+                values = []
+                break
+            component = getattr(point, attr)
+            values.append(component() if callable(component) else component)
+        if values:
+            return tuple(float(v) for v in values)
+
+    if hasattr(point, "Coord"):
+        coord = point.Coord
+        coord = coord() if callable(coord) else coord
+        if coord is not None:
+            return _point_to_tuple(coord)
+
+    if hasattr(point, "XYZ"):
+        xyz = point.XYZ
+        xyz = xyz() if callable(xyz) else xyz
+        if xyz is not None:
+            return _point_to_tuple(xyz)
+
+    raise TypeError(f"Unsupported point type: {type(point)!r}")
+
+
+def test_leader_followers_bounding_box_interfaces():
+    leader = create_basic_box(1.5, 2.5, 3.5)
+    group = LeaderFollowersCuttersPart(leader)
+
+    translation = (2.0, -1.0, 4.0)
+    group.translate(translation)
+
+    expected_min = translation
+    expected_max = (
+        translation[0] + 1.5,
+        translation[1] + 2.5,
+        translation[2] + 3.5,
+    )
+
+    bbox_tuple = get_bounding_box(group.leader)
+    bb_lower = group.BoundingBox()
+    bb_upper = group.BoundBox()
+
+    assert np.allclose(bbox_tuple[0], expected_min)
+    assert np.allclose(bbox_tuple[1], expected_max)
+
+    assert np.allclose((bb_lower.xmin, bb_lower.ymin, bb_lower.zmin), expected_min)
+    assert np.allclose((bb_lower.xmax, bb_lower.ymax, bb_lower.zmax), expected_max)
+
+    assert np.allclose((bb_upper.XMin, bb_upper.YMin, bb_upper.ZMin), expected_min)
+    assert np.allclose((bb_upper.XMax, bb_upper.YMax, bb_upper.ZMax), expected_max)
+
+
+def test_leader_followers_vertices_alias_and_bounds():
+    origin = (1.2, -3.4, 0.5)
+    size = (4.0, 2.0, 1.0)
+    leader = create_basic_box(*size, origin=origin)
+    group = LeaderFollowersCuttersPart(leader)
+
+    vertices = group.Vertices()
+    vertexes = group.Vertexes()
+
+    assert isinstance(vertices, list)
+    assert isinstance(vertexes, list)
+    assert vertices == vertexes
+
+    bbox = group.BoundingBox()
+
+    for point in vertices:
+        coords = _point_to_tuple(point)
+        assert bbox.xmin - 1e-9 <= coords[0] <= bbox.xmax + 1e-9
+        assert bbox.ymin - 1e-9 <= coords[1] <= bbox.ymax + 1e-9
+        assert bbox.zmin - 1e-9 <= coords[2] <= bbox.zmax + 1e-9

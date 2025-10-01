@@ -620,7 +620,7 @@ def test_named_part_native_rotate_method():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_leader_followers_native_rotate_method():
     """Test LeaderFollowersCuttersPart with native rotate interface."""
-    from shellforgepy.construct.leaders_followers_cutters_part import (
+    from shellforgepy.construct.leader_followers_cutters_part import (
         LeaderFollowersCuttersPart,
     )
     from shellforgepy.construct.named_part import NamedPart

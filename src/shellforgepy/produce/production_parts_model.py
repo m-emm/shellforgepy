@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 
-from shellforgepy.construct.leaders_followers_cutters_part import (
+from shellforgepy.construct.leader_followers_cutters_part import (
     LeaderFollowersCuttersPart,
 )
 

@@ -1,5 +1,5 @@
 import pytest
-from shellforgepy.construct.leaders_followers_cutters_part import (
+from shellforgepy.construct.leader_followers_cutters_part import (
     LeaderFollowersCuttersPart,
 )
 from shellforgepy.construct.named_part import NamedPart

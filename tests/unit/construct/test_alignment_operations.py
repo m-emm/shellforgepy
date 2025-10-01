@@ -96,7 +96,7 @@ def test_functional_consistency_with_named_parts():
 
 def test_functional_consistency_with_leader_followers():
     """Test that functional transformations work consistently with LeaderFollowersCuttersPart."""
-    from shellforgepy.construct.leaders_followers_cutters_part import (
+    from shellforgepy.construct.leader_followers_cutters_part import (
         LeaderFollowersCuttersPart,
     )
     from shellforgepy.construct.named_part import NamedPart
@@ -140,7 +140,7 @@ def test_functional_consistency_with_leader_followers():
 
 def test_chained_transformations_consistency():
     """Test that chained transformations work consistently across all object types."""
-    from shellforgepy.construct.leaders_followers_cutters_part import (
+    from shellforgepy.construct.leader_followers_cutters_part import (
         LeaderFollowersCuttersPart,
     )
     from shellforgepy.construct.named_part import NamedPart

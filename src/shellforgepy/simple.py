@@ -21,6 +21,7 @@ from shellforgepy.geometry.m_screws import (
     get_clearance_hole_diameter,
     get_screw_info,
     list_supported_sizes,
+    m_screws_table,
 )
 from shellforgepy.geometry.mesh_utils import (
     merge_meshes,
@@ -41,7 +42,7 @@ from .construct.alignment_operations import (
     translate,
 )
 from .construct.construct_utils import fibonacci_sphere, normalize
-from .construct.leaders_followers_cutters_part import LeaderFollowersCuttersPart
+from .construct.leader_followers_cutters_part import LeaderFollowersCuttersPart
 from .construct.named_part import NamedPart
 from .construct.part_collector import PartCollector
 from .geometry.face_point_cloud import face_point_cloud
@@ -195,4 +196,5 @@ __all__ = [
     "list_supported_sizes",
     "write_stl_binary",
     "merge_meshes",
+    "m_screws_table",
 ] + ADAPTER_FUNTIONS
