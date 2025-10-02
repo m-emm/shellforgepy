@@ -7,9 +7,12 @@ from shellforgepy.simple import (
     apply_fillet_by_alignment,
     create_basic_box,
     create_basic_cylinder,
+    create_extruded_polygon,
     get_adapter_id,
     get_bounding_box,
     get_bounding_box_center,
+    get_vertex_coordinates,
+    mirror,
     rotate,
     translate,
 )
@@ -169,6 +172,58 @@ def test_chained_transformations_consistency():
     # They should all be at approximately the same position
     assert np.allclose(native_center, named_center, atol=1e-10)
     assert np.allclose(native_center, group_center, atol=1e-10)
+
+
+def test_mirror_reflects_across_plane_without_mutation():
+    """Mirror should produce a true reflection of asymmetric geometry without mutating the source."""
+
+    mirror_normal = (1, 0, 0)
+    mirror_point = (0, 0, 0)
+
+    f_outline = [
+        (0, 0),
+        (3, 0),
+        (3, 0.5),
+        (1, 0.5),
+        (1, 1.5),
+        (2.5, 1.5),
+        (2.5, 2.0),
+        (1, 2.0),
+        (1, 3.5),
+        (3, 3.5),
+        (3, 4.0),
+        (0, 4.0),
+    ]
+
+    part = create_extruded_polygon(f_outline, thickness=2)
+
+    original_vertices = get_vertex_coordinates(part)
+
+    mirrored_part = mirror(normal=mirror_normal, point=mirror_point)(part)
+
+    mirrored_vertices = get_vertex_coordinates(mirrored_part)
+
+    def normalize(vertices):
+        return {
+            (
+                round(x, 6),
+                round(y, 6),
+                round(z, 6),
+            )
+            for x, y, z in vertices
+        }
+
+    original_normalized = normalize(original_vertices)
+    mirrored_normalized = normalize(mirrored_vertices)
+
+    expected_reflection = {
+        (round(2 * mirror_point[0] - x, 6), y, z) for x, y, z in original_normalized
+    }
+
+    assert mirrored_normalized == expected_reflection
+
+    # The source geometry should remain unchanged by the mirror transform
+    assert normalize(get_vertex_coordinates(part)) == original_normalized
 
 
 def test_cylinder_alignment_positioning():

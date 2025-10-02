@@ -359,18 +359,10 @@ def run_workflow(args: argparse.Namespace) -> int:
         if args.part_file
         else _resolve_manifest_path(run_directory, manifest.get("assembly_path"))
     )
-    process_path = (
-        Path(args.process_file).expanduser()
-        if args.process_file
-        else _resolve_manifest_path(run_directory, manifest.get("process_data_path"))
-    )
 
     part_path = _ensure_path(part_path, "generated STL")
-    process_path = _ensure_path(process_path, "generated process data JSON")
 
     _logger.info("Detected part file: %s", part_path)
-    _logger.info("Detected process file: %s", process_path)
-
     viewer_default = _resolve_dotted_lookup(
         config, "viewer.default_stl_file"
     ) or _resolve_dotted_lookup(config, "default_stl_file")
@@ -396,6 +388,15 @@ def run_workflow(args: argparse.Namespace) -> int:
             for file_path in created_files:
                 _logger.info("  %s", file_path)
         return 0
+
+    process_path = (
+        Path(args.process_file).expanduser()
+        if args.process_file
+        else _resolve_manifest_path(run_directory, manifest.get("process_data_path"))
+    )
+    process_path = _ensure_path(process_path, "generated process data JSON")
+
+    _logger.info("Detected process file: %s", process_path)
 
     master_settings_dir = (
         args.master_settings_dir

@@ -10,6 +10,11 @@ except ImportError:
     cadquery_available = False
     cq = None
 
+if cadquery_available:
+    from shellforgepy.adapters.cadquery.cadquery_adapter import mirror_part
+else:
+    mirror_part = None
+
 from shellforgepy.simple import (
     ALIGNMENT_SIGNS,
     Alignment,
@@ -18,6 +23,8 @@ from shellforgepy.simple import (
     alignment_signs,
     chain_translations,
     create_basic_box,
+    create_extruded_polygon,
+    get_vertex_coordinates,
     rotate,
     stack_alignment_of,
     translate,
@@ -196,6 +203,61 @@ def test_rotate_different_axes():
     assert (
         abs(bounds_y[2] - 12) < 1e-6
     ), f"Y-axis rotation: Z length should become 12, got {bounds_y[2]}"
+
+
+@pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
+def test_mirror_part_reflects_geometry():
+    """CadQuery mirror_part should reflect asymmetric geometry and leave the source untouched."""
+
+    mirror_normal = (1, 0, 0)
+    mirror_point = (0, 0, 0)
+
+    f_outline = [
+        (0, 0),
+        (3, 0),
+        (3, 0.5),
+        (1, 0.5),
+        (1, 1.5),
+        (2.5, 1.5),
+        (2.5, 2.0),
+        (1, 2.0),
+        (1, 3.5),
+        (3, 3.5),
+        (3, 4.0),
+        (0, 4.0),
+    ]
+
+    part = create_extruded_polygon(f_outline, thickness=2)
+    original_vertices = get_vertex_coordinates(part)
+
+    mirrored = mirror_part(part, normal=mirror_normal, point=mirror_point)
+
+    # Ensure a new object is produced
+    assert mirrored is not part
+
+    mirrored_vertices = get_vertex_coordinates(mirrored)
+
+    def normalize(vertices):
+        return {
+            (
+                round(x, 6),
+                round(y, 6),
+                round(z, 6),
+            )
+            for x, y, z in vertices
+        }
+
+    original_normalized = normalize(original_vertices)
+    mirrored_normalized = normalize(mirrored_vertices)
+
+    expected_reflection = {
+        (round(2 * mirror_point[0] - x, 6), y, z) for x, y, z in original_normalized
+    }
+
+    assert mirrored_normalized == expected_reflection
+
+    # Source geometry should remain unchanged
+    assert normalize(get_vertex_coordinates(part)) == original_normalized
 
 
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")

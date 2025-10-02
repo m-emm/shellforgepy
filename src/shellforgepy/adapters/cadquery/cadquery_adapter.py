@@ -543,6 +543,18 @@ def rotate_part(part, angle, center=(0.0, 0.0, 0.0), axis=(0.0, 0.0, 1.0)):
         return rotate_retval
 
 
+def mirror_part(part, normal=(1, 0, 0), point=(0, 0, 0)):
+    """Mirror a CadQuery part across a plane defined by normal and point."""
+    normal_vec = cq.Vector(*normal)
+    point_vec = cq.Vector(*point)
+    _logger.info(f"Mirroring part across mirrorPlane {normal}, basePointVector {point}")
+    mirror_retval = part.mirror(mirrorPlane=normal_vec, basePointVector=point_vec)
+    if hasattr(part, "reconstruct"):
+        return part.reconstruct(mirror_retval)
+    else:
+        return mirror_retval
+
+
 def translate_part_native(part, *args):
     """Translate using native CadQuery signature. Used by composite objects."""
     _logger.info(

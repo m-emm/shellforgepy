@@ -3,9 +3,11 @@ from shellforgepy.adapters._adapter import get_volume
 from shellforgepy.geometry.higher_order_solids import (
     create_hex_prism,
     create_ring,
+    create_rounded_slab,
     create_screw_thread,
     directed_cylinder_at,
 )
+from shellforgepy.simple import get_bounding_box, get_vertex_coordinates
 
 
 def test_create_hex_prism():
@@ -192,6 +194,55 @@ def test_create_ring():
         assert False, "Should have raised ValueError"
     except ValueError:
         pass
+
+
+def test_create_rounded_slab_respects_rounding_flags():
+    """Rounded slab should remove only the flagged corners and preserve bounding box."""
+
+    length = 40.0
+    width = 20.0
+    thick = 6.0
+    round_radius = 5.0
+    rounding_flags = {
+        (1, 1): True,
+        (-1, 1): False,
+        (-1, -1): True,
+        (1, -1): False,
+    }
+
+    slab = create_rounded_slab(
+        length,
+        width,
+        thick,
+        round_radius,
+        rounding_flags=rounding_flags,
+    )
+
+    min_corner, max_corner = get_bounding_box(slab)
+    assert np.allclose(min_corner, (0.0, 0.0, 0.0))
+    assert np.allclose(max_corner, (length, width, thick))
+
+    num_rounded = sum(1 for value in rounding_flags.values() if value)
+    square_area = round_radius**2
+    quarter_circle_area = (np.pi * round_radius**2) / 4.0
+    expected_volume = (
+        length * width * thick
+        - num_rounded * (square_area - quarter_circle_area) * thick
+    )
+    assert np.allclose(get_volume(slab), expected_volume, rtol=1e-6, atol=1e-6)
+
+    vertices = get_vertex_coordinates(slab)
+
+    def has_corner(x_target, y_target):
+        return any(
+            np.isclose(x, x_target, atol=1e-6) and np.isclose(y, y_target, atol=1e-6)
+            for x, y, _ in vertices
+        )
+
+    assert not has_corner(length, width)  # (1, 1) corner should be rounded
+    assert has_corner(0.0, width)  # (-1, 1) corner should remain sharp
+    assert not has_corner(0.0, 0.0)  # (-1, -1) corner should be rounded
+    assert has_corner(length, 0.0)  # (1, -1) corner should remain sharp
 
 
 def test_create_screw_thread():

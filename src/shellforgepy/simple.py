@@ -37,6 +37,7 @@ from .construct.alignment_operations import (
     align_translation,
     alignment_signs,
     chain_translations,
+    mirror,
     rotate,
     stack_alignment_of,
     translate,
@@ -49,6 +50,7 @@ from .geometry.face_point_cloud import face_point_cloud
 from .geometry.higher_order_solids import (
     create_hex_prism,
     create_ring,
+    create_rounded_slab,
     create_screw_thread,
     create_trapezoid,
     directed_cylinder_at,
@@ -197,4 +199,6 @@ __all__ = [
     "write_stl_binary",
     "merge_meshes",
     "m_screws_table",
+    "create_rounded_slab",
+    "mirror",
 ] + ADAPTER_FUNTIONS

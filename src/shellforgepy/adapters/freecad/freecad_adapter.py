@@ -540,6 +540,35 @@ def rotate_part(part, angle, center=(0.0, 0.0, 0.0), axis=(0.0, 0.0, 1.0)):
         return rotate_retval
 
 
+def mirror_part(part, normal=(1, 0, 0), point=(0, 0, 0)):
+    """Mirror a FreeCAD part across a plane defined by normal and point.
+
+    Args:
+        part: FreeCAD part to mirror
+        normal: Normal vector of the mirror plane as (x, y, z) tuple
+        point: A point on the mirror plane as (x, y, z) tuple
+    """
+    # There are NO FRAMEWORK SPECIFIC CALLS allowed here! Use adapter functions only!
+    # isinstance(x, NamedPart) or similar ARE FORBIDDEN here!
+    # if something is needed like this, do it in reconstruct
+
+    normal_vec = Base.Vector(normal[0], normal[1], normal[2])
+    point_vec = Base.Vector(point[0], point[1], point[2])
+
+    # FreeCAD modifies in-place, so create a copy first
+    mirror_retval = part.copy()
+    mirrored_shape = mirror_retval.mirror(point_vec, normal_vec)
+
+    # FreeCAD's mirror returns a new shape rather than mutating in-place.
+    if mirrored_shape is not None:
+        mirror_retval = mirrored_shape
+
+    if hasattr(part, "reconstruct"):
+        return part.reconstruct(mirror_retval)
+    else:
+        return mirror_retval
+
+
 def translate_part_native(part, *args):
     """Translate using native method. Must use the underlying cad system such that it creates a new object, and passes it to the reconstruct method if available, or returns it outright."""
     _logger.info(

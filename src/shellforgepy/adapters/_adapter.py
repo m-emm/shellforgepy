@@ -27,6 +27,7 @@ rotate_part_native = adapter.rotate_part_native
 filter_edges_by_z_position = adapter.filter_edges_by_z_position
 apply_fillet_to_edges = adapter.apply_fillet_to_edges
 get_adapter_id = adapter.get_adapter_id
+mirror_part = adapter.mirror_part
 
 __all__ = [
     "create_basic_box",
@@ -40,6 +41,7 @@ __all__ = [
     "cut_parts",
     "translate_part",
     "rotate_part",
+    "mirror_part",
     "export_solid_to_stl",
     "copy_part",
     "create_extruded_polygon",

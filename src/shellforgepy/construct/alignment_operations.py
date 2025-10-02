@@ -4,6 +4,7 @@ import numpy as np
 from shellforgepy.adapters._adapter import (
     copy_part,
     get_bounding_box,
+    mirror_part,
     rotate_part,
     translate_part,
 )
@@ -44,6 +45,16 @@ def rotate(angle, center=None, axis=None):
         body_copy = copy_part(body)
 
         return rotate_part(body_copy, angle, center=center, axis=axis)
+
+    return retval
+
+
+def mirror(normal=(1, 0, 0), point=(0, 0, 0)):
+    """Create a mirroring transformation function."""
+
+    def retval(body):
+        body_copy = copy_part(body)
+        return mirror_part(body_copy, normal=normal, point=point)
 
     return retval
 

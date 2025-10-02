@@ -3,11 +3,13 @@ from typing import Optional
 
 import numpy as np
 from shellforgepy.adapters._adapter import (
+    copy_part,
+    create_basic_box,
     create_basic_cylinder,
     create_extruded_polygon,
     create_solid_from_traditional_face_vertex_maps,
 )
-from shellforgepy.construct.alignment_operations import rotate, translate
+from shellforgepy.construct.alignment_operations import mirror, rotate, translate
 from shellforgepy.geometry.spherical_tools import coordinate_system_transform
 from shellforgepy.geometry.treapezoidal_snake_geometry import (
     create_trapezoidal_snake_geometry,
@@ -336,3 +338,38 @@ def create_screw_thread(
         final_thread = final_thread.fuse(core)
 
     return final_thread
+
+
+def create_rounded_slab(
+    length,
+    width,
+    thick,
+    round_radius,
+    rounding_flags={(1, 1): True, (-1, 1): True, (-1, -1): True, (1, -1): True},
+):
+    retval = create_basic_box(length, width, thick)
+    retval = translate(-length / 2, -width / 2, 0)(retval)
+    stencil = create_basic_box(round_radius, round_radius, thick)
+    rounder = create_basic_cylinder(
+        round_radius,
+        thick,
+    )
+    stencil = stencil.cut(rounder)
+
+    for i in [-1, 1]:
+
+        moved_stencil = translate(
+            length / 2 - round_radius, width / 2 - round_radius, 0
+        )(stencil)
+        if i == -1:
+            moved_stencil = mirror((1, 0, 0), (0, 0, 0))(moved_stencil)
+
+        for j in [-1, 1]:
+            moved_stencil2 = copy_part(moved_stencil)
+            if j == -1:
+                moved_stencil2 = mirror((0, 1, 0), (0, 0, 0))(moved_stencil)
+
+            if rounding_flags[(i, j)]:
+                retval = retval.cut(moved_stencil2)
+    retval = translate(length / 2, width / 2, 0)(retval)
+    return retval
