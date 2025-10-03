@@ -8,6 +8,7 @@ from shellforgepy.adapters._adapter import (
     create_basic_cylinder,
     create_extruded_polygon,
     create_solid_from_traditional_face_vertex_maps,
+    get_bounding_box,
 )
 from shellforgepy.construct.alignment_operations import mirror, rotate, translate
 from shellforgepy.geometry.spherical_tools import coordinate_system_transform
@@ -50,6 +51,126 @@ def create_trapezoid(
     p4 = (-top_length / 2 + top_shift, height)
     points = [p1, p2, p3, p4]
     return create_extruded_polygon(points, thickness=thickness)
+
+
+def create_right_triangle(
+    a,
+    b,
+    thickness,
+    extrusion_direction=None,
+    a_normal=None,
+    b_normal=None,
+):
+    """Create and optionally orient a right triangular prism.
+
+    The base triangle sits on the XY plane with vertices ``(0, 0)``, ``(b, 0)``,
+    and ``(0, a)`` before any re-orientation is applied. The prism extrudes along
+    the +Z axis by ``thickness``.
+
+    Args:
+        a: Length of the leg parallel to the Y axis.
+        b: Length of the leg parallel to the X axis.
+        thickness: Extrusion depth along the initial Z axis.
+        extrusion_direction: Optional 3-vector describing the desired up direction
+            of the extruded prism.
+        a_normal: Optional 3-vector describing the outward normal of the edge
+            running along the ``a`` leg. When supplied together with
+            ``extrusion_direction`` this defines a complete target frame.
+        b_normal: Optional 3-vector describing the outward normal of the edge
+            running along the ``b`` leg. When supplied alongside ``a_normal`` the
+            extrusion direction is inferred via the right-hand rule.
+
+    Returns:
+        CAD solid representing the triangular prism.
+    """
+
+    if a <= 0 or b <= 0 or thickness <= 0:
+        raise ValueError("a, b, and thickness must be positive")
+
+    base_points = [(0.0, 0.0), (float(b), 0.0), (0.0, float(a))]
+    triangle = create_extruded_polygon(base_points, thickness=float(thickness))
+
+    extrusion_vec = None
+
+    if b_normal is not None and a_normal is not None:
+        a_vec = np.asarray(a_normal, dtype=float)
+        b_vec = np.asarray(b_normal, dtype=float)
+
+        if np.linalg.norm(a_vec) < 1e-8 or np.linalg.norm(b_vec) < 1e-8:
+            raise ValueError("Normals must be non-zero vectors")
+
+        a_vec = a_vec / np.linalg.norm(a_vec)
+        b_vec = b_vec / np.linalg.norm(b_vec)
+
+        a_normal = tuple(a_vec.tolist())
+        b_normal = tuple(b_vec.tolist())
+
+        extrusion_vec = np.cross(a_vec, b_vec)
+        if np.linalg.norm(extrusion_vec) < 1e-8:
+            raise ValueError("a_normal and b_normal cannot be parallel")
+
+        extrusion_direction = tuple(extrusion_vec.tolist())
+
+    elif extrusion_direction is not None and a_normal is not None:
+        extrusion_vec = np.asarray(extrusion_direction, dtype=float)
+        a_vec = np.asarray(a_normal, dtype=float)
+
+        if np.linalg.norm(extrusion_vec) < 1e-8 or np.linalg.norm(a_vec) < 1e-8:
+            raise ValueError("extrusion_direction and a_normal must be non-zero")
+
+        extrusion_vec = extrusion_vec / np.linalg.norm(extrusion_vec)
+        a_vec = a_vec / np.linalg.norm(a_vec)
+
+        b_vec = np.cross(extrusion_vec, a_vec)
+        if np.linalg.norm(b_vec) < 1e-8:
+            raise ValueError("extrusion_direction and a_normal cannot be parallel")
+
+        b_normal = tuple(b_vec.tolist())
+        extrusion_direction = tuple(extrusion_vec.tolist())
+        a_normal = tuple(a_vec.tolist())
+
+    elif extrusion_direction is not None:
+        extrusion_vec = np.asarray(extrusion_direction, dtype=float)
+        if np.linalg.norm(extrusion_vec) < 1e-8:
+            raise ValueError("extrusion_direction must be a non-zero vector")
+        extrusion_direction = tuple(extrusion_vec.tolist())
+
+    if extrusion_direction is not None or a_normal is not None:
+        default_origin = (0.0, 0.0, 0.0)
+        default_up = (0.0, 0.0, 1.0)
+        default_out = (0.0, -1.0, 0.0)
+
+        target_up = (
+            extrusion_direction if extrusion_direction is not None else default_up
+        )
+        target_out = tuple(a_normal) if a_normal is not None else default_out
+
+        transform = coordinate_system_transform(
+            default_origin,
+            default_up,
+            default_out,
+            default_origin,
+            target_up,
+            target_out,
+        )
+
+        rotation_angle = transform["rotation_angle"]
+
+        if abs(rotation_angle) > 1e-6:
+            bb = get_bounding_box(triangle)
+            center = (
+                (bb[0][0] + bb[1][0]) / 2.0,
+                (bb[0][1] + bb[1][1]) / 2.0,
+                (bb[0][2] + bb[1][2]) / 2.0,
+            )
+
+            triangle = rotate(
+                math.degrees(rotation_angle),
+                center=center,
+                axis=transform["rotation_axis"],
+            )(triangle)
+
+    return triangle
 
 
 def directed_cylinder_at(

@@ -1,7 +1,9 @@
 import numpy as np
+import pytest
 from shellforgepy.adapters._adapter import get_volume
 from shellforgepy.geometry.higher_order_solids import (
     create_hex_prism,
+    create_right_triangle,
     create_ring,
     create_rounded_slab,
     create_screw_thread,
@@ -14,6 +16,76 @@ def test_create_hex_prism():
     prism = create_hex_prism(diameter=10, thickness=5, origin=(0, 0, 0))
     assert prism is not None
     # Further assertions can be added based on the expected properties of the prism
+
+
+def test_create_right_triangle_default_orientation():
+    triangle = create_right_triangle(a=10, b=20, thickness=5)
+
+    bb = get_bounding_box(triangle)
+    x_len = bb[1][0] - bb[0][0]
+    y_len = bb[1][1] - bb[0][1]
+    z_len = bb[1][2] - bb[0][2]
+
+    assert np.isclose(x_len, 20, rtol=1e-6)
+    assert np.isclose(y_len, 10, rtol=1e-6)
+    assert np.isclose(z_len, 5, rtol=1e-6)
+
+    expected_volume = 0.5 * 10 * 20 * 5
+    assert np.isclose(get_volume(triangle), expected_volume, rtol=1e-6)
+
+
+def test_create_right_triangle_with_orientation_vectors():
+    triangle = create_right_triangle(
+        a=10,
+        b=20,
+        thickness=5,
+        extrusion_direction=(1, 0, 0),
+        a_normal=(0, -1, 0),
+    )
+
+    bb = get_bounding_box(triangle)
+    axis_lengths = np.array(bb[1]) - np.array(bb[0])
+
+    # Extrusion along +X, base dimensions rotate into Y/Z axes respectively.
+    assert np.isclose(axis_lengths[0], 5, rtol=1e-6)
+    assert np.isclose(axis_lengths[1], 10, rtol=1e-6)
+    assert np.isclose(axis_lengths[2], 20, rtol=1e-6)
+
+    assert np.isclose(get_volume(triangle), 0.5 * 10 * 20 * 5, rtol=1e-6)
+
+
+def test_create_right_triangle_with_inferred_extrusion_direction():
+    triangle = create_right_triangle(
+        a=6,
+        b=4,
+        thickness=3,
+        a_normal=(0, -1, 0),
+        b_normal=(0, 0, 1),
+    )
+
+    bb = get_bounding_box(triangle)
+    axis_lengths = np.array(bb[1]) - np.array(bb[0])
+
+    # Cross product of provided normals is (-1, 0, 0).
+    assert np.isclose(axis_lengths[0], 3, rtol=1e-6)
+    assert np.isclose(axis_lengths[1], 6, rtol=1e-6)
+    assert np.isclose(axis_lengths[2], 4, rtol=1e-6)
+
+    assert np.isclose(get_volume(triangle), 0.5 * 6 * 4 * 3, rtol=1e-6)
+
+
+def test_create_right_triangle_invalid_inputs():
+    with pytest.raises(ValueError):
+        create_right_triangle(a=0, b=2, thickness=1)
+
+    with pytest.raises(ValueError):
+        create_right_triangle(
+            a=1,
+            b=1,
+            thickness=1,
+            extrusion_direction=(0, 0, 1),
+            a_normal=(0, 0, 0),
+        )
 
 
 def test_create_screw_thread():

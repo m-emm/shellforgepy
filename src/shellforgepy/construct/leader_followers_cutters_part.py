@@ -127,6 +127,45 @@ class LeaderFollowersCuttersPart:
             [_clone_part(n) for n in self.non_production_parts],
         )
 
+    def cut(self, other):
+        """Cut the leader with another part, combining metadata appropriately."""
+
+        leader_shape = _unwrap_named_part(self.leader)
+
+        if isinstance(other, LeaderFollowersCuttersPart):
+            other_leader = _unwrap_named_part(other.leader)
+            new_leader = leader_shape.cut(other_leader)
+            new_followers = [
+                _clone_part(part)
+                for part in list(self.followers) + list(other.followers)
+            ]
+            new_cutters = [
+                _clone_part(part) for part in list(self.cutters) + list(other.cutters)
+            ]
+            new_non_production = [
+                _clone_part(part)
+                for part in list(self.non_production_parts)
+                + list(other.non_production_parts)
+            ]
+            return LeaderFollowersCuttersPart(
+                new_leader, new_followers, new_cutters, new_non_production
+            )
+
+        other_shape = _unwrap_named_part(other)
+        try:
+            new_leader = leader_shape.cut(other_shape)
+        except AttributeError as exc:
+            raise TypeError(
+                "other must be a LeaderFollowersCuttersPart or provide a cut() operation"
+            ) from exc
+
+        return LeaderFollowersCuttersPart(
+            new_leader,
+            [_clone_part(follower) for follower in self.followers],
+            [_clone_part(cutter) for cutter in self.cutters],
+            [_clone_part(non_prod) for non_prod in self.non_production_parts],
+        )
+
     def translate(self, *args):
         """Translate all parts in this composite."""
         self.leader = translate_part_native(self.leader, *args)
