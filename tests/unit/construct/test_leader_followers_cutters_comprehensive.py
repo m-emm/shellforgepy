@@ -4,19 +4,15 @@ from shellforgepy.construct.leader_followers_cutters_part import (
     LeaderFollowersCuttersPart,
 )
 from shellforgepy.construct.named_part import NamedPart
-from shellforgepy.simple import (
-    create_basic_box,
-    get_bounding_box,
-    get_bounding_box_center,
-)
+from shellforgepy.simple import create_box, get_bounding_box, get_bounding_box_center
 
 
 def test_leader_followers_creation():
     """Test basic LeaderFollowersCuttersPart creation."""
-    leader = create_basic_box(2, 2, 2)
-    follower = NamedPart("follower", create_basic_box(1, 1, 1))
-    cutter = NamedPart("cutter", create_basic_box(0.5, 0.5, 0.5))
-    aux = NamedPart("aux", create_basic_box(0.2, 0.2, 0.2))
+    leader = create_box(2, 2, 2)
+    follower = NamedPart("follower", create_box(1, 1, 1))
+    cutter = NamedPart("cutter", create_box(0.5, 0.5, 0.5))
+    aux = NamedPart("aux", create_box(0.2, 0.2, 0.2))
 
     group = LeaderFollowersCuttersPart(
         leader,
@@ -34,8 +30,8 @@ def test_leader_followers_creation():
 
 def test_leader_followers_copy():
     """Test LeaderFollowersCuttersPart copying."""
-    leader = create_basic_box(2, 2, 2)
-    follower = NamedPart("follower", create_basic_box(1, 1, 1))
+    leader = create_box(2, 2, 2)
+    follower = NamedPart("follower", create_box(1, 1, 1))
     group = LeaderFollowersCuttersPart(leader, followers=[follower])
 
     copied_group = group.copy()
@@ -48,8 +44,8 @@ def test_leader_followers_copy():
 
 def test_leader_followers_translate_method():
     """Test LeaderFollowersCuttersPart.translate() method."""
-    leader = create_basic_box(2, 2, 2)
-    follower = NamedPart("follower", create_basic_box(1, 1, 1))
+    leader = create_box(2, 2, 2)
+    follower = NamedPart("follower", create_box(1, 1, 1))
     group = LeaderFollowersCuttersPart(leader, followers=[follower])
 
     original_leader_center = get_bounding_box_center(group.leader)
@@ -83,8 +79,8 @@ def test_leader_followers_translate_method():
 
 def test_leader_followers_rotate_method():
     """Test LeaderFollowersCuttersPart with functional rotate interface."""
-    leader = create_basic_box(2, 2, 2)
-    follower = NamedPart("follower", create_basic_box(1, 1, 1))
+    leader = create_box(2, 2, 2)
+    follower = NamedPart("follower", create_box(1, 1, 1))
     group = LeaderFollowersCuttersPart(leader, followers=[follower])
 
     # Use functional interface for framework-standardized parameters
@@ -108,8 +104,8 @@ def test_leader_followers_rotate_method():
 
 def test_leader_followers_vs_native_part_translate_consistency():
     """Test that translate()(group) behaves consistently."""
-    leader = create_basic_box(2, 2, 2)
-    follower = NamedPart("follower", create_basic_box(1, 1, 1))
+    leader = create_box(2, 2, 2)
+    follower = NamedPart("follower", create_box(1, 1, 1))
     group = LeaderFollowersCuttersPart(leader, followers=[follower])
 
     # Get original centers
@@ -145,8 +141,8 @@ def test_leader_followers_vs_native_part_translate_consistency():
 
 def test_leader_followers_vs_native_part_rotate_consistency():
     """Test that rotate()(group) behaves consistently."""
-    leader = create_basic_box(10, 20, 30)
-    follower = NamedPart("follower", create_basic_box(5, 10, 15))
+    leader = create_box(10, 20, 30)
+    follower = NamedPart("follower", create_box(5, 10, 15))
     group = LeaderFollowersCuttersPart(leader, followers=[follower])
 
     # Apply functional rotation
@@ -169,7 +165,7 @@ def test_leader_followers_vs_native_part_rotate_consistency():
 
 def test_leader_followers_chained_transformations():
     """Test chaining transformations on LeaderFollowersCuttersPart."""
-    leader = create_basic_box(10, 10, 10)
+    leader = create_box(10, 10, 10)
     group = LeaderFollowersCuttersPart(leader)
 
     # Chain: translate then rotate
@@ -185,7 +181,7 @@ def test_leader_followers_chained_transformations():
 
 def test_leader_followers_parameter_order_consistency():
     """Test that LeaderFollowersCuttersPart handles different parameter orders consistently."""
-    leader = create_basic_box(10, 20, 30)
+    leader = create_box(10, 20, 30)
     group = LeaderFollowersCuttersPart(leader)
 
     # Test different parameter orders for rotation
@@ -202,12 +198,12 @@ def test_leader_followers_parameter_order_consistency():
 
 def test_leader_followers_fuse_operations():
     """Test fuse operations with LeaderFollowersCuttersPart."""
-    leader1 = create_basic_box(2, 2, 2)
-    follower1 = NamedPart("follower1", create_basic_box(1, 1, 1))
+    leader1 = create_box(2, 2, 2)
+    follower1 = NamedPart("follower1", create_box(1, 1, 1))
     group1 = LeaderFollowersCuttersPart(leader1, followers=[follower1])
 
-    leader2 = create_basic_box(2, 2, 2)
-    follower2 = NamedPart("follower2", create_basic_box(1, 1, 1))
+    leader2 = create_box(2, 2, 2)
+    follower2 = NamedPart("follower2", create_box(1, 1, 1))
     group2 = LeaderFollowersCuttersPart(leader2, followers=[follower2])
 
     # Test fusing with another group
@@ -217,7 +213,7 @@ def test_leader_followers_fuse_operations():
     assert len(fused_group.followers) == 2  # Should have both followers
 
     # Test fusing with a regular part
-    regular_part = create_basic_box(1, 1, 1)
+    regular_part = create_box(1, 1, 1)
     fused_with_part = group1.fuse(regular_part)
 
     assert isinstance(fused_with_part, LeaderFollowersCuttersPart)
@@ -229,10 +225,10 @@ def test_leader_followers_fuse_operations():
 def test_leader_followers_complex_nested_operations():
     """Test complex nested operations to ensure consistency."""
     # Create a complex group with properly constructed NamedParts
-    leader = create_basic_box(5, 5, 5)
-    follower_part = translate(10, 0, 0)(create_basic_box(2, 2, 2))
+    leader = create_box(5, 5, 5)
+    follower_part = translate(10, 0, 0)(create_box(2, 2, 2))
     follower = NamedPart("follower", follower_part)
-    cutter_part = translate(0, 10, 0)(create_basic_box(1, 1, 1))
+    cutter_part = translate(0, 10, 0)(create_box(1, 1, 1))
     cutter = NamedPart("cutter", cutter_part)
     group = LeaderFollowersCuttersPart(leader, followers=[follower], cutters=[cutter])
 
@@ -292,7 +288,7 @@ def _point_to_tuple(point):
 
 
 def test_leader_followers_bounding_box_interfaces():
-    leader = create_basic_box(1.5, 2.5, 3.5)
+    leader = create_box(1.5, 2.5, 3.5)
     group = LeaderFollowersCuttersPart(leader)
 
     translation = (2.0, -1.0, 4.0)
@@ -322,7 +318,7 @@ def test_leader_followers_bounding_box_interfaces():
 def test_leader_followers_vertices_alias_and_bounds():
     origin = (1.2, -3.4, 0.5)
     size = (4.0, 2.0, 1.0)
-    leader = create_basic_box(*size, origin=origin)
+    leader = create_box(*size, origin=origin)
     group = LeaderFollowersCuttersPart(leader)
 
     vertices = group.Vertices()

@@ -19,7 +19,7 @@ def test_part_collector_basic():
     assert collector.part is None
 
     # Create a simple box and add it
-    box1 = create_basic_box(10, 10, 10)
+    box1 = create_box(10, 10, 10)
     result = collector.fuse(box1)
     assert collector.part is not None
     assert result is collector.part
@@ -31,8 +31,8 @@ def test_part_collector_multiple_fuse():
     collector = PartCollector()
 
     # Create two boxes
-    box1 = create_basic_box(10, 10, 10)
-    box2 = create_basic_box(5, 5, 5, origin=(15, 0, 0))
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(5, 5, 5, origin=(15, 0, 0))
 
     collector.fuse(box1)
     collector.fuse(box2)
@@ -49,8 +49,8 @@ def test_part_collector_cut():
     collector = PartCollector()
 
     # Create two overlapping boxes
-    box1 = create_basic_box(20, 20, 20)
-    box2 = create_basic_box(10, 10, 10, origin=(5, 5, 5))  # Overlapping with box1
+    box1 = create_box(20, 20, 20)
+    box2 = create_box(10, 10, 10, origin=(5, 5, 5))  # Overlapping with box1
 
     # Add the first box
     collector.fuse(box1)
@@ -69,7 +69,7 @@ def test_part_collector_cut():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_named_part_basic():
     """Test NamedPart basic functionality."""
-    box = create_basic_box(10, 10, 10)
+    box = create_box(10, 10, 10)
     named_part = NamedPart("test_box", box)
 
     assert named_part.name == "test_box"
@@ -79,7 +79,7 @@ def test_named_part_basic():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_named_part_copy():
     """Test NamedPart copy functionality."""
-    box = create_basic_box(10, 10, 10)
+    box = create_box(10, 10, 10)
     named_part = NamedPart("test_box", box)
 
     copied_part = named_part.copy()
@@ -90,7 +90,7 @@ def test_named_part_copy():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_named_part_translate():
     """Test NamedPart translation."""
-    box = create_basic_box(10, 10, 10)
+    box = create_box(10, 10, 10)
     named_part = NamedPart("test_box", box)
 
     # Get original position
@@ -109,7 +109,7 @@ def test_named_part_translate():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_named_part_rotate():
     """Test NamedPart rotation."""
-    box = create_basic_box(20, 10, 5)  # Longer in X direction
+    box = create_box(20, 10, 5)  # Longer in X direction
     named_part = NamedPart("test_box", box)
 
     # Rotate 90 degrees around Z axis
@@ -131,7 +131,7 @@ def test_part_list_basic():
     part_list = PartList()
     assert len(part_list) == 0
 
-    box = create_basic_box(10, 10, 10)
+    box = create_box(10, 10, 10)
     part_list.add(box, "test_box")
 
     assert len(part_list) == 1
@@ -142,8 +142,8 @@ def test_part_list_basic():
 def test_part_list_duplicate_name():
     """Test PartList prevents duplicate names."""
     part_list = PartList()
-    box1 = create_basic_box(10, 10, 10)
-    box2 = create_basic_box(5, 5, 5)
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(5, 5, 5)
 
     part_list.add(box1, "test_box")
 
@@ -155,7 +155,7 @@ def test_part_list_duplicate_name():
 def test_part_list_with_options():
     """Test PartList with various options."""
     part_list = PartList()
-    box = create_basic_box(10, 10, 10)
+    box = create_box(10, 10, 10)
 
     part_list.add(
         box,
@@ -177,7 +177,7 @@ def test_part_list_with_options():
 def test_part_list_as_list():
     """Test PartList as_list conversion."""
     part_list = PartList()
-    box = create_basic_box(10, 10, 10)
+    box = create_box(10, 10, 10)
     part_list.add(box, "test_box", flip=True)
 
     parts_dict_list = part_list.as_list()
@@ -189,7 +189,7 @@ def test_part_list_as_list():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_export_solid_to_stl():
     """Test STL export functionality."""
-    box = create_basic_box(10, 10, 10)
+    box = create_box(10, 10, 10)
 
     with tempfile.TemporaryDirectory() as temp_dir:
         stl_path = Path(temp_dir) / "test_box.stl"
@@ -203,8 +203,8 @@ def test_export_solid_to_stl():
 def test_arrange_and_export_parts_basic():
     """Test basic arrange and export functionality."""
     # Create some test parts
-    box1 = create_basic_box(10, 10, 10)
-    box2 = create_basic_box(5, 5, 5)
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(5, 5, 5)
 
     parts_list = [{"name": "box1", "part": box1}, {"name": "box2", "part": box2}]
 
@@ -231,8 +231,8 @@ def test_arrange_and_export_parts_basic():
 def test_arrange_and_export_with_part_list():
     """Test arrange and export with PartList."""
     part_list = PartList()
-    box1 = create_basic_box(10, 10, 10)
-    box2 = create_basic_box(5, 5, 5)
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(5, 5, 5)
 
     part_list.add(box1, "box1")
     part_list.add(box2, "box2", skip_in_production=True)
@@ -270,7 +270,7 @@ def test_arrange_and_export_with_part_list():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_arrange_and_export_with_process_data():
     """Test arrange and export with process data."""
-    box = create_basic_box(10, 10, 10)
+    box = create_box(10, 10, 10)
     parts_list = [{"name": "box", "part": box}]
 
     process_data = {"temperature": 200, "speed": 50}
@@ -303,7 +303,7 @@ def test_arrange_and_export_with_process_data():
 def test_arrange_and_export_max_build_height():
     """Test arrange and export with max build height constraint."""
     # Create a tall box
-    tall_box = create_basic_box(10, 10, 30)
+    tall_box = create_box(10, 10, 30)
     parts_list = [{"name": "tall_box", "part": tall_box}]
 
     with tempfile.TemporaryDirectory() as temp_dir:

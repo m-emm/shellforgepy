@@ -19,7 +19,7 @@ allowing them to work with any supported CAD backend.
 import math
 
 from shellforgepy.adapters._adapter import (
-    create_basic_cylinder,
+    create_cylinder,
     create_extruded_polygon,
     cut_parts,
     fuse_parts,
@@ -233,7 +233,7 @@ def create_nut(size, height=None, slack=None, no_hole=False):
 
     # Create a hole in the middle
     nut_hole_diameter = m_screws_table[size]["clearance_hole_normal"]
-    nut_hole = create_basic_cylinder(nut_hole_diameter / 2, height)
+    nut_hole = create_cylinder(nut_hole_diameter / 2, height)
     nut = cut_parts(nut, nut_hole)
 
     return nut
@@ -315,7 +315,7 @@ def create_cylinder_screw(
         if only_minimal_thread:
             thread_length = min(length, m_screws_table[size]["min_thread_length"])
             thread = create_bolt_thread(size, thread_length, cutter=True)
-            thread_cylinder = create_basic_cylinder(
+            thread_cylinder = create_cylinder(
                 thread_outer_diameter / 2 + enlargement,
                 length - thread_length + enlargement,
             )
@@ -326,7 +326,7 @@ def create_cylinder_screw(
             thread_length = length
             thread = create_bolt_thread(size, thread_length, cutter=True)
     else:
-        thread = create_basic_cylinder(thread_outer_diameter / 2, length)
+        thread = create_cylinder(thread_outer_diameter / 2, length)
 
     # Cylinder head
     cylinder_head_diameter = (
@@ -334,9 +334,7 @@ def create_cylinder_screw(
     )
     cylinder_head_height = m_screws_table[size]["cylinder_head_height"] + enlargement
 
-    cylinder_head = create_basic_cylinder(
-        cylinder_head_diameter / 2, cylinder_head_height
-    )
+    cylinder_head = create_cylinder(cylinder_head_diameter / 2, cylinder_head_height)
     # Position head on top of thread
     cylinder_head = translate(0, 0, length)(cylinder_head)
 

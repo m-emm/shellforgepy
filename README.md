@@ -187,13 +187,13 @@ from shellforgepy.simple import (
     Alignment,
     align,
     arrange_and_export_parts,
-    create_basic_box,
-    create_basic_cylinder,
+    create_box,
+    create_cylinder,
 )
 
 # Model a simple assembly (pure Python)
-base = create_basic_box(80, 60, 5)
-post = create_basic_cylinder(radius=5, height=40)
+base = create_box(80, 60, 5)
+post = create_cylinder(radius=5, height=40)
 post = align(post, base, Alignment.CENTER)
 assembly = [
     {"name": "base", "part": base},

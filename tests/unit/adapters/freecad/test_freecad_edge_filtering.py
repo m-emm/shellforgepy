@@ -16,8 +16,8 @@ except ImportError:
 from shellforgepy.adapters.freecad.freecad_adapter import (
     apply_fillet_by_alignment,
     apply_fillet_to_edges,
-    create_basic_box,
-    create_basic_cylinder,
+    create_box,
+    create_cylinder,
     filter_edges_by_alignment,
     filter_edges_by_z_position,
 )
@@ -28,7 +28,7 @@ from shellforgepy.construct.alignment import Alignment
 def test_filter_edges_by_z_position_box():
     """Test edge filtering on a box with known geometry."""
     # Create a 10x10x10 box at origin
-    box = create_basic_box(10, 10, 10, origin=(0, 0, 0))
+    box = create_box(10, 10, 10, origin=(0, 0, 0))
     assert box is not None
 
     # Filter edges at the bottom (z=0)
@@ -56,7 +56,7 @@ def test_filter_edges_by_z_position_box():
 def test_filter_edges_by_z_position_cylinder():
     """Test edge filtering on a cylinder with known geometry."""
     # Create a cylinder: radius=5, height=20
-    cylinder = create_basic_cylinder(radius=5, height=20, origin=(0, 0, 0))
+    cylinder = create_cylinder(radius=5, height=20, origin=(0, 0, 0))
     assert cylinder is not None
 
     # Filter edges at the bottom (z=0)
@@ -76,7 +76,7 @@ def test_filter_edges_by_alignment_cylinder():
     # Create cylinder with hawaii bottle cap dimensions
     radius = 16.85
     height = 4.5
-    cylinder = create_basic_cylinder(radius=radius, height=height)
+    cylinder = create_cylinder(radius=radius, height=height)
 
     # Test alignment-based filtering
     top_edges = filter_edges_by_alignment(cylinder, fillets_at=[Alignment.TOP])
@@ -93,7 +93,7 @@ def test_apply_fillet_by_alignment_cylinder():
     # Create cylinder
     radius = 10
     height = 5
-    cylinder = create_basic_cylinder(radius=radius, height=height)
+    cylinder = create_cylinder(radius=radius, height=height)
 
     original_volume = cylinder.Volume
 
@@ -125,7 +125,7 @@ def test_apply_fillet_by_alignment_cylinder():
 def test_apply_fillet_comprehensive():
     """Test applying fillet to different edge selections."""
     # Create a box for testing
-    box = create_basic_box(20, 20, 20, origin=(0, 0, 0))
+    box = create_box(20, 20, 20, origin=(0, 0, 0))
     original_volume = box.Volume
 
     # Test 1: Fillet top edges
@@ -155,7 +155,7 @@ def test_apply_fillet_comprehensive():
 def test_edge_filtering_precision():
     """Test edge filtering with precise threshold values."""
     # Create a box with known dimensions
-    box = create_basic_box(10, 10, 15, origin=(0, 0, 0))  # Height = 15
+    box = create_box(10, 10, 15, origin=(0, 0, 0))  # Height = 15
 
     # Test filtering at exact boundary
     edges_at_top = filter_edges_by_z_position(box, z_threshold=15.0, below=False)
@@ -176,7 +176,7 @@ def test_edge_filtering_precision():
 @pytest.mark.skipif(not freecad_available, reason="FreeCAD not available")
 def test_fillet_large_radius_handling():
     """Test fillet with various radius sizes."""
-    box = create_basic_box(10, 10, 10)
+    box = create_box(10, 10, 10)
     edges = filter_edges_by_z_position(box, z_threshold=9.5, below=False)
 
     if edges:
@@ -201,7 +201,7 @@ def test_fillet_large_radius_handling():
 @pytest.mark.skipif(not freecad_available, reason="FreeCAD not available")
 def test_cylinder_top_bottom_edge_detection():
     """Specifically test that we can distinguish top and bottom edges of a cylinder."""
-    cylinder = create_basic_cylinder(radius=10, height=30, origin=(0, 0, 0))
+    cylinder = create_cylinder(radius=10, height=30, origin=(0, 0, 0))
 
     # Get top edges (should be circular edge at z=30)
     top_edges = filter_edges_by_z_position(cylinder, z_threshold=29.0, below=False)

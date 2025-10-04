@@ -473,7 +473,7 @@ def create_text_object(
     return solid.translate(offset)
 
 
-def create_basic_box(
+def create_box(
     length,
     width,
     height,
@@ -484,7 +484,7 @@ def create_basic_box(
     return cq.Solid.makeBox(length, width, height, _as_cq_vector(origin))
 
 
-def create_basic_cylinder(
+def create_cylinder(
     radius,
     height,
     origin=(0.0, 0.0, 0.0),
@@ -500,7 +500,7 @@ def create_basic_cylinder(
     return cq.Solid.makeCylinder(radius, height, base, axis)
 
 
-def create_basic_sphere(
+def create_sphere(
     radius,
     origin=(0.0, 0.0, 0.0),
 ):
@@ -512,7 +512,7 @@ def create_basic_sphere(
     return sphere
 
 
-def create_basic_cone(
+def create_cone(
     radius1,
     radius2,
     height,
@@ -679,7 +679,7 @@ def create_filleted_box(
         CadQuery Shape (solid) with the filleted box
     """
 
-    box = create_basic_box(length, width, height)
+    box = create_box(length, width, height)
 
     return apply_fillet_by_alignment(box, fillet_radius, fillets_at, no_fillets_at)
 

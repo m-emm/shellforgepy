@@ -9,8 +9,8 @@ from typing import Sequence, Tuple, Union
 
 import numpy as np
 from shellforgepy.adapters._adapter import (
-    create_basic_box,
-    create_basic_cylinder,
+    create_box,
+    create_cylinder,
     create_extruded_polygon,
     create_solid_from_traditional_face_vertex_maps,
 )
@@ -132,7 +132,7 @@ def _create_box(
     height,
     base_point,
 ):
-    return create_basic_box(length, width, height, origin=_to_tuple3(base_point))
+    return create_box(length, width, height, origin=_to_tuple3(base_point))
 
 
 # create_trapezoid is now imported from higher_order_solids
@@ -205,7 +205,7 @@ def create_nut(size, height=None, slack=0.0, no_hole=False):
     if no_hole:
         return hex_prism
     clearance = m_screws_table[size]["clearance_hole_normal"] / 2
-    hole = create_basic_cylinder(clearance, height)
+    hole = create_cylinder(clearance, height)
     return hex_prism.cut(hole)
 
 

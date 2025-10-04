@@ -71,10 +71,10 @@ from .shells.partitionable_spheroid_triangle_mesh import (
 )
 
 ADAPTER_FUNTIONS = [
-    "create_basic_box",
-    "create_basic_cone",
-    "create_basic_cylinder",
-    "create_basic_sphere",
+    "create_box",
+    "create_cone",
+    "create_cylinder",
+    "create_sphere",
     "create_solid_from_traditional_face_vertex_maps",
     "create_text_object",
     "get_bounding_box",
@@ -126,10 +126,10 @@ def _load_cad_functions():
 _cad_functions = _load_cad_functions()
 
 # Expose them at module level
-create_basic_box = _cad_functions["create_basic_box"]
-create_basic_cone = _cad_functions["create_basic_cone"]
-create_basic_cylinder = _cad_functions["create_basic_cylinder"]
-create_basic_sphere = _cad_functions["create_basic_sphere"]
+create_box = _cad_functions["create_box"]
+create_cone = _cad_functions["create_cone"]
+create_cylinder = _cad_functions["create_cylinder"]
+create_sphere = _cad_functions["create_sphere"]
 create_solid_from_traditional_face_vertex_maps = _cad_functions[
     "create_solid_from_traditional_face_vertex_maps"
 ]
@@ -161,7 +161,7 @@ __all__ = [
     "coordinate_system_transform_to_matrix",
     "coordinate_system_transform",
     "coordinate_system_transformation_function",
-    "create_basic_box",
+    "create_box",
     "create_bolt_thread",
     "create_cylinder_screw",
     "create_extruded_polygon",

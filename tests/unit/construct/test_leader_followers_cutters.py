@@ -5,7 +5,7 @@ from shellforgepy.construct.leader_followers_cutters_part import (
 from shellforgepy.construct.named_part import NamedPart
 from shellforgepy.produce.arrange_and_export import PartList
 from shellforgepy.simple import (
-    create_basic_box,
+    create_box,
     get_bounding_box_center,
     get_volume,
     rotate,
@@ -15,10 +15,10 @@ from shellforgepy.simple import (
 
 def test_part_list_add_and_as_list():
     plist = PartList()
-    shape = create_basic_box(3, 3, 3)
+    shape = create_box(3, 3, 3)
     plist.add(shape, "cube", prod_rotation_angle=45.0, prod_rotation_axis=(0, 1, 0))
 
-    follower = translate(5, 0, 0)(create_basic_box(1, 1, 1))
+    follower = translate(5, 0, 0)(create_box(1, 1, 1))
     group = LeaderFollowersCuttersPart(follower)
     plist.add(group, "follower", skip_in_production=True)
 
@@ -31,15 +31,15 @@ def test_part_list_add_and_as_list():
 
 def test_part_list_duplicate_name_raises():
     plist = PartList()
-    shape = create_basic_box(1, 1, 1)
+    shape = create_box(1, 1, 1)
     plist.add(shape, "part")
     with pytest.raises(ValueError):
         plist.add(shape, "part")
 
 
 def test_leader_followers_translate_and_rotate():
-    leader = create_basic_box(2, 2, 2)
-    follower_shape = translate(4, 0, 0)(create_basic_box(1, 1, 1))
+    leader = create_box(2, 2, 2)
+    follower_shape = translate(4, 0, 0)(create_box(1, 1, 1))
     follower = NamedPart("follower", follower_shape)
     group = LeaderFollowersCuttersPart(leader, followers=[follower])
 
@@ -70,13 +70,13 @@ def test_leader_followers_translate_and_rotate():
 
 
 def test_leader_followers_fuse_and_non_production():
-    leader = create_basic_box(2, 2, 2)
+    leader = create_box(2, 2, 2)
     follower = NamedPart(
         "follower",
-        translate(2.5, 0, 0)(create_basic_box(1, 1, 1)),
+        translate(2.5, 0, 0)(create_box(1, 1, 1)),
     )
-    cutter = NamedPart("cutter", create_basic_box(0.5, 0.5, 0.5))
-    aux = NamedPart("aux", create_basic_box(0.2, 0.2, 0.2))
+    cutter = NamedPart("cutter", create_box(0.5, 0.5, 0.5))
+    aux = NamedPart("aux", create_box(0.2, 0.2, 0.2))
 
     group = LeaderFollowersCuttersPart(
         leader,
@@ -92,20 +92,20 @@ def test_leader_followers_fuse_and_non_production():
     non_prod_fused = group.get_non_production_parts_fused()
     assert non_prod_fused is not None
 
-    combined = group.fuse(translate(0, 0, 2)(create_basic_box(1, 1, 1)))
+    combined = group.fuse(translate(0, 0, 2)(create_box(1, 1, 1)))
     assert isinstance(combined, LeaderFollowersCuttersPart)
     # Just check that leader exists after fusion
     assert combined.leader is not None
 
 
 def test_leader_followers_cut_with_group_merges_metadata():
-    leader = create_basic_box(2, 2, 2)
+    leader = create_box(2, 2, 2)
     follower_a = NamedPart(
         "follower_a",
-        translate(3, 0, 0)(create_basic_box(1, 1, 1)),
+        translate(3, 0, 0)(create_box(1, 1, 1)),
     )
-    cutter_a = NamedPart("cutter_a", create_basic_box(0.5, 0.5, 0.5))
-    aux_a = NamedPart("aux_a", create_basic_box(0.25, 0.25, 0.25))
+    cutter_a = NamedPart("cutter_a", create_box(0.5, 0.5, 0.5))
+    aux_a = NamedPart("aux_a", create_box(0.25, 0.25, 0.25))
     group_a = LeaderFollowersCuttersPart(
         leader,
         followers=[follower_a],
@@ -113,13 +113,13 @@ def test_leader_followers_cut_with_group_merges_metadata():
         non_production_parts=[aux_a],
     )
 
-    subtractor_leader = translate(0.5, 0.5, 0.5)(create_basic_box(1, 1, 1))
+    subtractor_leader = translate(0.5, 0.5, 0.5)(create_box(1, 1, 1))
     follower_b = NamedPart(
         "follower_b",
-        translate(-3, 0, 0)(create_basic_box(1, 1, 1)),
+        translate(-3, 0, 0)(create_box(1, 1, 1)),
     )
-    cutter_b = NamedPart("cutter_b", create_basic_box(0.25, 0.25, 0.25))
-    aux_b = NamedPart("aux_b", create_basic_box(0.2, 0.2, 0.2))
+    cutter_b = NamedPart("cutter_b", create_box(0.25, 0.25, 0.25))
+    aux_b = NamedPart("aux_b", create_box(0.2, 0.2, 0.2))
     group_b = LeaderFollowersCuttersPart(
         subtractor_leader,
         followers=[follower_b],
@@ -167,13 +167,13 @@ def test_leader_followers_cut_with_group_merges_metadata():
 
 
 def test_leader_followers_cut_with_shape_preserves_metadata():
-    leader = create_basic_box(2, 2, 2)
+    leader = create_box(2, 2, 2)
     follower = NamedPart(
         "follower",
-        translate(3, 0, 0)(create_basic_box(1, 1, 1)),
+        translate(3, 0, 0)(create_box(1, 1, 1)),
     )
-    cutter = NamedPart("cutter", create_basic_box(0.5, 0.5, 0.5))
-    aux = NamedPart("aux", create_basic_box(0.25, 0.25, 0.25))
+    cutter = NamedPart("cutter", create_box(0.5, 0.5, 0.5))
+    aux = NamedPart("aux", create_box(0.25, 0.25, 0.25))
     group = LeaderFollowersCuttersPart(
         leader,
         followers=[follower],
@@ -181,7 +181,7 @@ def test_leader_followers_cut_with_shape_preserves_metadata():
         non_production_parts=[aux],
     )
 
-    subtractor = translate(0.5, 0.5, 0.5)(create_basic_box(1, 1, 1))
+    subtractor = translate(0.5, 0.5, 0.5)(create_box(1, 1, 1))
     result = group.cut(subtractor)
 
     assert isinstance(result, LeaderFollowersCuttersPart)

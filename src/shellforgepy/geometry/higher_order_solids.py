@@ -4,8 +4,8 @@ from typing import Optional
 import numpy as np
 from shellforgepy.adapters._adapter import (
     copy_part,
-    create_basic_box,
-    create_basic_cylinder,
+    create_box,
+    create_cylinder,
     create_extruded_polygon,
     create_solid_from_traditional_face_vertex_maps,
     get_bounding_box,
@@ -191,7 +191,7 @@ def directed_cylinder_at(
         ``cadquery.Solid`` positioned and oriented as requested.
     """
 
-    cylinder = create_basic_cylinder(radius=radius, height=height)
+    cylinder = create_cylinder(radius=radius, height=height)
 
     direction = np.array(direction, dtype=np.float64)
     if np.linalg.norm(direction) < 1e-8:
@@ -253,10 +253,10 @@ def create_ring(
         raise ValueError("Outer radius must be greater than inner radius")
 
     # Create outer cylinder
-    outer_cyl = create_basic_cylinder(outer_radius, height, origin, direction, angle)
+    outer_cyl = create_cylinder(outer_radius, height, origin, direction, angle)
 
     # Create inner cylinder to subtract
-    inner_cyl = create_basic_cylinder(inner_radius, height, origin, direction, angle)
+    inner_cyl = create_cylinder(inner_radius, height, origin, direction, angle)
 
     # Cut inner from outer to create ring
     return outer_cyl.cut(inner_cyl)
@@ -452,7 +452,7 @@ def create_screw_thread(
             )
 
         # Create and position the core
-        core = create_basic_cylinder(
+        core = create_cylinder(
             radius=inner_radius, height=core_height, origin=(0, 0, core_bottom)
         )
 
@@ -468,10 +468,10 @@ def create_rounded_slab(
     round_radius,
     rounding_flags={(1, 1): True, (-1, 1): True, (-1, -1): True, (1, -1): True},
 ):
-    retval = create_basic_box(length, width, thick)
+    retval = create_box(length, width, thick)
     retval = translate(-length / 2, -width / 2, 0)(retval)
-    stencil = create_basic_box(round_radius, round_radius, thick)
-    rounder = create_basic_cylinder(
+    stencil = create_box(round_radius, round_radius, thick)
+    rounder = create_cylinder(
         round_radius,
         thick,
     )

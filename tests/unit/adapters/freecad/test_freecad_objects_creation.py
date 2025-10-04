@@ -14,19 +14,19 @@ except ImportError:
 
 from shellforgepy.geometry.mesh_builders import create_dodecahedron_geometry
 from shellforgepy.simple import (
-    create_basic_box,
-    create_basic_cone,
-    create_basic_cylinder,
-    create_basic_sphere,
+    create_box,
+    create_cone,
+    create_cylinder,
     create_filleted_box,
     create_solid_from_traditional_face_vertex_maps,
+    create_sphere,
 )
 
 
 @pytest.mark.skipif(not freecad_available, reason="FreeCAD not available")
 def test_create_basic_box():
     """Test creation of a basic box in FreeCAD."""
-    box = create_basic_box(10, 20, 30)
+    box = create_box(10, 20, 30)
     assert box is not None
     assert box.BoundBox.XLength == 10
     assert box.BoundBox.YLength == 20
@@ -64,21 +64,21 @@ def test_create_dodecahedron():
 def test_create_basic_shapes():
     """Test creation of basic geometric shapes."""
     # Test cylinder
-    cylinder = create_basic_cylinder(radius=5, height=10)
+    cylinder = create_cylinder(radius=5, height=10)
     assert cylinder is not None
     # Cylinder volume = π * r² * h
     expected_cyl_volume = np.pi * 5**2 * 10
     assert np.allclose(cylinder.Volume, expected_cyl_volume, rtol=1e-5)
 
     # Test sphere
-    sphere = create_basic_sphere(radius=5)
+    sphere = create_sphere(radius=5)
     assert sphere is not None
     # Sphere volume = (4/3) * π * r³
     expected_sphere_volume = (4 / 3) * np.pi * 5**3
     assert np.allclose(sphere.Volume, expected_sphere_volume, rtol=1e-5)
 
     # Test cone
-    cone = create_basic_cone(radius1=5, radius2=2, height=10)
+    cone = create_cone(radius1=5, radius2=2, height=10)
     assert cone is not None
     # Truncated cone volume = (1/3) * π * h * (r1² + r1*r2 + r2²)
     expected_cone_volume = (1 / 3) * np.pi * 10 * (5**2 + 5 * 2 + 2**2)
@@ -99,7 +99,7 @@ def test_bounding_box_functions():
     )
 
     # Create a box offset from origin
-    box = create_basic_box(10, 20, 30, (5, 10, 15))
+    box = create_box(10, 20, 30, (5, 10, 15))
 
     # Test bounding box
     min_point, max_point = get_bounding_box(box)
@@ -186,9 +186,7 @@ def test_rotation_mechanics():
     from shellforgepy.adapters.freecad.freecad_adapter import rotate_part
 
     # Create a test box and examine rotation behavior
-    box = create_basic_box(
-        10, 10, 10
-    )  # Box from (0,0,0) to (10,10,10), center at (5,5,5)
+    box = create_box(10, 10, 10)  # Box from (0,0,0) to (10,10,10), center at (5,5,5)
 
     original_center = box.BoundBox.Center
     assert (
@@ -283,7 +281,7 @@ def test_rotation_angle_units():
     from shellforgepy.adapters.freecad.freecad_adapter import rotate_part
 
     # Create a test box
-    box = create_basic_box(10, 10, 10)  # Center at (5,5,5)
+    box = create_box(10, 10, 10)  # Center at (5,5,5)
 
     # Test direct FreeCAD rotation without our wrapper
     box_direct = box.copy()
@@ -354,8 +352,8 @@ def test_part_manipulation_functions():
     )
 
     # Create test parts
-    box1 = create_basic_box(10, 10, 10)
-    box2 = create_basic_box(5, 5, 5, (20, 0, 0))
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(5, 5, 5, (20, 0, 0))
 
     # Test copy
     box1_copy = copy_part(box1)
@@ -397,10 +395,8 @@ def test_part_manipulation_functions():
 
     # Test cut
     # Create two overlapping boxes to test cutting
-    box3 = create_basic_box(10, 10, 10)  # Box at origin
-    box4 = create_basic_box(
-        5, 5, 15, (2.5, 2.5, 0)
-    )  # Smaller box overlapping with box3
+    box3 = create_box(10, 10, 10)  # Box at origin
+    box4 = create_box(5, 5, 15, (2.5, 2.5, 0))  # Smaller box overlapping with box3
 
     original_volume = box3.Volume
     cut_result = cut_parts(box3, box4)
@@ -420,7 +416,7 @@ def test_export_stl():
     from shellforgepy.adapters.freecad.freecad_adapter import export_solid_to_stl
 
     # Create a test solid
-    box = create_basic_box(10, 10, 10)
+    box = create_box(10, 10, 10)
 
     # Export to temporary file
     with tempfile.NamedTemporaryFile(suffix=".stl", delete=False) as tmp:

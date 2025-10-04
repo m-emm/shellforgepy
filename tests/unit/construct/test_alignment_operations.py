@@ -5,8 +5,8 @@ from shellforgepy.simple import (
     Alignment,
     align,
     apply_fillet_by_alignment,
-    create_basic_box,
-    create_basic_cylinder,
+    create_box,
+    create_cylinder,
     create_extruded_polygon,
     get_adapter_id,
     get_bounding_box,
@@ -22,7 +22,7 @@ _logger = logging.getLogger(__name__)
 
 def test_translate():
 
-    part = create_basic_box(10, 20, 30)
+    part = create_box(10, 20, 30)
     part_center = get_bounding_box_center(part)
 
     part_translated = translate(5, 7, 13)(part)
@@ -37,7 +37,7 @@ def test_translate():
 
 def test_rotate():
 
-    part = create_basic_box(10, 20, 30)
+    part = create_box(10, 20, 30)
 
     rotated_part = rotate(90, axis=(0, 0, 1), center=(0, 0, 0))(part)
 
@@ -55,7 +55,7 @@ def test_rotate():
 
 def test_rotate_different_parameter_orders():
     """Test different ways of calling rotate to see if there are parameter order issues."""
-    part = create_basic_box(10, 20, 30)
+    part = create_box(10, 20, 30)
 
     # Test 1: keyword arguments in different orders
     rotated1 = rotate(90, axis=(0, 0, 1), center=(0, 0, 0))(part)
@@ -73,7 +73,7 @@ def test_functional_consistency_with_named_parts():
     """Test that functional transformations work consistently with NamedPart objects."""
     from shellforgepy.construct.named_part import NamedPart
 
-    part = create_basic_box(10, 20, 30)
+    part = create_box(10, 20, 30)
     named_part = NamedPart("test", part)
 
     _logger.info(
@@ -104,8 +104,8 @@ def test_functional_consistency_with_leader_followers():
     )
     from shellforgepy.construct.named_part import NamedPart
 
-    leader = create_basic_box(2, 2, 2)
-    follower = NamedPart("follower", create_basic_box(1, 1, 1))
+    leader = create_box(2, 2, 2)
+    follower = NamedPart("follower", create_box(1, 1, 1))
     group = LeaderFollowersCuttersPart(leader, followers=[follower])
 
     # Functional transformations should work on the group
@@ -149,15 +149,15 @@ def test_chained_transformations_consistency():
     from shellforgepy.construct.named_part import NamedPart
 
     # Test with native part
-    native_part = create_basic_box(10, 10, 10)
+    native_part = create_box(10, 10, 10)
     native_result = rotate(45, axis=(0, 0, 1))(translate(10, 0, 0)(native_part))
 
     # Test with NamedPart
-    named_part = NamedPart("test", create_basic_box(10, 10, 10))
+    named_part = NamedPart("test", create_box(10, 10, 10))
     named_result = rotate(45, axis=(0, 0, 1))(translate(10, 0, 0)(named_part))
 
     # Test with LeaderFollowersCuttersPart
-    group_part = LeaderFollowersCuttersPart(create_basic_box(10, 10, 10))
+    group_part = LeaderFollowersCuttersPart(create_box(10, 10, 10))
     group_result = rotate(45, axis=(0, 0, 1))(translate(10, 0, 0)(group_part))
 
     # All should preserve their types
@@ -239,11 +239,11 @@ def test_cylinder_alignment_positioning():
         aligned_part_raduis = 3
 
         # Create the cap cover (reference object)
-        reference_part = create_basic_cylinder(
+        reference_part = create_cylinder(
             radius=reference_radius, height=reference_height
         )
 
-        aligned_part = create_basic_cylinder(
+        aligned_part = create_cylinder(
             radius=aligned_part_raduis, height=reference_height
         )
 

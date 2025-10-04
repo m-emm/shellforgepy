@@ -172,7 +172,7 @@ def create_geometry(output_dir="output"):
     height = 60.0
     parts = PartList()
 
-    parts.add(create_basic_cylinder(radius=radius, height=height), "example_cylinder_1")
+    parts.add(create_cylinder(radius=radius, height=height), "example_cylinder_1")
 
     # Export everything as either assembly or production layout
     arrange_and_export_parts(

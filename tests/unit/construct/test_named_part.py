@@ -1,16 +1,12 @@
 import numpy as np
 from shellforgepy.construct.alignment_operations import rotate, translate
 from shellforgepy.construct.named_part import NamedPart
-from shellforgepy.simple import (
-    create_basic_box,
-    get_bounding_box,
-    get_bounding_box_center,
-)
+from shellforgepy.simple import create_box, get_bounding_box, get_bounding_box_center
 
 
 def test_named_part_creation():
     """Test basic NamedPart creation."""
-    part = create_basic_box(10, 20, 30)
+    part = create_box(10, 20, 30)
     named_part = NamedPart("test_box", part)
 
     assert named_part.name == "test_box"
@@ -20,7 +16,7 @@ def test_named_part_creation():
 
 def test_named_part_copy():
     """Test NamedPart copying."""
-    part = create_basic_box(10, 20, 30)
+    part = create_box(10, 20, 30)
     named_part = NamedPart("original", part)
 
     copied_part = named_part.copy()
@@ -32,7 +28,7 @@ def test_named_part_copy():
 
 def test_named_part_translate_method():
     """Test NamedPart.translate() method."""
-    part = create_basic_box(10, 20, 30)
+    part = create_box(10, 20, 30)
     named_part = NamedPart("test", part)
 
     original_center = get_bounding_box_center(named_part.part)
@@ -49,7 +45,7 @@ def test_named_part_translate_method():
 
 def test_named_part_rotate_method():
     """Test NamedPart with functional rotate interface."""
-    part = create_basic_box(10, 20, 30)
+    part = create_box(10, 20, 30)
     named_part = NamedPart("test", part)
 
     # Use functional interface for framework-standardized parameters
@@ -70,7 +66,7 @@ def test_named_part_rotate_method():
 
 def test_named_part_vs_native_part_translate_consistency():
     """Test that translate()(named_part) behaves like translate()(native_part)."""
-    part = create_basic_box(10, 20, 30)
+    part = create_box(10, 20, 30)
     named_part = NamedPart("test", part)
 
     # Apply translation using the functional approach
@@ -90,7 +86,7 @@ def test_named_part_vs_native_part_translate_consistency():
 
 def test_named_part_vs_native_part_rotate_consistency():
     """Test that rotate()(named_part) behaves like rotate()(native_part)."""
-    part = create_basic_box(10, 20, 30)
+    part = create_box(10, 20, 30)
     named_part = NamedPart("test", part)
 
     # Apply rotation using the functional approach
@@ -111,7 +107,7 @@ def test_named_part_vs_native_part_rotate_consistency():
 
 def test_named_part_chained_transformations():
     """Test chaining transformations on NamedPart."""
-    part = create_basic_box(10, 20, 30)
+    part = create_box(10, 20, 30)
     named_part = NamedPart("test", part)
 
     # Chain: translate then rotate
@@ -133,7 +129,7 @@ def test_named_part_chained_transformations():
 
 def test_named_part_parameter_order_consistency():
     """Test that NamedPart handles different parameter orders consistently."""
-    part = create_basic_box(10, 20, 30)
+    part = create_box(10, 20, 30)
     named_part = NamedPart("test", part)
 
     # Test different parameter orders for rotation

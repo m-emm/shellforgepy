@@ -9,7 +9,7 @@ from shellforgepy.simple import (
     align,
     apply_fillet_by_alignment,
     arrange_and_export_parts,
-    create_basic_cylinder,
+    create_cylinder,
     create_ring,
     create_screw_thread,
     rotate,
@@ -79,7 +79,7 @@ def main():
 
         # Create the cap cover (top cylinder) - NO FILLET YET!
         # Keep clean geometry for reliable alignments
-        cap_cover_clean = create_basic_cylinder(
+        cap_cover_clean = create_cylinder(
             radius=cap_rim_outer_diameter / 2, height=cap_cover_thickness
         )
 
@@ -98,9 +98,7 @@ def main():
         # Ripple cutters should be positioned so half cuts into the cap (creating the groove)
         for i in range(num_ripples):
             # Create cylinder for ripple cutting
-            ripple_cutter = create_basic_cylinder(
-                radius=ripple_depth, height=ripple_height
-            )
+            ripple_cutter = create_cylinder(radius=ripple_depth, height=ripple_height)
 
             # Align to clean, unfilleted geometry for reliable bounding boxes
             ripple_cutter = align(ripple_cutter, cap, Alignment.CENTER)

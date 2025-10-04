@@ -1,17 +1,12 @@
 import numpy as np
 from shellforgepy.construct.named_part import NamedPart
-from shellforgepy.simple import (
-    create_basic_box,
-    get_bounding_box_center,
-    rotate,
-    translate,
-)
+from shellforgepy.simple import create_box, get_bounding_box_center, rotate, translate
 
 
 def test_debug_translation():
     """Debug what's happening with translations."""
     # Create parts
-    part = create_basic_box(10, 20, 30)
+    part = create_box(10, 20, 30)
     named_part = NamedPart("test", part)
 
     # Check original centers
@@ -44,7 +39,7 @@ def test_debug_translation():
     # Debug: Check what translate_part does to a NamedPart (using a fresh copy)
     from shellforgepy.adapters._adapter import translate_part
 
-    fresh_named_part_1 = NamedPart("test", create_basic_box(10, 20, 30))
+    fresh_named_part_1 = NamedPart("test", create_box(10, 20, 30))
     try:
         translated_by_translate_part = translate_part(fresh_named_part_1, (5, 0, 0))
         print(
@@ -58,8 +53,8 @@ def test_debug_translation():
         print(f"translate_part on NamedPart failed: {e}")
 
     # Apply translation (using fresh objects to avoid interference)
-    fresh_part = create_basic_box(10, 20, 30)
-    fresh_named_part_2 = NamedPart("test", create_basic_box(10, 20, 30))
+    fresh_part = create_box(10, 20, 30)
+    fresh_named_part_2 = NamedPart("test", create_box(10, 20, 30))
     translated_native = translate(5, 0, 0)(fresh_part)
     translated_named = translate(5, 0, 0)(fresh_named_part_2)  # Check results
     native_center = get_bounding_box_center(translated_native)
@@ -89,7 +84,7 @@ def test_debug_translation():
 def test_debug_rotation():
     """Debug what's happening with rotations."""
     # Create parts
-    part = create_basic_box(10, 20, 30)
+    part = create_box(10, 20, 30)
     named_part = NamedPart("test", part)
 
     # Apply rotation

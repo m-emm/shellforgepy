@@ -22,7 +22,7 @@ from shellforgepy.simple import (
     align_translation,
     alignment_signs,
     chain_translations,
-    create_basic_box,
+    create_box,
     create_extruded_polygon,
     get_vertex_coordinates,
     rotate,
@@ -35,7 +35,7 @@ from shellforgepy.simple import (
 def test_basic_translate():
     """Test basic translation function with simple movements."""
     # Create a box at origin
-    box = create_basic_box(10, 10, 10)
+    box = create_box(10, 10, 10)
     original_center = box.Center()
 
     # Test translation in X direction
@@ -83,7 +83,7 @@ def test_basic_rotate_around_origin():
     """Test basic rotation around origin with asymmetric box to verify orientation."""
     # Create an asymmetric box: 20x10x5 (length x width x height)
     # This makes it easy to track orientation after rotation
-    box = create_basic_box(20, 10, 5, (0, 0, 0))
+    box = create_box(20, 10, 5, (0, 0, 0))
 
     # Box extends from (0,0,0) to (20,10,5), center at (10,5,2.5)
     original_center = box.Center()
@@ -134,7 +134,7 @@ def test_basic_rotate_around_origin():
 def test_basic_rotate_around_point():
     """Test rotation around a specific point."""
     # Create box at (10, 0, 0) with dimensions 6x4x2
-    box = create_basic_box(6, 4, 2, (10, 0, 0))
+    box = create_box(6, 4, 2, (10, 0, 0))
 
     # Box center is at (13, 2, 1)
     original_center = box.Center()
@@ -170,7 +170,7 @@ def test_basic_rotate_around_point():
 def test_rotate_different_axes():
     """Test rotation around different axes with asymmetric box."""
     # Create box with distinct dimensions: 12x8x4
-    box = create_basic_box(12, 8, 4, (0, 0, 0))
+    box = create_box(12, 8, 4, (0, 0, 0))
     bbox = box.BoundingBox()
     original_bounds = (bbox.xlen, bbox.ylen, bbox.zlen)
 
@@ -263,8 +263,8 @@ def test_mirror_part_reflects_geometry():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_center_boxes():
     """Test centering two boxes."""
-    box1 = create_basic_box(10, 10, 10)
-    box2 = create_basic_box(10, 10, 10)
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(10, 10, 10)
 
     # Align box2 to box1 at center
     aligned_box2 = align(box2, box1, Alignment.CENTER)
@@ -282,9 +282,9 @@ def test_center_boxes():
 def test_align_left():
     """Test aligning a box to the left of another box."""
     # Create target box at origin
-    box1 = create_basic_box(10, 10, 10)
+    box1 = create_box(10, 10, 10)
     # Create box to align, offset to the right
-    box2 = create_basic_box(5, 5, 5, (20, 0, 0))
+    box2 = create_box(5, 5, 5, (20, 0, 0))
 
     aligned_box2 = align(box2, box1, Alignment.LEFT)
 
@@ -298,9 +298,9 @@ def test_align_left():
 def test_align_right():
     """Test aligning a box to the right of another box."""
     # Create target box at origin
-    box1 = create_basic_box(10, 10, 10)
+    box1 = create_box(10, 10, 10)
     # Create box to align, offset to the left
-    box2 = create_basic_box(5, 5, 5, (-20, 0, 0))
+    box2 = create_box(5, 5, 5, (-20, 0, 0))
 
     aligned_box2 = align(box2, box1, Alignment.RIGHT)
 
@@ -313,8 +313,8 @@ def test_align_right():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_align_front():
     """Test aligning a box to the front of another box."""
-    box1 = create_basic_box(10, 10, 10)
-    box2 = create_basic_box(5, 5, 5, (0, 20, 0))
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(5, 5, 5, (0, 20, 0))
 
     aligned_box2 = align(box2, box1, Alignment.FRONT)
 
@@ -327,8 +327,8 @@ def test_align_front():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_align_back():
     """Test aligning a box to the back of another box."""
-    box1 = create_basic_box(10, 10, 10)
-    box2 = create_basic_box(5, 5, 5, (0, -20, 0))
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(5, 5, 5, (0, -20, 0))
 
     aligned_box2 = align(box2, box1, Alignment.BACK)
 
@@ -341,8 +341,8 @@ def test_align_back():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_align_top():
     """Test aligning a box to the top of another box."""
-    box1 = create_basic_box(10, 10, 10)
-    box2 = create_basic_box(5, 5, 5, (0, 0, -20))
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(5, 5, 5, (0, 0, -20))
 
     aligned_box2 = align(box2, box1, Alignment.TOP)
 
@@ -355,8 +355,8 @@ def test_align_top():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_align_bottom():
     """Test aligning a box to the bottom of another box."""
-    box1 = create_basic_box(10, 10, 10)
-    box2 = create_basic_box(5, 5, 5, (0, 0, 20))
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(5, 5, 5, (0, 0, 20))
 
     aligned_box2 = align(box2, box1, Alignment.BOTTOM)
 
@@ -369,8 +369,8 @@ def test_align_bottom():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_stack_right():
     """Test stacking a box to the right of another box."""
-    box1 = create_basic_box(10, 10, 10)
-    box2 = create_basic_box(5, 5, 5)
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(5, 5, 5)
 
     aligned_box2 = align(box2, box1, Alignment.STACK_RIGHT)
 
@@ -384,8 +384,8 @@ def test_stack_right():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_stack_left():
     """Test stacking a box to the left of another box."""
-    box1 = create_basic_box(10, 10, 10)
-    box2 = create_basic_box(5, 5, 5)
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(5, 5, 5)
 
     aligned_box2 = align(box2, box1, Alignment.STACK_LEFT)
 
@@ -399,8 +399,8 @@ def test_stack_left():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_stack_top():
     """Test stacking a box on top of another box."""
-    box1 = create_basic_box(10, 10, 10)
-    box2 = create_basic_box(5, 5, 5)
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(5, 5, 5)
 
     aligned_box2 = align(box2, box1, Alignment.STACK_TOP)
 
@@ -414,8 +414,8 @@ def test_stack_top():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_stack_bottom():
     """Test stacking a box below another box."""
-    box1 = create_basic_box(10, 10, 10)
-    box2 = create_basic_box(5, 5, 5)
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(5, 5, 5)
 
     aligned_box2 = align(box2, box1, Alignment.STACK_BOTTOM)
 
@@ -429,8 +429,8 @@ def test_stack_bottom():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_align_with_axes_constraint():
     """Test alignment with axis constraints."""
-    box1 = create_basic_box(10, 10, 10, (20, 15, 8))
-    box2 = create_basic_box(5, 5, 5)
+    box1 = create_box(10, 10, 10, (20, 15, 8))
+    box2 = create_box(5, 5, 5)
 
     # Align only on X and Y axes, leave Z unchanged
     aligned_box2 = align(box2, box1, Alignment.CENTER, axes=[0, 1])
@@ -447,7 +447,7 @@ def test_align_with_axes_constraint():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_translate_function():
     """Test the translate function."""
-    box = create_basic_box(10, 10, 10)
+    box = create_box(10, 10, 10)
     translated_box = translate(5, -3, 7)(box)
 
     original_center = box.Center()
@@ -462,7 +462,7 @@ def test_translate_function():
 def test_rotate_function():
     """Test the rotate function."""
     # Create a box offset from origin
-    box = create_basic_box(10, 5, 5, (10, 0, 0))
+    box = create_box(10, 5, 5, (10, 0, 0))
 
     # Rotate 90 degrees around Z axis
     rotated_box = rotate(90, center=(0, 0, 0), axis=(0, 0, 1))(box)
@@ -479,7 +479,7 @@ def test_rotate_function():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_chain_translations():
     """Test chaining multiple transformations."""
-    box = create_basic_box(10, 10, 10)
+    box = create_box(10, 10, 10)
     original_center = box.Center()
 
     # Test assumption: original center should be (5,5,5)
@@ -641,8 +641,8 @@ def test_alignment_signs_constants():
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_invalid_alignment():
     """Test that invalid alignment raises an error."""
-    box1 = create_basic_box(10, 10, 10)
-    box2 = create_basic_box(5, 5, 5)
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(5, 5, 5)
 
     # This should raise a ValueError for an invalid alignment
     with pytest.raises(ValueError, match="Unknown alignment"):
@@ -655,7 +655,7 @@ def test_named_part_native_rotate_method():
     """Test NamedPart.rotate() method with native CadQuery signature."""
     from shellforgepy.construct.named_part import NamedPart
 
-    part = create_basic_box(10, 20, 30)
+    part = create_box(10, 20, 30)
     named_part = NamedPart("test", part)
 
     # Use native CadQuery signature: rotate(center_point, axis_point, angle)
@@ -687,8 +687,8 @@ def test_leader_followers_native_rotate_method():
     )
     from shellforgepy.construct.named_part import NamedPart
 
-    leader = create_basic_box(2, 2, 2)
-    follower = NamedPart("follower", create_basic_box(1, 1, 1))
+    leader = create_box(2, 2, 2)
+    follower = NamedPart("follower", create_box(1, 1, 1))
     group = LeaderFollowersCuttersPart(leader, followers=[follower])
 
     # Use native CadQuery signature: rotate(center_point, axis_point, angle)

@@ -12,7 +12,7 @@ from shellforgepy.shells.materialized_connectors import (
 )
 
 # Import CAD functions through the adapter system
-from shellforgepy.simple import create_basic_cylinder
+from shellforgepy.simple import create_cylinder
 
 
 @pytest.fixture
@@ -85,7 +85,7 @@ def test_create_connector_parts(simple_hint):
 
 
 def test_create_nut_holder_cutter(simple_hint):
-    drill = create_basic_cylinder(2.0, 10.0)
+    drill = create_cylinder(2.0, 10.0)
     cutter = create_nut_holder_cutter("M3", slack=0.2, drill=drill)
     assert cutter is not None
     # Get volumes using CAD-agnostic approach

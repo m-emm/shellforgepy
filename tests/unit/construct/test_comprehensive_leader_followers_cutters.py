@@ -4,7 +4,7 @@ from shellforgepy.construct.leader_followers_cutters_part import (
 )
 from shellforgepy.construct.named_part import NamedPart
 from shellforgepy.simple import (
-    create_basic_box,
+    create_box,
     get_bounding_box,
     get_bounding_box_center,
     rotate,
@@ -16,13 +16,13 @@ def test_comprehensive_leader_followers_cutters_rotation():
     """Test that ALL components (leader, followers, cutters, non_production_parts) are properly rotated."""
 
     # Create parts with different dimensions so rotation is visible
-    leader = create_basic_box(10, 20, 30)  # Different dimensions
-    follower1 = NamedPart("follower1", create_basic_box(5, 15, 25))
-    follower2 = NamedPart("follower2", create_basic_box(8, 12, 18))
-    cutter1 = NamedPart("cutter1", create_basic_box(3, 9, 21))
-    cutter2 = NamedPart("cutter2", create_basic_box(6, 11, 17))
-    non_prod1 = NamedPart("non_prod1", create_basic_box(4, 8, 16))
-    non_prod2 = NamedPart("non_prod2", create_basic_box(7, 13, 19))
+    leader = create_box(10, 20, 30)  # Different dimensions
+    follower1 = NamedPart("follower1", create_box(5, 15, 25))
+    follower2 = NamedPart("follower2", create_box(8, 12, 18))
+    cutter1 = NamedPart("cutter1", create_box(3, 9, 21))
+    cutter2 = NamedPart("cutter2", create_box(6, 11, 17))
+    non_prod1 = NamedPart("non_prod1", create_box(4, 8, 16))
+    non_prod2 = NamedPart("non_prod2", create_box(7, 13, 19))
 
     # Create group with all component types
     group = LeaderFollowersCuttersPart(
@@ -126,13 +126,13 @@ def test_comprehensive_leader_followers_cutters_translation():
     """Test that ALL components (leader, followers, cutters, non_production_parts) are properly translated."""
 
     # Create parts at different positions so translation is visible
-    leader = create_basic_box(10, 20, 30)
-    follower1 = NamedPart("follower1", create_basic_box(5, 15, 25))
-    follower2 = NamedPart("follower2", create_basic_box(8, 12, 18))
-    cutter1 = NamedPart("cutter1", create_basic_box(3, 9, 21))
-    cutter2 = NamedPart("cutter2", create_basic_box(6, 11, 17))
-    non_prod1 = NamedPart("non_prod1", create_basic_box(4, 8, 16))
-    non_prod2 = NamedPart("non_prod2", create_basic_box(7, 13, 19))
+    leader = create_box(10, 20, 30)
+    follower1 = NamedPart("follower1", create_box(5, 15, 25))
+    follower2 = NamedPart("follower2", create_box(8, 12, 18))
+    cutter1 = NamedPart("cutter1", create_box(3, 9, 21))
+    cutter2 = NamedPart("cutter2", create_box(6, 11, 17))
+    non_prod1 = NamedPart("non_prod1", create_box(4, 8, 16))
+    non_prod2 = NamedPart("non_prod2", create_box(7, 13, 19))
 
     # Create group with all component types
     group = LeaderFollowersCuttersPart(
