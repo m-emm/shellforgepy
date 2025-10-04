@@ -220,7 +220,7 @@ def arrange_and_export_parts(
     # Filter out parts that should be skipped in production
     if prod:
         parts_list = [p for p in parts_list if not p.get("skip_in_production", False)]
-        print("Arranging for production")
+        print(f"Arranging for production; skipped {len(parts) - len(parts_list)} parts")
     else:
         print("Leaving parts where they are")
 

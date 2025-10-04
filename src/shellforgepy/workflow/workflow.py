@@ -543,10 +543,22 @@ def run_workflow(args: argparse.Namespace) -> int:
             _logger.warning("Preview generation failed: %s", exc)
 
     created_files = _list_created_files(run_directory)
+    run_info = {}
     if created_files:
         _logger.info("Artifacts created in run directory:")
         for file_path in created_files:
             _logger.info("  %s", file_path)
+
+            if ".gcode" in file_path.suffix.lower():
+                with file_path.open("r", encoding="utf-8", errors="ignore") as handle:
+                    for line in handle:
+                        if "filament used" in line:
+                            run_info["filament_used"] = line.strip()
+                        elif "estimated printing time" in line:
+                            run_info["print_time"] = line.strip()
+
+        for k, v in run_info.items():
+            _logger.info("  %s: %s", k, v)
 
     if args.upload:
         gcode_files = sorted(run_directory.glob("*.gcode"))

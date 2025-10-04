@@ -17,6 +17,53 @@ def get_adapter_id():
     return "cadquery"
 
 
+def _as_shape(obj: object) -> cq.Shape:
+    """Accept Workplane/Assembly/Shape and return a cq.Shape (Compound or Solid)."""
+    if isinstance(obj, cq.Workplane):
+        return obj.val()  # underlying Shape
+    if isinstance(obj, cq.Assembly):
+        return obj.toCompound()  # flatten assembly tree to a Compound
+    if isinstance(obj, cq.Shape):
+        return obj
+    return obj
+
+
+def extract_solids(obj) -> list[cq.Solid]:
+    """Return all Solids contained in obj (Solid, Compound, Assembly, Workplane)."""
+    shape = _as_shape(obj)
+    if isinstance(shape, cq.Solid):
+        return [shape]
+    if isinstance(shape, cq.Compound):
+        # .Solids() yields cq.Solid objects
+        return list(shape.Solids())
+    return [obj]
+
+
+def normalize_to_solid(obj) -> cq.Solid | cq.Shape:
+    """
+    - If obj is a Solid: returns a cleaned Solid.
+    - If obj is a Compound with 1 solid: returns that Solid (cleaned).
+    - If obj has multiple solids: boolean-union them into one Solid and return it.
+    """
+
+    if not isinstance(obj, (cq.Shape, cq.Workplane, cq.Assembly)):
+        _logger.info(f"normalize_to_solid: not a geometry object: {type(obj)}")
+        return obj  # not a geometry object we know how to handle
+    else:
+        _logger.info(f"normalize_to_solid: processing object of type {type(obj)}")
+    solids = extract_solids(obj)
+    if not solids:
+        raise ValueError("No solids found in object. (Is it only faces/shells?)")
+
+    if len(solids) == 1:
+        return solids[0]
+
+    acc = solids[0]
+    for s in solids[1:]:
+        acc = acc.fuse(s)
+    return acc.clean()
+
+
 def _as_cq_vector(value) -> cq.Vector:
     if isinstance(value, cq.Vector):
         return value
@@ -510,16 +557,18 @@ def export_solid_to_stl(
 
 def copy_part(part):
     """Create a copy of a CadQuery part."""
+    part = normalize_to_solid(part)  # get rid of assemblies, etc
+
     return part.copy()
 
 
 def translate_part(part, vector):
     """Translate a CadQuery part by the given vector."""
-    _logger.info(f"Translating part by vector {vector}, part={part} , id={id(part)}")
+    _logger.debug(f"Translating part by vector {vector}, part={part} , id={id(part)}")
     vec = cq.Vector(*map(float, vector))
 
     retval = part.translate(vec)
-    _logger.info(f"Translated part id={id(retval)}")
+    _logger.debug(f"Translated part id={id(retval)}")
     return retval
 
 
@@ -547,7 +596,9 @@ def mirror_part(part, normal=(1, 0, 0), point=(0, 0, 0)):
     """Mirror a CadQuery part across a plane defined by normal and point."""
     normal_vec = cq.Vector(*normal)
     point_vec = cq.Vector(*point)
-    _logger.info(f"Mirroring part across mirrorPlane {normal}, basePointVector {point}")
+    _logger.debug(
+        f"Mirroring part across mirrorPlane {normal}, basePointVector {point}"
+    )
     mirror_retval = part.mirror(mirrorPlane=normal_vec, basePointVector=point_vec)
     if hasattr(part, "reconstruct"):
         return part.reconstruct(mirror_retval)
@@ -557,17 +608,17 @@ def mirror_part(part, normal=(1, 0, 0), point=(0, 0, 0)):
 
 def translate_part_native(part, *args):
     """Translate using native CadQuery signature. Used by composite objects."""
-    _logger.info(
+    _logger.debug(
         f"Native translating part by vector {args}, part={part} , id={id(part)}"
     )
     translate_retval = part.translate(*args)
     if hasattr(part, "reconstruct"):
-        _logger.info(
+        _logger.debug(
             f"Reconstructing part {part} , id={id(part)}, translated id={id(translate_retval)}"
         )
         return part.reconstruct(translate_retval)
     else:
-        _logger.info(
+        _logger.debug(
             f"Not reconstructing part {part} , id={id(part)}, translated id={id(translate_retval)}"
         )
         return translate_retval
@@ -627,70 +678,10 @@ def create_filleted_box(
     Returns:
         CadQuery Shape (solid) with the filleted box
     """
-    from shellforgepy.construct.alignment import Alignment
 
-    # Create the basic box workplane
-    box_wp = cq.Workplane("XY").box(length, width, height)
+    box = create_basic_box(length, width, height)
 
-    # If no specific alignment is given, fillet all edges
-    if fillets_at is None and no_fillets_at is None:
-        try:
-            return box_wp.edges().fillet(fillet_radius).val()
-        except Exception:
-            return box_wp.val()
-
-    # If empty fillets_at list, return unfilleted box
-    if fillets_at is not None and len(fillets_at) == 0:
-        return box_wp.val()
-
-    try:
-        result_wp = box_wp
-
-        # Handle fillets_at case - only fillet specified alignments
-        if fillets_at is not None:
-            for alignment in fillets_at:
-                try:
-                    if alignment == Alignment.TOP:
-                        # Fillet edges on the top face (+Z direction)
-                        result_wp = result_wp.faces("+Z").edges().fillet(fillet_radius)
-                    elif alignment == Alignment.BOTTOM:
-                        # Fillet edges on the bottom face (-Z direction)
-                        result_wp = result_wp.faces("-Z").edges().fillet(fillet_radius)
-                    elif alignment == Alignment.LEFT:
-                        # Fillet edges on the left face (-X direction)
-                        result_wp = result_wp.faces("-X").edges().fillet(fillet_radius)
-                    elif alignment == Alignment.RIGHT:
-                        # Fillet edges on the right face (+X direction)
-                        result_wp = result_wp.faces("+X").edges().fillet(fillet_radius)
-                    elif alignment == Alignment.FRONT:
-                        # Fillet edges on the front face (-Y direction)
-                        result_wp = result_wp.faces("-Y").edges().fillet(fillet_radius)
-                    elif alignment == Alignment.BACK:
-                        # Fillet edges on the back face (+Y direction)
-                        result_wp = result_wp.faces("+Y").edges().fillet(fillet_radius)
-                except Exception:
-                    # Continue if this alignment fails
-                    continue
-
-            return result_wp.val()
-
-        # Handle no_fillets_at case - this is complex with CadQuery
-        # For now, just do all edges (can be improved later)
-        elif no_fillets_at is not None:
-            # For simplicity, fillet all edges for now
-            # TODO: Implement proper exclusion logic
-            try:
-                return box_wp.edges().fillet(fillet_radius).val()
-            except Exception:
-                return box_wp.val()
-
-        else:
-            # Default case - fillet all edges
-            return box_wp.edges().fillet(fillet_radius).val()
-
-    except Exception:
-        # If all filleting fails, return the original box
-        return box_wp.val()
+    return apply_fillet_by_alignment(box, fillet_radius, fillets_at, no_fillets_at)
 
 
 def get_volume(solid):

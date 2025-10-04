@@ -1,7 +1,6 @@
 from typing import Optional
 
 import numpy as np
-from shellforgepy.construct.alignment import Alignment
 
 # FreeCAD imports will be available when run in FreeCAD environment
 try:
@@ -652,42 +651,10 @@ def get_volume(solid):
 def create_filleted_box(
     length, width, height, fillet_radius, fillets_at=None, no_fillets_at=None
 ):
-    box = Part.makeBox(length, width, height)
 
-    def edge_is_at(v0, v1, alignment):
-        if alignment == Alignment.TOP:
-            return (abs(v0.z - height) < 1e-3) and (abs(v1.z - height) < 1e-3)
-        elif alignment == Alignment.BOTTOM:
-            return (abs(v0.z) < 1e-3) and (abs(v1.z) < 1e-3)
-        elif alignment == Alignment.LEFT:
-            return (abs(v0.x) < 1e-3) and (abs(v1.x) < 1e-3)
-        elif alignment == Alignment.RIGHT:
-            return (abs(v0.x - length) < 1e-3) and (abs(v1.x - length) < 1e-3)
-        elif alignment == Alignment.FRONT:
-            return (abs(v0.y) < 1e-3) and (abs(v1.y) < 1e-3)
-        elif alignment == Alignment.BACK:
-            return (abs(v0.y - width) < 1e-3) and (abs(v1.y - width) < 1e-3)
-        else:
-            raise Exception(f"Invalid alignment: {alignment}")
+    box = create_basic_box(length, width, height)
 
-    def edge_is_at_one_of(v0, v1, alignments):
-        for alignment in alignments:
-            if edge_is_at(v0, v1, alignment):
-                return True
-        return False
-
-    edges = []
-    for i in box.Edges:
-        v0 = i.Vertexes[0].Point
-        v1 = i.Vertexes[1].Point
-
-        if fillets_at is None or edge_is_at_one_of(v0, v1, fillets_at):
-            if no_fillets_at is None or not edge_is_at_one_of(v0, v1, no_fillets_at):
-                edges.append(i)
-
-    box = box.makeFillet(fillet_radius, edges)
-
-    return box
+    return apply_fillet_by_alignment(box, fillet_radius, fillets_at, no_fillets_at)
 
 
 def filter_edges_by_z_position(solid, z_threshold, below=True):
