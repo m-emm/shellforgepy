@@ -411,7 +411,7 @@ class MeshPartition:
             [self.mesh.vertices[v] for v in corner_vertices]
         )
 
-        print(f"There are {len(corner_vertices)} corner vertices.")
+        _logger.info(f"There are {len(corner_vertices)} corner vertices.")
 
         connector_hints = [
             hint
@@ -479,7 +479,7 @@ class MeshPartition:
                     )
                 )
                 if not far_enough_from_corners:
-                    print(f"Skipping hint {hint_index} due to corner proximity.")
+                    _logger.info(f"Skipping hint {hint_index} due to corner proximity.")
 
                 if far_enough_from_others and far_enough_from_corners:
                     filtered_hints.append((hint_index, hint))
@@ -659,7 +659,7 @@ class MeshPartition:
             area = sum(mesh.triangle_area(mesh.faces[f]) for f in masked_faces)
 
             if verbose:
-                print(
+                _logger.info(
                     f"Cap angle: {current_angle:.4f}, area: {area:.4f}, target: {target_area:.4f}"
                 )
 
@@ -675,12 +675,14 @@ class MeshPartition:
         initial_faces_A = set(best_masked_faces)
         initial_faces_B = region_set - initial_faces_A
 
-        print(f"Cap split with {len(initial_faces_A)} vs {len(initial_faces_B)} faces.")
+        _logger.info(
+            f"Cap split with {len(initial_faces_A)} vs {len(initial_faces_B)} faces."
+        )
         try:
             walk = self.extract_boundary_walk_between_face_sets(
                 self.mesh, initial_faces_A, initial_faces_B
             )
-            print(f"Extracted boundary walk: {walk}")
+            _logger.info(f"Extracted boundary walk: {walk}")
             tightened_A, tightened_B = self.tighten_boundary_walk(
                 self.mesh,
                 walk,
@@ -688,10 +690,10 @@ class MeshPartition:
                 shorten_factor=0.99,
                 allowed_faces=initial_faces_A | initial_faces_B,
             )
-            print(f"Tightened A: {tightened_A}\nTightened B: {tightened_B}")
+            _logger.info(f"Tightened A: {tightened_A}\nTightened B: {tightened_B}")
         except ValueError as e:
             if verbose:
-                print(f"Skipping boundary tightening: {e}")
+                _logger.info(f"Skipping boundary tightening: {e}")
             tightened_A = initial_faces_A
             tightened_B = initial_faces_B
 
@@ -704,14 +706,14 @@ class MeshPartition:
         if verbose:
             a1 = sum(mesh.triangle_area(mesh.faces[f]) for f in tightened_A)
             a2 = sum(mesh.triangle_area(mesh.faces[f]) for f in tightened_B)
-            print(
+            _logger.info(
                 f"Split region {region_id} → [{region_id}, {new_region_id}] (tightened) | "
                 f"area A: {a1:.2f}, B: {a2:.2f}, target: {target_area:.2f}"
             )
 
         region_sizes = Counter(final_face_to_region.values())
 
-        print(f"Final region sizes: {region_sizes}")
+        _logger.info(f"Final region sizes: {region_sizes}")
 
         return MeshPartition(mesh, final_face_to_region)
 
@@ -900,7 +902,7 @@ class MeshPartition:
 
             area = sum(self.mesh.triangle_area(self.mesh.faces[f]) for f in visited)
             if verbose:
-                print(f" t={t:.4f}  areaA={area:.1f}  target={target_area:.1f}")
+                _logger.info(f" t={t:.4f}  areaA={area:.1f}  target={target_area:.1f}")
 
             if abs(area - target_area) < 1e-3 * target_area:
                 best_assign = visited
@@ -917,7 +919,7 @@ class MeshPartition:
             new_map[f] = new_id
 
         if verbose:
-            print(
+            _logger.info(
                 f" New region {new_id}: {len(best_assign)} faces vs {len(region_faces)-len(best_assign)}"
             )
 
@@ -1025,14 +1027,14 @@ class MeshPartition:
                 self.mesh.triangle_area(self.mesh.faces[region_to_global_face[i]])
                 for i in best_split[1]
             )
-            print(
+            _logger.info(
                 f"Split region {region_id} → [{region_id}, {new_region_id}] | "
                 f"area A: {a1:.2f}, B: {a2:.2f}, diff: {best_diff:.4f}"
             )
 
         region_sizes = Counter(new_face_to_region.values())
 
-        print(f"Final region sizes: {region_sizes}")
+        _logger.info(f"Final region sizes: {region_sizes}")
 
         return MeshPartition(self.mesh, new_face_to_region)
 
@@ -1067,7 +1069,7 @@ class MeshPartition:
             if len(owners) == 2 and {owners[0][0], owners[1][0]} == {"A", "B"}:
                 boundary_edges.append(edge)
 
-        print(f"Boundary edges: {boundary_edges}")
+        _logger.info(f"Boundary edges: {boundary_edges}")
 
         # Build adjacency graph of boundary edges
         vertex_adj = defaultdict(list)
@@ -1078,7 +1080,7 @@ class MeshPartition:
         # Find endpoints (degree 1 vertices)
         endpoints = [v for v, neighbors in vertex_adj.items() if len(neighbors) == 1]
         if len(endpoints) == 0:
-            print(f"Boundary is closed loop")
+            _logger.info(f"Boundary is closed loop")
             start = next(iter(vertex_adj))  # just pick any vertex
         elif len(endpoints) > 2:
             raise ValueError(
@@ -1126,7 +1128,7 @@ class MeshPartition:
                 edge_graph, source=start, target=end, weight="weight"
             )
         except nx.NetworkXNoPath:
-            print(
+            _logger.info(
                 f"No path found between {start} and {end}. Returning original segment."
             )
             raise
@@ -1186,7 +1188,7 @@ class MeshPartition:
 
         original_walk_length = walk_length(vertex_walk)
         is_closed = vertex_walk[0] == vertex_walk[-1]
-        print(
+        _logger.info(
             f"Original vertex walk: {vertex_walk}, length: {original_walk_length}, closed: {is_closed}"
         )
         n = len(vertex_walk)
@@ -1221,7 +1223,7 @@ class MeshPartition:
 
             vertex_walk = new_walk
 
-        print(f"Vertex walk after: {vertex_walk}")
+        _logger.info(f"Vertex walk after: {vertex_walk}")
         # --- Extract edge set for forbidden boundary ---
         forbidden_edges = {
             tuple(sorted((vertex_walk[i], vertex_walk[i + 1])))
@@ -1291,11 +1293,13 @@ class MeshPartition:
             region_a | region_b == allowed_faces
         ), "Flood fill did not cover all allowed faces."
 
-        print(
+        _logger.info(
             f"Tightened walk length: {walk_length(vertex_walk)}, original: {original_walk_length}"
         )
-        print(f"Tightened vertex walk: {vertex_walk}")
-        print(f"Region A: {len(region_a)} faces, Region B: {len(region_b)} faces")
+        _logger.info(f"Tightened vertex walk: {vertex_walk}")
+        _logger.info(
+            f"Region A: {len(region_a)} faces, Region B: {len(region_b)} faces"
+        )
 
         # Use lexicographic heuristic for naming A vs B
         if min(region_a) < min(region_b):
@@ -1422,15 +1426,17 @@ class MeshPartition:
         initial_faces_A = {region_to_global_face[i] for i in best_split[0]}
         initial_faces_B = {region_to_global_face[i] for i in best_split[1]}
 
-        print(f"Best split at x={0.5 * (low + high):.4f} with diff={best_diff:.4f}")
-        print(f"Faces A: {initial_faces_A},\nFaces B: {initial_faces_B}")
+        _logger.info(
+            f"Best split at x={0.5 * (low + high):.4f} with diff={best_diff:.4f}"
+        )
+        _logger.info(f"Faces A: {initial_faces_A},\nFaces B: {initial_faces_B}")
 
         # Step 4: Tighten the boundary between them
         try:
             walk = self.extract_boundary_walk_between_face_sets(
                 self.mesh, initial_faces_A, initial_faces_B
             )
-            print(f"Extracted boundary walk: {walk}")
+            _logger.info(f"Extracted boundary walk: {walk}")
             tightened_A, tightened_B = self.tighten_boundary_walk(
                 self.mesh,
                 walk,
@@ -1438,9 +1444,9 @@ class MeshPartition:
                 segment_length=4,
                 shorten_factor=0.9,
             )
-            print(f"Tightened A: {tightened_A},\nTightened B: {tightened_B}")
+            _logger.info(f"Tightened A: {tightened_A},\nTightened B: {tightened_B}")
         except ValueError as e:
-            print(f"Skipping boundary tightening: {e}")
+            _logger.info(f"Skipping boundary tightening: {e}")
 
             tightened_A = initial_faces_A
             tightened_B = initial_faces_B
@@ -1455,14 +1461,14 @@ class MeshPartition:
         if verbose:
             a1 = sum(self.mesh.triangle_area(self.mesh.faces[f]) for f in tightened_A)
             a2 = sum(self.mesh.triangle_area(self.mesh.faces[f]) for f in tightened_B)
-            print(
+            _logger.info(
                 f"Split region {region_id} → [{region_id}, {new_region_id}] (tightened) | "
                 f"area A: {a1:.2f}, B: {a2:.2f}, diff: {best_diff:.4f}"
             )
 
         region_sizes = Counter(final_face_to_region.values())
 
-        print(f"Final region sizes: {region_sizes}")
+        _logger.info(f"Final region sizes: {region_sizes}")
 
         return MeshPartition(self.mesh, final_face_to_region)
 
@@ -1720,7 +1726,7 @@ class MeshPartition:
             regions = self.find_regions_of_vertex_by_index(center_idx)
 
             for region_id in regions:
-                print(
+                _logger.info(
                     f"Drilling hole at vertex index {center_idx} with label '{center_vertex_label}' into region {region_id}."
                 )
                 center_point = self.mesh.vertices[center_idx]
@@ -1733,7 +1739,7 @@ class MeshPartition:
                     and self.face_to_region_map.get(idx) == region_id
                 ]
                 if not adjacent_faces:
-                    print(
+                    _logger.info(
                         f"No adjacent faces found for vertex {center_idx} in region {region_id}."
                     )
                     continue
@@ -1762,7 +1768,7 @@ class MeshPartition:
                     )
                 )
 
-                print(
+                _logger.info(
                     f"Current partition has now {len(current_partition.get_regions())} regions."
                 )
 

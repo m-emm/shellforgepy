@@ -112,7 +112,7 @@ def resolve_font(
     else:
         resolved_family = resolved_family or Path(resolved_path).stem.replace("_", " ")
 
-    _logger.info("Resolved font: family=%s path=%s", resolved_family, resolved_path)
+    _logger.debug("Resolved font: family=%s path=%s", resolved_family, resolved_path)
     return FontSpec(family=resolved_family, path=resolved_path)
 
 

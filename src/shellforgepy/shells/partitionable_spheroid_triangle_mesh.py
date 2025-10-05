@@ -1071,7 +1071,7 @@ class PartitionableSpheroidTriangleMesh:
                     new_vertices.append(ipt)
                     new_labels.append(f"{labels_orig[edge[0]]}__{labels_orig[edge[1]]}")
                     next_index += 1
-                    print(
+                    _logger.debug(
                         f"Inserted cutpoint {ipt} on edge {edge} of triangle {tri_idx}"
                     )
                     break  # only one insertion per edge

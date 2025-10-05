@@ -161,3 +161,28 @@ __all__ = [
     "apply_fillet_by_alignment",
     "get_adapter_id",
 ]
+
+
+LOGGING_FORMAT = "%(asctime)s - %(name)-60s - %(levelname)-8s - %(message)s"
+
+
+def _setup_logging():
+    import os
+    import sys
+
+    # Allow disabling logging setup via environment variable
+
+    if not os.environ.get("SHELLFORGEPY_NO_LOGGING_INIT", False):
+        import logging
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format=LOGGING_FORMAT,
+        )
+
+        # send all logs to stdout, not stderr
+        logging.getLogger().handlers[0].stream = sys.stdout
+        logging.getLogger("shellforgepy").setLevel(logging.INFO)
+
+
+_setup_logging()

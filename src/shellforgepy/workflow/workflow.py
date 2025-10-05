@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
+from shellforgepy.simple import LOGGING_FORMAT
 from shellforgepy.slicing.orca_slicer_settings_generator import generate_settings
 from shellforgepy.workflow import upload_to_printer
 from shellforgepy.workflow.preview_generator import render_stl_to_png
@@ -95,10 +96,8 @@ class SubprocessResult:
 def configure_logging(verbose: bool = False) -> None:
     """Configure logger for CLI usage."""
 
-    format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-
     level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(level=level, format=format)
+    logging.basicConfig(level=level, format=LOGGING_FORMAT)
 
 
 def get_config_path(override: Optional[str]) -> Path:
@@ -222,7 +221,7 @@ def execute_subprocess(
             for raw_line in iter(pipe.readline, ""):
                 line = raw_line.rstrip()
                 accumulator.append(line)
-                _logger.log(level, "%s", line)
+                print(line)
         finally:
             pipe.close()
 

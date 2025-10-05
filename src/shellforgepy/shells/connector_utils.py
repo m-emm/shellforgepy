@@ -154,7 +154,9 @@ def merge_collinear_connectors(
                     assert np.dot(original_edge_vec, new_hint.edge_vector) > 0
 
             merged_hints.append(new_hint)
-    print(f"Merged into {len(merged_hints)} connector hints (from {original_count})")
+    _logger.debug(
+        f"Merged into {len(merged_hints)} connector hints (from {original_count})"
+    )
 
     return merged_hints
 

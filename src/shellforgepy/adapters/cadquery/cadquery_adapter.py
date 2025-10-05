@@ -48,10 +48,10 @@ def normalize_to_solid(obj) -> cq.Solid | cq.Shape:
     """
 
     if not isinstance(obj, (cq.Shape, cq.Workplane, cq.Assembly)):
-        _logger.info(f"normalize_to_solid: not a geometry object: {type(obj)}")
+        _logger.debug(f"normalize_to_solid: not a geometry object: {type(obj)}")
         return obj  # not a geometry object we know how to handle
     else:
-        _logger.info(f"normalize_to_solid: processing object of type {type(obj)}")
+        _logger.debug(f"normalize_to_solid: processing object of type {type(obj)}")
     solids = extract_solids(obj)
     if not solids:
         raise ValueError("No solids found in object. (Is it only faces/shells?)")
