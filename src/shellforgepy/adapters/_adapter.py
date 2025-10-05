@@ -19,9 +19,6 @@ from shellforgepy.adapters._adapter_bridge import (
     create_filleted_box as adapter_create_filleted_box,
 )
 from shellforgepy.adapters._adapter_bridge import (
-    create_hex_prism as adapter_create_hex_prism,
-)
-from shellforgepy.adapters._adapter_bridge import (
     create_solid_from_traditional_face_vertex_maps as adapter_create_solid_from_traditional_face_vertex_maps,
 )
 from shellforgepy.adapters._adapter_bridge import create_sphere as adapter_create_sphere
@@ -65,6 +62,7 @@ from shellforgepy.adapters._adapter_bridge import (
 """Adapter functions that wrap the selected CAD backend. 
 These functions should not contain any backend-specific code. They document the  api that users of shellforgepy should use, independent of the CAD backend.
 """
+
 
 def create_box(length, width, height, origin=(0.0, 0.0, 0.0)):
     """Create a basic box solid.
@@ -276,11 +274,6 @@ def fuse_parts(part1, part2):
 def cut_parts(part1, part2):
     """Cut part2 from part1."""
     return adapter_cut_parts(part1, part2)
-
-
-def create_hex_prism(diameter, height, origin=(0, 0, 0)):
-    """Create a hexagonal prism."""
-    return adapter_create_hex_prism(diameter, height, origin=origin)
 
 
 def create_filleted_box(

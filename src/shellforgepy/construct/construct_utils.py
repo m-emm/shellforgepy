@@ -194,6 +194,11 @@ def triangle_edges(tri: Triangle) -> List[Edge]:
     return [(tri[i], tri[(i + 1) % 3]) for i in range(3)]
 
 
+def polygon_edges(poly: List[int]) -> List[Edge]:
+    n = len(poly)
+    return [(poly[i], poly[(i + 1) % n]) for i in range(n)]
+
+
 def normalize_edge(a: int, b: int) -> Edge:
     return (a, b) if a < b else (b, a)
 

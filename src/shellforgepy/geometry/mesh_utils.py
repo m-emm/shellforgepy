@@ -5,11 +5,13 @@ Minimal binary STL writer from plain Python lists.
 - triangles: list[tuple[int, int, int]]  (indices into vertices)
 """
 
+from collections import defaultdict, deque
 from math import sqrt
 from struct import pack
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 import numpy as np
+from shellforgepy.construct.construct_utils import normalize_edge, polygon_edges
 
 Vec3 = Tuple[float, float, float]
 
@@ -502,3 +504,128 @@ def validate_and_fix_mesh_segment(vertices_start, vertices_end, tolerance=1e-6):
         )
 
     return corrected_vertices_start, corrected_vertices_end, twist_info
+
+
+def convert_to_traditional_face_vertex_maps(vertices, faces):
+    """
+    Convert vertices and faces to traditional face-vertex maps.
+    The resulting maps are JSON-friendly, they use string keys.
+
+    Args:
+        vertices: List of (x, y, z) vertex tuples
+        faces: List of (i0, i1, i2..., iN) index tuples referencing vertices
+
+    Returns:
+        dict: {
+            'vertexes': {vertex_index: (x, y, z), ...},
+            'faces': {face_index: (i0, i1, i2), ...}
+        }
+    """
+    vertex_map = {str(i): tuple(v) for i, v in enumerate(vertices)}
+    face_map = {str(i): tuple(face) for i, face in enumerate(faces)}
+
+    return {"vertexes": vertex_map, "faces": face_map}
+
+
+def calc_edge_to_polygon_map(polygons):
+    edge_to_tri = defaultdict(list)
+
+    for i, tri in enumerate(polygons):
+        for edge in polygon_edges(tri):
+            edge_to_tri[normalize_edge(*edge)].append(i)
+
+    return edge_to_tri
+
+
+def propagate_consistent_winding(polygons):
+    """
+    Propagate consistent winding order across all polygons in a mesh using breadth-first traversal.
+
+    This function ensures that all polygons in a mesh have consistent vertex winding order
+    (all clockwise or all counter-clockwise) by propagating the winding direction from a
+    starting polygon to its neighbors through shared edges. This is essential for ensuring
+    consistent surface normal directions in 3D meshes.
+
+    Algorithm Overview:
+    1. Start with polygon 0 as the reference winding direction
+    2. Use breadth-first search to traverse all connected polygons
+    3. For each shared edge between current and neighbor polygons:
+       - If the edge appears in the same direction in both polygons, flip the neighbor
+       - If the edge appears in opposite directions, keep the neighbor unchanged
+    4. Continue until all connected polygons are processed
+
+    Args:
+        polygons (array-like): Collection of polygons, where each polygon is represented
+                              as a sequence of 3 vertex indices [v0, v1, v2]. The input
+                              can be a numpy array, list of lists, or any nested sequence.
+
+    Returns:
+        numpy.ndarray: Array of polygons with consistent winding order. The output has
+                      the same shape as the input but with corrected vertex ordering.
+                      polygon 0 retains its original winding direction, and all other
+                      polygons are adjusted to maintain consistency.
+
+    Implementation Details:
+        - Uses an edge-to-polygon mapping for efficient neighbor lookup
+        - Employs breadth-first search to ensure systematic propagation
+        - Handles disconnected mesh components by starting from polygon 0
+        - Preserves the original winding direction of the first polygon
+        - Shared edges must appear in opposite directions for consistent winding
+
+    Edge Direction Logic:
+        For two polygons sharing an edge (a,b):
+        - If both polygons traverse the edge as (a→b), they have the same winding
+        - If one traverses (a→b) and the other (b→a), they have opposite winding
+        - Consistent winding requires opposite edge directions between neighbors
+
+    Example:
+        >>> polygons = [[0, 1, 2], [1, 3, 2], [2, 3, 4]]
+        >>> consistent = propagate_consistent_winding(polygons)
+        >>> # Result ensures all polygons have consistent surface normal direction
+
+    Note:
+        This function assumes the mesh is manifold (each edge shared by at most 2 polygons).
+        For non-manifold meshes, the behavior is undefined and may not produce the expected
+        consistent winding across all components.
+    """
+    polygons = [list(tri) for tri in polygons]
+    edge_to_tri = calc_edge_to_polygon_map(polygons)
+
+    visited = set()
+    queue = deque([0])  # Start with polygon 0
+    visited.add(0)
+
+    while queue:
+        current = queue.popleft()
+        current_polygon = polygons[current]
+
+        n = len(current_polygon)
+        if n < 3:
+            raise ValueError("Polygons must have at least 3 vertices")
+        for i in range(n):
+            a, b = current_polygon[i], current_polygon[(i + 1) % n]
+            edge_key = normalize_edge(a, b)
+            neighbors = edge_to_tri[edge_key]
+
+            for neighbor in neighbors:
+                if neighbor == current or neighbor in visited:
+                    continue
+
+                neighbor_polygon = polygons[neighbor]
+
+                # Find how this edge appears in neighbor
+                n_neighbor = len(neighbor_polygon)
+                if n_neighbor < 3:
+                    raise ValueError("Polygons must have at least 3 vertices")
+                for j in range(n_neighbor):
+                    na, nb = neighbor_polygon[j], neighbor_polygon[(j + 1) % n_neighbor]
+                    if {a, b} == {na, nb}:
+                        if (a, b) == (na, nb):
+                            # Same direction: flip neighbor
+                            polygons[neighbor] = neighbor_polygon[::-1]
+                        break
+
+                visited.add(neighbor)
+                queue.append(neighbor)
+
+    return [list(v) for v in polygons]

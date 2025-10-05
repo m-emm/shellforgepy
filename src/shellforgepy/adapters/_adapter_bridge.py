@@ -1,4 +1,3 @@
-from httpx import get
 from shellforgepy.adapters.adapter_chooser import get_cad_adapter
 
 selected_adapter = get_cad_adapter()
@@ -34,7 +33,6 @@ get_bounding_box_size = selected_adapter.get_bounding_box_size
 get_vertices = selected_adapter.get_vertices
 create_extruded_polygon = selected_adapter.create_extruded_polygon
 copy_part = selected_adapter.copy_part
-create_hex_prism = selected_adapter.create_hex_prism
 get_vertex_coordinates = selected_adapter.get_vertex_coordinates
 get_vertex_coordinates_np = selected_adapter.get_vertex_coordinates_np
 __all__ = [
@@ -46,7 +44,6 @@ __all__ = [
     "create_cylinder",
     "create_extruded_polygon",
     "create_filleted_box",
-    "create_hex_prism",
     "create_solid_from_traditional_face_vertex_maps",
     "create_sphere",
     "create_text_object",

@@ -6,8 +6,13 @@ from shellforgepy.geometry.mesh_builders import (
     create_icosahedron_geometry,
     create_tetrahedron_geometry,
 )
+from shellforgepy.geometry.mesh_utils import convert_to_traditional_face_vertex_maps
 from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
+)
+from shellforgepy.simple import (
+    create_solid_from_traditional_face_vertex_maps,
+    get_vertex_coordinates,
 )
 
 
@@ -88,3 +93,78 @@ def test_create_fibonacci_sphere_geometry():
     )  # All points should be on the unit sphere
 
     _ = PartitionableSpheroidTriangleMesh(points, faces)
+
+
+def test_tetrahedron_traditional_face_vertex_maps():
+    points, faces = create_tetrahedron_geometry(1.0)
+
+    face_vertex_maps = convert_to_traditional_face_vertex_maps(points, faces)
+
+    solid = create_solid_from_traditional_face_vertex_maps(face_vertex_maps)
+
+    vertices = get_vertex_coordinates(solid)
+
+    assert len(vertices) == 4
+
+    for original in points:
+        assert any(np.allclose(original, v) for v in vertices)
+
+
+def test_dodecahedron_traditional_face_vertex_maps():
+    points, faces = create_dodecahedron_geometry(1.0)
+
+    face_vertex_maps = convert_to_traditional_face_vertex_maps(points, faces)
+
+    solid = create_solid_from_traditional_face_vertex_maps(face_vertex_maps)
+
+    vertices = get_vertex_coordinates(solid)
+
+    assert len(vertices) == 20
+
+    for original in points:
+        assert any(np.allclose(original, v) for v in vertices)
+
+
+def test_icosahedron_traditional_face_vertex_maps():
+    points, faces = create_icosahedron_geometry(1.0)
+
+    face_vertex_maps = convert_to_traditional_face_vertex_maps(points, faces)
+
+    solid = create_solid_from_traditional_face_vertex_maps(face_vertex_maps)
+
+    vertices = get_vertex_coordinates(solid)
+
+    assert len(vertices) == 12
+
+    for original in points:
+        assert any(np.allclose(original, v) for v in vertices)
+
+
+def test_cube_traditional_face_vertex_maps():
+    points, faces = create_cube_geometry(1.0)
+
+    face_vertex_maps = convert_to_traditional_face_vertex_maps(points, faces)
+
+    solid = create_solid_from_traditional_face_vertex_maps(face_vertex_maps)
+
+    vertices = get_vertex_coordinates(solid)
+
+    assert len(vertices) == 8
+
+    for original in points:
+        assert any(np.allclose(original, v) for v in vertices)
+
+
+def test_fibonacci_sphere_traditional_face_vertex_maps():
+    points, faces = create_fibonacci_sphere_geometry(1.0, samples=100)
+
+    face_vertex_maps = convert_to_traditional_face_vertex_maps(points, faces)
+
+    solid = create_solid_from_traditional_face_vertex_maps(face_vertex_maps)
+
+    vertices = get_vertex_coordinates(solid)
+
+    assert len(vertices) == 100
+
+    for original in points:
+        assert any(np.allclose(original, v) for v in vertices)

@@ -32,13 +32,15 @@ def get_adapter_id():
 
 def create_solid_from_traditional_face_vertex_maps(maps):
     """
-    Create a solid from traditional face-vertex maps.
+    Create a FreeCAD solid from traditional face-vertex maps.
 
     Args:
     maps (dict): A dictionary containing vertexes and faces keys.
 
-    The vertexes key should map vertex indexes to 3-tuple coordinates.
-    The faces key should map face indexes to lists of vertex indexes.
+    The vertexes key must map vertex indexes to 3-tuple coordinates.
+    The faces key must map face indexes to lists of vertex indexes.
+    We use string keys preferrably for JSON compatibility, but int keys are also accepted.
+
 
     Example:
     A tetrahedron with vertices at (0, 0, 0), (1, 0, 0), (0, 1, 0), and (0, 0, 1).
@@ -57,14 +59,17 @@ def create_solid_from_traditional_face_vertex_maps(maps):
     Part.Shape: The solid shape, if successful.
     """
 
-    import Part
-    from FreeCAD import Base
-
     def vec_from_tuple(t):
         return Base.Vector(t[0], t[1], t[2])
 
     vertexes = maps["vertexes"]
+    if not isinstance(vertexes, dict):
+        raise ValueError("The vertexes map must be a dictionary")
+    vertexes = {int(k): tuple(v) for k, v in vertexes.items()}
     faces = maps["faces"]
+    if not isinstance(faces, dict):
+        raise ValueError("The faces map must be a dictionary")
+    faces = {int(k): list(v) for k, v in faces.items()}
 
     face_edges = set()
     for f in faces.values():
@@ -365,9 +370,10 @@ def create_text_object(
     text: str,
     size,
     thickness,
-    font_path=None,
+    font=None,
     *,
     padding=0.0,
+    font_path=None,
 ):
     """Create an extruded text solid using FreeCAD Draft.
 
@@ -387,6 +393,9 @@ def create_text_object(
         raise ValueError("Thickness must be positive")
     if padding < 0:
         raise ValueError("Padding cannot be negative")
+
+    if font_path is None:
+        font_path = font
 
     if font_path is None:
         font_path = "/Users/mege/Library/Fonts/lintsec.regular.ttf"

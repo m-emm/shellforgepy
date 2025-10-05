@@ -1,6 +1,10 @@
 import numpy as np
 import pytest
 
+# FreeCAD specific tests
+# Any tests which require direct FreeCAD imports should go into the tests/unit/adapters/freecad/ folder
+
+
 # Try to import FreeCAD and skip tests if not available
 try:
     from FreeCAD import Base

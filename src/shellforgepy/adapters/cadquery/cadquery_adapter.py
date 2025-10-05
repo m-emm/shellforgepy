@@ -333,27 +333,7 @@ def get_vertex_points(obj) -> list:
     return points
 
 
-def _normalize_vertex_map(vertexes):
-    """Normalize vertex data to a dictionary of int -> (x, y, z)."""
-    if isinstance(vertexes, dict):
-        return {int(k): tuple(v) for k, v in vertexes.items()}
-    elif isinstance(vertexes, (list, tuple)):
-        return {i: tuple(v) for i, v in enumerate(vertexes)}
-    else:
-        raise ValueError("Vertexes must be dict, list, or tuple")
-
-
-def _normalize_face_map(faces):
-    """Normalize face data to a list of vertex index lists."""
-    if isinstance(faces, dict):
-        return [list(face) for face in faces.values()]
-    elif isinstance(faces, (list, tuple)):
-        return [list(face) for face in faces]
-    else:
-        raise ValueError("Faces must be dict, list, or tuple")
-
-
-def _validate_closed_mesh(vertexes, faces) -> None:
+def _validate_closed_mesh(faces) -> None:
     edge_set = set()
     for face in faces:
         count = len(face)
@@ -374,36 +354,51 @@ def _validate_closed_mesh(vertexes, faces) -> None:
 def create_solid_from_traditional_face_vertex_maps(
     maps,
 ):
-    """Create a CadQuery solid from a face-vertex map.
+    """
+    Create a CadQuery solid from traditional face-vertex maps.
 
     Args:
-        maps: A mapping with ``"vertexes"`` and ``"faces"`` entries. The vertex
-            data may be provided as either a sequence (ordered by index) or a
-            mapping whose keys can be converted to integers. Each vertex value
-            is interpreted as an ``(x, y, z)`` coordinate triple. Face data can
-            likewise be a sequence or mapping of integer-convertible keys to a
-            sequence of vertex indices that define the perimeter of the face.
+    maps (dict): A dictionary containing vertexes and faces keys.
+
+    The vertexes key must map vertex indexes to 3-tuple coordinates.
+    The faces key must map face indexes to lists of vertex indexes.
+    We use string keys preferrably for JSON compatibility, but int keys are also accepted.
+
+    Example:
+    A tetrahedron with vertices at (0, 0, 0), (1, 0, 0), (0, 1, 0), and (0, 0, 1).
+    The faces are defined by the vertex indexes in a counter-clockwise order.
+    {
+        "faces": {"0": [0, 1, 2], "1": [0, 1, 3], "2": [0, 2, 3], "3": [1, 2, 3]},
+        "vertexes": {
+            "0": [0.0, 1.0, 0],
+            "1": [0.87, -0.5, 0],
+            "2": [-0.87, -0.5, 0],
+            "3": [0, 0, 1],
+        },
+    }
 
     Returns:
-        ``cadquery.Solid`` constructed from the supplied topology.
-
-    Raises:
-        KeyError: if required keys are missing.
-        ValueError: if the topology is invalid or does not describe a closed
-            volume.
+    Part.Shape: The solid shape, if successful.
     """
 
     if "vertexes" not in maps or "faces" not in maps:
         raise KeyError("maps must contain 'vertexes' and 'faces' entries")
 
-    vertex_lookup = _normalize_vertex_map(maps["vertexes"])  # type: ignore[arg-type]
-    face_list = _normalize_face_map(maps["faces"])  # type: ignore[arg-type]
+    vertexes = maps["vertexes"]
+    if not isinstance(vertexes, dict):
+        raise ValueError("The vertexes map must be a dictionary")
+    vertexes = {int(k): tuple(v) for k, v in vertexes.items()}
+    faces = maps["faces"]
+    if not isinstance(faces, dict):
+        raise ValueError("The faces map must be a dictionary")
+    faces = {int(k): list(v) for k, v in faces.items()}
+    face_list = list(faces.values())
 
-    _validate_closed_mesh(vertex_lookup, face_list)
+    _validate_closed_mesh(face_list)
 
     cq_faces: List[cq.Face] = []
     for face_indices in face_list:
-        points = [cq.Vector(*vertex_lookup[index]) for index in face_indices]
+        points = [cq.Vector(*vertexes[index]) for index in face_indices]
         wire = cq.Wire.makePolygon(points, close=True)
         cq_face = cq.Face.makeFromWires(wire)
         if cq_face is None or cq_face.isNull():
@@ -644,12 +639,6 @@ def fuse_parts(part1, part2):
 def cut_parts(part1, part2):
     """Cut part2 from part1."""
     return part1.cut(part2)
-
-
-def create_hex_prism(diameter, height, origin=(0, 0, 0)):
-    """Create a hexagonal prism."""
-    hex_prism = cq.Workplane("XY").polygon(6, diameter).extrude(height).val()
-    return translate_part(hex_prism, origin)
 
 
 def create_extruded_polygon(points, thickness):

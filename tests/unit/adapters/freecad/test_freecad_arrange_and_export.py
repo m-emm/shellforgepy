@@ -6,6 +6,10 @@ import pytest
 from shellforgepy.adapters._adapter import get_volume
 from shellforgepy.simple import *
 
+# FreeCAD specific tests
+# Any tests which require direct FreeCAD imports should go into the tests/unit/adapters/freecad/ folder
+
+
 try:
     import FreeCAD
 

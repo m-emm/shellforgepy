@@ -2,6 +2,9 @@ import numpy as np
 from shellforgepy.construct.named_part import NamedPart
 from shellforgepy.simple import create_box, get_bounding_box_center, rotate, translate
 
+# FreeCAD specific tests
+# Any tests which require direct FreeCAD imports should go into the tests/unit/adapters/freecad/ folder
+
 
 def test_debug_translation():
     """Debug what's happening with translations."""

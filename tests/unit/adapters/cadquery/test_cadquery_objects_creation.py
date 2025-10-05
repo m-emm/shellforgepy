@@ -1,6 +1,10 @@
 import numpy as np
 import pytest
 
+# CadQuery specific tests
+# Any tests which require direct CadQuery imports should go into the tests/unit/adapters/cadquery/ folder
+
+
 # Try to import cadquery and skip tests if not available
 try:
     import cadquery as cq

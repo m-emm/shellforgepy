@@ -1,3 +1,8 @@
+import logging
+
+_logger = logging.getLogger(__name__)
+
+
 def detect_cad_environment():
     """
     Automatically detect which CAD environment is available.
@@ -9,7 +14,11 @@ def detect_cad_environment():
     try:
         import cadquery
 
-        return "cadquery"
+        if hasattr(cadquery, "Shape"):
+            return "cadquery"
+        _logger.debug(
+            "cadquery module was importable but lacks expected API; trying FreeCAD",
+        )
     except ImportError:
         pass
 

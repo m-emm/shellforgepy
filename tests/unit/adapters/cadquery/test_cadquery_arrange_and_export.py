@@ -6,6 +6,10 @@ import pytest
 from shellforgepy.adapters._adapter import get_volume
 from shellforgepy.simple import *
 
+# CadQuery specific tests
+# Any tests which require direct CadQuery imports should go into the tests/unit/adapters/cadquery/ folder
+
+
 try:
     cadquery_available = True
 except ImportError:
