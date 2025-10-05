@@ -554,7 +554,7 @@ def translate_part(part, vector):
     # isinstance(x, NamedPart) or similar ARE FORBIDDEN here!
     # if something is needed like this, do it in reconstruct
 
-    _logger.info(f"Translating part by vector {vector}, part={part} , id={id(part)}")
+    _logger.debug(f"Translating part by vector {vector}, part={part} , id={id(part)}")
     vec = Base.Vector(vector[0], vector[1], vector[2])
 
     # FreeCAD modifies in-place, so create a copy first
@@ -629,7 +629,7 @@ def mirror_part(part, normal=(1, 0, 0), point=(0, 0, 0)):
 
 def translate_part_native(part, *args):
     """Translate using native method. Must use the underlying cad system such that it creates a new object, and passes it to the reconstruct method if available, or returns it outright."""
-    _logger.info(
+    _logger.debug(
         f"Native translating part by vector {args}, part={part} , id={id(part)}"
     )
 
@@ -639,12 +639,12 @@ def translate_part_native(part, *args):
     translated.translate(*args)
 
     if hasattr(part, "reconstruct"):
-        _logger.info(
+        _logger.debug(
             f"Reconstructing part {part} , id={id(part)}, translated id={id(translated)}"
         )
         return part.reconstruct(translated)
     else:
-        _logger.info(
+        _logger.debug(
             f"Not reconstructing part {part} , id={id(part)}, translated id={id(translated)}"
         )
         return translated

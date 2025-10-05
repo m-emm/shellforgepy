@@ -1,6 +1,7 @@
 import logging
 
 import numpy as np
+import pytest
 from shellforgepy.simple import (
     Alignment,
     align,
@@ -172,6 +173,59 @@ def test_chained_transformations_consistency():
     # They should all be at approximately the same position
     assert np.allclose(native_center, named_center, atol=1e-10)
     assert np.allclose(native_center, group_center, atol=1e-10)
+
+
+@pytest.mark.parametrize(
+    "alignment, axis, sign",
+    [
+        (Alignment.STACK_TOP, 2, 1),
+        (Alignment.STACK_BOTTOM, 2, -1),
+        (Alignment.STACK_RIGHT, 0, 1),
+        (Alignment.STACK_LEFT, 0, -1),
+    ],
+)
+def test_stack_alignment_positions_without_gap(alignment, axis, sign):
+    """Stacking without gap should butt faces exactly together along the axis."""
+
+    reference = create_box(10, 10, 10)
+    part = create_box(5, 5, 5)
+
+    stacked = align(part, reference, alignment)
+
+    ref_min, ref_max = get_bounding_box(reference)
+    stacked_min, stacked_max = get_bounding_box(stacked)
+
+    if sign > 0:
+        assert np.isclose(stacked_min[axis], ref_max[axis])
+    else:
+        assert np.isclose(stacked_max[axis], ref_min[axis])
+
+
+@pytest.mark.parametrize(
+    "alignment, axis, sign",
+    [
+        (Alignment.STACK_TOP, 2, 1),
+        (Alignment.STACK_BOTTOM, 2, -1),
+        (Alignment.STACK_RIGHT, 0, 1),
+        (Alignment.STACK_LEFT, 0, -1),
+    ],
+)
+def test_stack_alignment_positions_with_gap(alignment, axis, sign):
+    """Stacking with a gap should offset by the given distance along the stack axis."""
+
+    reference = create_box(10, 10, 10)
+    part = create_box(5, 5, 5)
+    gap = 1.5
+
+    stacked = align(part, reference, alignment, stack_gap=gap)
+
+    ref_min, ref_max = get_bounding_box(reference)
+    stacked_min, stacked_max = get_bounding_box(stacked)
+
+    if sign > 0:
+        assert np.isclose(stacked_min[axis], ref_max[axis] + gap)
+    else:
+        assert np.isclose(stacked_max[axis], ref_min[axis] - gap)
 
 
 def test_mirror_reflects_across_plane_without_mutation():

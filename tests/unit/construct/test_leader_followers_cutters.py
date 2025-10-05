@@ -6,6 +6,7 @@ from shellforgepy.construct.named_part import NamedPart
 from shellforgepy.produce.arrange_and_export import PartList
 from shellforgepy.simple import (
     create_box,
+    get_bounding_box,
     get_bounding_box_center,
     get_volume,
     rotate,
@@ -214,3 +215,20 @@ def test_leader_followers_cut_requires_cuttable_other():
 
     with pytest.raises(TypeError):
         group.cut(object())
+
+
+def test_leader_followers_boundbox_property_matches_leader_bounds():
+    leader = translate(1, -2, 3)(create_box(2, 4, 6))
+    group = LeaderFollowersCuttersPart(leader)
+
+    expected_min, expected_max = get_bounding_box(leader)
+
+    bound_box = group.BoundBox
+
+    assert not callable(bound_box)
+    assert bound_box.XMin == pytest.approx(expected_min[0])
+    assert bound_box.YMin == pytest.approx(expected_min[1])
+    assert bound_box.ZMin == pytest.approx(expected_min[2])
+    assert bound_box.XMax == pytest.approx(expected_max[0])
+    assert bound_box.YMax == pytest.approx(expected_max[1])
+    assert bound_box.ZMax == pytest.approx(expected_max[2])

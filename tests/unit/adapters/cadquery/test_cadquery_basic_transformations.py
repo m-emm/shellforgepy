@@ -416,6 +416,22 @@ def test_stack_top():
 
 
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
+def test_stack_top_with_gap():
+    """Test stacking a box on top of another box while keeping a gap."""
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(5, 5, 5)
+
+    gap = 1.0
+    aligned_box2 = align(box2, box1, Alignment.STACK_TOP, stack_gap=gap)
+
+    # box2 should be positioned so its bottom edge is gap units above box1's top edge
+    bbox1 = box1.BoundingBox()
+    bbox2 = aligned_box2.BoundingBox()
+    expected_z_min = bbox1.zmax + gap
+    assert abs(bbox2.zmin - expected_z_min) < 1e-6
+
+
+@pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_stack_bottom():
     """Test stacking a box below another box."""
     box1 = create_box(10, 10, 10)

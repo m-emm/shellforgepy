@@ -35,3 +35,22 @@ ALIGNMENT_SIGNS = {
 
 for k, v in ALIGNMENT_SIGNS.items():
     setattr(k, "sign", v)
+
+ALIGNMENT_AXIS = {
+    Alignment.LEFT: 0,
+    Alignment.RIGHT: 0,
+    Alignment.TOP: 2,
+    Alignment.BOTTOM: 2,
+    Alignment.FRONT: 1,
+    Alignment.BACK: 1,
+    Alignment.CENTER: None,
+    Alignment.STACK_LEFT: 0,
+    Alignment.STACK_RIGHT: 0,
+    Alignment.STACK_TOP: 2,
+    Alignment.STACK_BOTTOM: 2,
+    Alignment.STACK_FRONT: 1,
+    Alignment.STACK_BACK: 1,
+}
+
+for k, v in ALIGNMENT_AXIS.items():
+    setattr(k, "axis", v)

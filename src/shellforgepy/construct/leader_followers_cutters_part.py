@@ -87,6 +87,7 @@ class LeaderFollowersCuttersPart:
     def Vertexes(self):
         return get_vertex_points(_unwrap_named_part(self.leader))
 
+    @property
     def BoundBox(self):
         leader_bb = get_bounding_box(_unwrap_named_part(self.leader))
 

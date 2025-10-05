@@ -80,7 +80,11 @@ from .geometry.spherical_tools import (
     coordinate_system_transformation_function,
 )
 from .geometry.treapezoidal_snake_geometry import create_trapezoidal_snake_geometry
-from .produce.arrange_and_export import arrange_and_export_parts, export_solid_to_stl
+from .produce.arrange_and_export import (
+    arrange_and_export,
+    arrange_and_export_parts,
+    export_solid_to_stl,
+)
 from .produce.production_parts_model import PartInfo, PartList
 from .shells.materialized_connectors import create_screw_connector_normal
 from .shells.mesh_partition import MeshPartition
@@ -96,6 +100,7 @@ __all__ = [
     "ALIGNMENT_SIGNS",
     "Alignment",
     "arrange_and_export_parts",
+    "arrange_and_export",
     "chain_translations",
     "coordinate_system_transform_to_matrix",
     "coordinate_system_transform",

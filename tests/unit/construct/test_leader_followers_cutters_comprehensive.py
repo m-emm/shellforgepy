@@ -6,6 +6,9 @@ from shellforgepy.construct.leader_followers_cutters_part import (
 from shellforgepy.construct.named_part import NamedPart
 from shellforgepy.simple import create_box, get_bounding_box, get_bounding_box_center
 
+# This is a cad backend agnostic test for LeaderFollowersCuttersPart functionality
+# It uses only cad-adapter-agnostic functions
+
 
 def test_leader_followers_creation():
     """Test basic LeaderFollowersCuttersPart creation."""
@@ -303,7 +306,7 @@ def test_leader_followers_bounding_box_interfaces():
 
     bbox_tuple = get_bounding_box(group.leader)
     bb_lower = group.BoundingBox()
-    bb_upper = group.BoundBox()
+    bb_upper = group.BoundBox
 
     assert np.allclose(bbox_tuple[0], expected_min)
     assert np.allclose(bbox_tuple[1], expected_max)

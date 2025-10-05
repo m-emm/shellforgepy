@@ -303,3 +303,44 @@ def arrange_and_export_parts(
         print(f"Wrote workflow manifest to {manifest_path}")
 
     return assembly_path
+
+
+def arrange_and_export(
+    parts,
+    *,
+    prod_gap=1.0,
+    bed_width=200.0,
+    script_file=None,
+    export_directory=None,
+    prod=False,
+    process_data=None,
+    max_build_height=None,
+    verbose=False,
+):
+    """Arrange and export a single part with production support."""
+
+    if script_file is None:
+        # get the call stack
+        import inspect
+
+        stack = inspect.stack()
+        # find the first frame that is not this function
+        for frame_info in stack:
+            if frame_info.function != "arrange_and_export":
+                script_file = frame_info.filename
+                break
+
+    if script_file is None:
+        script_file = "unknown_script"
+
+    return arrange_and_export_parts(
+        parts,
+        prod_gap=prod_gap,
+        bed_width=bed_width,
+        script_file=script_file,
+        export_directory=export_directory,
+        prod=prod,
+        process_data=process_data,
+        max_build_height=max_build_height,
+        verbose=verbose,
+    )

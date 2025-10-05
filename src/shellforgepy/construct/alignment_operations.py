@@ -74,7 +74,43 @@ def stack_alignment_of(alignment):
     return stack_map[alignment]
 
 
-def align_translation(part, to, alignment: Alignment, axes=None):
+def _calc_stack_translation_vector(
+    alignment,
+    bb,
+    to_bb,
+    part_width,
+    part_length,
+    part_height,
+    stack_gap,
+    project_to_axes,
+):
+    retval = None
+    if alignment == Alignment.STACK_LEFT:
+        retval = (to_bb.xmin - bb.xmin - part_width, 0, 0)
+    elif alignment == Alignment.STACK_RIGHT:
+        retval = (to_bb.xmax - bb.xmax + part_width, 0, 0)
+    elif alignment == Alignment.STACK_BACK:
+        retval = (0, to_bb.ymax - bb.ymax + part_length, 0)
+    elif alignment == Alignment.STACK_FRONT:
+        retval = (0, to_bb.ymin - bb.ymin - part_length, 0)
+    elif alignment == Alignment.STACK_TOP:
+        retval = (0, 0, to_bb.zmax - bb.zmax + part_height)
+    elif alignment == Alignment.STACK_BOTTOM:
+        retval = (0, 0, to_bb.zmin - bb.zmin - part_height)
+    else:
+        raise ValueError(f"Unknown alignment: {alignment}")
+
+    retval = project_to_axes(*retval)
+
+    if stack_gap != 0:
+        offset = [0, 0, 0]
+        offset[alignment.axis] = alignment.sign * stack_gap
+        offset = project_to_axes(*offset)
+        retval = tuple(np.array(retval) + np.array(offset))
+    return retval
+
+
+def align_translation(part, to, alignment: Alignment, axes=None, stack_gap=0):
     """
     Create a translation function that aligns one object to another.
 
@@ -162,18 +198,26 @@ def align_translation(part, to, alignment: Alignment, axes=None):
                 *(max_to_bb_np + min_to_bb_np) / 2 - (max_bb_np + min_bb_np) / 2
             )
         )
-    elif alignment == Alignment.STACK_LEFT:
-        return translate(*project_to_axes(to_bb.xmin - bb.xmin - part_width, 0, 0))
-    elif alignment == Alignment.STACK_RIGHT:
-        return translate(*project_to_axes(to_bb.xmax - bb.xmax + part_width, 0, 0))
-    elif alignment == Alignment.STACK_BACK:
-        return translate(*project_to_axes(0, to_bb.ymax - bb.ymax + part_length, 0))
-    elif alignment == Alignment.STACK_FRONT:
-        return translate(*project_to_axes(0, to_bb.ymin - bb.ymin - part_length, 0))
-    elif alignment == Alignment.STACK_TOP:
-        return translate(*project_to_axes(0, 0, to_bb.zmax - bb.zmax + part_height))
-    elif alignment == Alignment.STACK_BOTTOM:
-        return translate(*project_to_axes(0, 0, to_bb.zmin - bb.zmin - part_height))
+    elif alignment in [
+        Alignment.STACK_LEFT,
+        Alignment.STACK_RIGHT,
+        Alignment.STACK_BACK,
+        Alignment.STACK_FRONT,
+        Alignment.STACK_TOP,
+        Alignment.STACK_BOTTOM,
+    ]:
+        translation_vector = _calc_stack_translation_vector(
+            alignment,
+            bb,
+            to_bb,
+            part_width,
+            part_length,
+            part_height,
+            stack_gap,
+            project_to_axes,
+        )
+        return translate(*translation_vector)
+
     else:
         raise ValueError(f"Unknown alignment: {alignment}")
 
@@ -224,10 +268,10 @@ def chain_translations(*translations):
     return retval
 
 
-def align(part, to, alignment, axes=None):
+def align(part, to, alignment, axes=None, stack_gap=0):
     """
     Align one object to another and return the aligned copy.
 
     This is a wrapper that delegates to the CAD adapter's align function.
     """
-    return align_translation(part, to, alignment, axes)(part)
+    return align_translation(part, to, alignment, axes, stack_gap)(part)
