@@ -31,6 +31,26 @@ RUN_ID_ENV = "SHELLFORGEPY_RUN_ID"
 RUN_DIR_ENV = "SHELLFORGEPY_RUN_DIRECTORY"
 MANIFEST_FILENAME = "workflow_manifest.json"
 
+CONFIG_KEYS = {
+    "python_runner": "python.runner",
+    "orca_executable": "orca.executable",
+    "default_stl_file": "viewer.default_stl_file",
+    "orca_master_settings_dir": "orca.master_settings_dir",
+    "runs_dir": "runs_dir",
+    "render_executable": "render.executable",
+    "render_args": "render.args",
+}
+
+CONFIG_KEY_DOCUMENTATION = {
+    "python_runner": "Path to the Python interpreter or wrapper script used to run target scripts.",
+    "orca_executable": "Path to the OrcaSlicer executable.",
+    "default_stl_file": "Path to the default STL file. The main output stl file is copied to this path.",
+    "orca_master_settings_dir": "Path to the directory containing OrcaSlicer master settings.",
+    "runs_dir": "Path to the directory where runs are stored.",
+    "render_executable": "Path to the render executable.",
+    "render_args": "Arguments to pass to the render executable.",
+}
+
 
 def _default_config_template() -> Dict[str, object]:
     default_runner = Path(__file__).resolve().parents[2] / "freecad_python.sh"
@@ -115,7 +135,10 @@ def save_config(path: Path, data: Dict[str, object]) -> None:
         json.dump(data, handle, indent=2, sort_keys=True)
 
 
-def _resolve_dotted_lookup(data: Dict[str, object], dotted_key: str, default=None):
+def _resolve_config_key_value(data: Dict[str, object], config_key: str, default=None):
+    dotted_key = CONFIG_KEYS.get(config_key)
+    if dotted_key is None:
+        raise KeyError(f"Unknown config key: {config_key}")
     keys = dotted_key.split(".")
     current = data
     for key in keys[:-1]:
@@ -128,6 +151,9 @@ def _resolve_dotted_lookup(data: Dict[str, object], dotted_key: str, default=Non
 
 
 def _set_dotted_key(data: Dict[str, object], dotted_key: str, value: object) -> None:
+    if dotted_key not in CONFIG_KEYS.values():
+        raise KeyError(f"Unknown config key: {dotted_key}")
+
     keys = dotted_key.split(".")
     current: Dict[str, object] = data
     for key in keys[:-1]:
@@ -288,7 +314,7 @@ def run_workflow(args: argparse.Namespace) -> int:
 
     runs_base = Path(
         args.runs_dir
-        or _resolve_dotted_lookup(config, "runs_dir")
+        or _resolve_config_key_value(config, "runs_dir")
         or (Path.cwd() / DEFAULT_RUNS_DIR_NAME)
     ).expanduser()
     if not runs_base.is_absolute():
@@ -338,16 +364,11 @@ def run_workflow(args: argparse.Namespace) -> int:
     if args.python:
         _logger.info(f"Using args.python for the runner: {args.python}")
         runner = args.python
-    elif _resolve_dotted_lookup(config, "python.runner"):
+    elif _resolve_config_key_value(config, "python_runner"):
         _logger.info(
-            f"Using config python.runner for the runner: {_resolve_dotted_lookup(config, 'python.runner')}"
+            f"Using config python_runner for the runner: {_resolve_config_key_value(config, 'python_runner')}"
         )
-        runner = _resolve_dotted_lookup(config, "python.runner")
-    elif _resolve_dotted_lookup(config, "python_executable"):
-        _logger.info(
-            f"Using config python_executable for the runner: {_resolve_dotted_lookup(config, 'python_executable')}"
-        )
-        runner = _resolve_dotted_lookup(config, "python_executable")
+        runner = _resolve_config_key_value(config, "python_runner")
     elif default_runner.exists():
         _logger.info(
             f"Using default freecad_python.sh for the runner: {default_runner}"
@@ -383,9 +404,7 @@ def run_workflow(args: argparse.Namespace) -> int:
     part_path = _ensure_path(part_path, "generated STL")
 
     _logger.info("Detected part file: %s", part_path)
-    viewer_default = _resolve_dotted_lookup(
-        config, "viewer.default_stl_file"
-    ) or _resolve_dotted_lookup(config, "default_stl_file")
+    viewer_default = _resolve_config_key_value(config, "default_stl_file")
     if viewer_default:
         try:
             viewer_path = Path(viewer_default).expanduser()
@@ -418,10 +437,8 @@ def run_workflow(args: argparse.Namespace) -> int:
 
     _logger.info("Detected process file: %s", process_path)
 
-    master_settings_dir = (
-        args.master_settings_dir
-        or _resolve_dotted_lookup(config, "orca.master_settings_dir")
-        or _resolve_dotted_lookup(config, "orca_master_settings_dir")
+    master_settings_dir = args.master_settings_dir or _resolve_config_key_value(
+        config, "orca_master_settings_dir"
     )
     if not master_settings_dir:
         raise WorkflowError(
@@ -456,8 +473,8 @@ def run_workflow(args: argparse.Namespace) -> int:
 
     orca_exec = (
         args.orca_executable
-        or _resolve_dotted_lookup(config, "orca.executable")
-        or _resolve_dotted_lookup(config, "orca_slicer_executable")
+        or _resolve_config_key_value(config, "orca_executable")
+        or _resolve_config_key_value(config, "orca_slicer_executable")
     )
     if not orca_exec:
         raise WorkflowError(
@@ -468,7 +485,7 @@ def run_workflow(args: argparse.Namespace) -> int:
         raise WorkflowError(f"OrcaSlicer executable not found: {orca_exec_path}")
 
     debug_level = str(
-        args.orca_debug or _resolve_dotted_lookup(config, "orca.debug_level") or 6
+        args.orca_debug or _resolve_config_key_value(config, "orca.debug_level") or 6
     )
     project_filename = f"{target_path.stem}.3mf"
     project_path = run_directory / project_filename
@@ -500,7 +517,7 @@ def run_workflow(args: argparse.Namespace) -> int:
 
     _logger.info("Running OrcaSlicer: %s", format_command(slicer_cmd))
 
-    orca_env_settings = _resolve_dotted_lookup(config, "orca.env")
+    orca_env_settings = _resolve_config_key_value(config, "orca.env")
     orca_env: Dict[str, str] = {}
     if isinstance(orca_env_settings, dict):
         for key, value in orca_env_settings.items():
@@ -515,13 +532,13 @@ def run_workflow(args: argparse.Namespace) -> int:
 
     execute_subprocess(slicer_cmd, env=orca_env)
 
-    render_script = _resolve_dotted_lookup(config, "render.script")
+    render_script = _resolve_config_key_value(config, "render.script")
     preview_path = run_directory / "plate_1_preview.png"
 
     preview_generated = False
     if render_script:
-        render_exec = _resolve_dotted_lookup(config, "render.executable")
-        render_args = _resolve_dotted_lookup(config, "render.args") or []
+        render_exec = _resolve_config_key_value(config, "render_executable")
+        render_args = _resolve_config_key_value(config, "render_args") or []
         if isinstance(render_args, str):
             render_args = shlex.split(render_args)
         elif not isinstance(render_args, list):
@@ -585,7 +602,7 @@ def run_workflow(args: argparse.Namespace) -> int:
         if not gcode_files:
             raise WorkflowError("Upload requested but no G-code files were generated.")
 
-        printer = args.printer or _resolve_dotted_lookup(config, "upload.printer")
+        printer = args.printer or _resolve_config_key_value(config, "upload.printer")
 
         for gcode_file in gcode_files:
             _logger.info("Uploading %s", gcode_file)
@@ -600,6 +617,15 @@ def run_workflow(args: argparse.Namespace) -> int:
 
 def show_config(config: Dict[str, object]) -> None:
     _logger.info(json.dumps(config, indent=2, sort_keys=True))
+    for key, doc in sorted(
+        CONFIG_KEY_DOCUMENTATION.items(), key=lambda kv: CONFIG_KEYS[kv[0]]
+    ):
+        dotted_path = CONFIG_KEYS[key]
+        value = _resolve_config_key_value(config, key)
+        if value is not None:
+            _logger.info(f"{dotted_path:<30}: {str(value):<80} -- {doc}")
+        else:
+            _logger.info(f"{dotted_path:<30}: {'<not set>':<80} -- {doc}")
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -719,7 +745,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         config = load_config(config_path)
 
         if args.config_command == "set":
-            _set_dotted_key(config, args.key, args.value)
+            try:
+                _set_dotted_key(config, args.key, args.value)
+            except KeyError as exc:
+                _logger.error(f"Invalid config key: {args.key}")
+                _logger.info(f"Available keys: {', '.join(CONFIG_KEYS.keys())}")
+                raise exc
+
             save_config(config_path, config)
             _logger.info("Set %s", args.key)
             return 0
