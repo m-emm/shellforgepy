@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import numpy as np
@@ -28,7 +29,12 @@ from shellforgepy.adapters._adapter import (
     rotate_part,
     translate_part,
 )
+from shellforgepy.adapters.font_resolver import resolve_font
 from shellforgepy.construct.alignment import Alignment
+
+# These tests are on a generic adapter level and do not depend on a specific CAD backend
+# like FreeCAD or CadQuery.
+# Importing backend-specific code is not allowed here.
 
 
 def _collect_edges(solid):
@@ -117,6 +123,34 @@ def test_text_object_padding():
     assert min_point[1] == pytest.approx(1.5, abs=1e-3)
     assert min_point[2] >= -1e-6
     assert get_volume(text) > 0.0
+
+
+@pytest.mark.skipif(
+    os.environ.get("CI") == "true", reason="Font availability varies on CI"
+)
+def test_text_object_bounding_box_dimensions():
+    font_spec = resolve_font(font="DejaVu Sans")
+
+    text_value = "Forge"
+    glyph_height = 8.0
+    extrusion = 2.5
+
+    text = create_text_object(
+        text_value,
+        size=glyph_height,
+        thickness=extrusion,
+        font=font_spec.path,
+        font_path=font_spec.path,
+    )
+
+    width, height, thickness = _bbox_size_tuple(text)
+
+    assert thickness == pytest.approx(extrusion, abs=1e-6)
+
+    assert glyph_height * 0.99 <= height <= glyph_height * 1.01
+    assert width >= glyph_height * 1.2
+    aspect_ratio = width / max(height, 1e-6)
+    assert 1.0 <= aspect_ratio <= 8.0
 
 
 def test_cylinder_cone_and_sphere_creation():

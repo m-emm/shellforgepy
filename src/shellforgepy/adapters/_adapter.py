@@ -31,6 +31,9 @@ from shellforgepy.adapters._adapter_bridge import (
 )
 from shellforgepy.adapters._adapter_bridge import fuse_parts as adapter_fuse_parts
 from shellforgepy.adapters._adapter_bridge import (
+    get_adapter_id as adapter_get_adapter_id,
+)
+from shellforgepy.adapters._adapter_bridge import (
     get_bounding_box as adapter_get_bounding_box,
 )
 from shellforgepy.adapters._adapter_bridge import (
@@ -191,6 +194,7 @@ def create_text_object(
     font=None,
     *,
     padding=0.0,
+    font_path=None,
 ):
     """Create an extruded text solid anchored to the XY origin.
 
@@ -203,6 +207,7 @@ def create_text_object(
         thickness,
         font=font,
         padding=padding,
+        font_path=font_path,
     )
 
 
@@ -423,3 +428,8 @@ def create_sphere(
 ):
     """Create a sphere centered at ``origin``."""
     return adapter_create_sphere(radius, origin=origin)
+
+
+def get_adapter_id() -> str:
+    """Get the ID of the currently selected CAD adapter."""
+    return adapter_get_adapter_id()

@@ -330,13 +330,33 @@ def run_workflow(args: argparse.Namespace) -> int:
     env[EXPORT_DIR_ENV] = str(run_directory)
     env[MANIFEST_ENV] = str(manifest_path)
 
-    default_runner = Path(__file__).resolve().parents[2] / "freecad_python.sh"
-    runner = (
-        args.python
-        or _resolve_dotted_lookup(config, "python.runner")
-        or _resolve_dotted_lookup(config, "python_executable")
-        or (str(default_runner) if default_runner.exists() else sys.executable)
+    default_runner = Path(__file__).resolve().parents[3] / "freecad_python.sh"
+    _logger.info(
+        f"Default Python runner: {default_runner} exists: {default_runner.exists()}"
     )
+
+    if args.python:
+        _logger.info(f"Using args.python for the runner: {args.python}")
+        runner = args.python
+    elif _resolve_dotted_lookup(config, "python.runner"):
+        _logger.info(
+            f"Using config python.runner for the runner: {_resolve_dotted_lookup(config, 'python.runner')}"
+        )
+        runner = _resolve_dotted_lookup(config, "python.runner")
+    elif _resolve_dotted_lookup(config, "python_executable"):
+        _logger.info(
+            f"Using config python_executable for the runner: {_resolve_dotted_lookup(config, 'python_executable')}"
+        )
+        runner = _resolve_dotted_lookup(config, "python_executable")
+    elif default_runner.exists():
+        _logger.info(
+            f"Using default freecad_python.sh for the runner: {default_runner}"
+        )
+        runner = str(default_runner)
+    else:
+        _logger.info(f"Using sys.executable for the runner: {sys.executable}")
+        runner = sys.executable
+
     runner_path = Path(runner).expanduser()
     if not runner_path.exists():
         raise WorkflowError(f"Configured runner does not exist: {runner_path}")

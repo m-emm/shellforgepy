@@ -14,6 +14,24 @@ Usage:
     # - Part arrangement and export functions
 """
 
+from shellforgepy.adapters._adapter import (
+    apply_fillet_by_alignment,
+    apply_fillet_to_edges,
+    create_box,
+    create_cone,
+    create_cylinder,
+    create_extruded_polygon,
+    create_filleted_box,
+    create_solid_from_traditional_face_vertex_maps,
+    create_sphere,
+    create_text_object,
+    get_adapter_id,
+    get_bounding_box,
+    get_bounding_box_center,
+    get_bounding_box_size,
+    get_vertex_coordinates,
+    get_volume,
+)
 from shellforgepy.geometry.m_screws import (
     create_bolt_thread,
     create_cylinder_screw,
@@ -70,85 +88,6 @@ from .shells.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
 )
 
-ADAPTER_FUNTIONS = [
-    "create_box",
-    "create_cone",
-    "create_cylinder",
-    "create_sphere",
-    "create_solid_from_traditional_face_vertex_maps",
-    "create_text_object",
-    "get_bounding_box",
-    "get_bounding_box_center",
-    "get_vertex_coordinates",
-    "get_z_min",
-    "create_extruded_polygon",
-    "create_filleted_box",
-    "get_volume",
-    "filter_edges_by_z_position",
-    "filter_edges_by_alignment",
-    "filter_edges_by_function",
-    "apply_fillet_to_edges",
-    "apply_fillet_by_alignment",
-    "apply_fillet_by_function",
-    "get_adapter_id",
-]
-
-
-# Dynamically load CAD adapter functions
-def _load_cad_functions():
-    """Load CAD adapter functions dynamically to handle import errors gracefully."""
-    from .adapters.adapter_chooser import get_cad_adapter
-
-    try:
-        adapter = get_cad_adapter()
-        return {
-            func_name: getattr(adapter, func_name) for func_name in ADAPTER_FUNTIONS
-        }
-    except ImportError as e:
-        # Return stub functions that provide helpful error messages
-        error_message = str(e)  # Capture the error message for use in nested functions
-
-        def _missing_cad_error(func_name):
-            def stub(*args, **kwargs):
-                raise ImportError(
-                    f"Cannot use {func_name}: {error_message}\n"
-                    "Please ensure either CadQuery or FreeCAD is properly installed."
-                )
-
-            return stub
-
-        return {
-            func_name: _missing_cad_error(func_name) for func_name in ADAPTER_FUNTIONS
-        }
-
-
-# Load the CAD functions
-_cad_functions = _load_cad_functions()
-
-# Expose them at module level
-create_box = _cad_functions["create_box"]
-create_cone = _cad_functions["create_cone"]
-create_cylinder = _cad_functions["create_cylinder"]
-create_sphere = _cad_functions["create_sphere"]
-create_solid_from_traditional_face_vertex_maps = _cad_functions[
-    "create_solid_from_traditional_face_vertex_maps"
-]
-create_text_object = _cad_functions["create_text_object"]
-get_bounding_box = _cad_functions["get_bounding_box"]
-get_bounding_box_center = _cad_functions["get_bounding_box_center"]
-get_vertex_coordinates = _cad_functions["get_vertex_coordinates"]
-get_z_min = _cad_functions.get("get_z_min")
-create_extruded_polygon = _cad_functions["create_extruded_polygon"]
-create_filleted_box = _cad_functions["create_filleted_box"]
-get_volume = _cad_functions.get("get_volume")
-filter_edges_by_z_position = _cad_functions["filter_edges_by_z_position"]
-filter_edges_by_alignment = _cad_functions["filter_edges_by_alignment"]
-filter_edges_by_function = _cad_functions["filter_edges_by_function"]
-apply_fillet_to_edges = _cad_functions["apply_fillet_to_edges"]
-apply_fillet_by_alignment = _cad_functions["apply_fillet_by_alignment"]
-apply_fillet_by_function = _cad_functions["apply_fillet_by_function"]
-get_adapter_id = _cad_functions["get_adapter_id"]
-
 # Define what gets exported with "from simple import *"
 __all__ = [
     "align_translation",
@@ -183,7 +122,6 @@ __all__ = [
     "get_clearance_hole_diameter",
     "get_screw_info",
     "get_vertex_coordinates",
-    "get_z_min",
     "LeaderFollowersCuttersPart",
     "list_supported_sizes",
     "m_screws_table",
@@ -201,4 +139,20 @@ __all__ = [
     "TransformedRegionView",
     "translate",
     "write_stl_binary",
-] + ADAPTER_FUNTIONS
+    "create_box",
+    "create_cone",
+    "create_cylinder",
+    "create_sphere",
+    "create_solid_from_traditional_face_vertex_maps",
+    "create_text_object",
+    "get_bounding_box",
+    "get_bounding_box_center",
+    "get_bounding_box_size",
+    "get_vertex_coordinates",
+    "create_extruded_polygon",
+    "create_filleted_box",
+    "get_volume",
+    "apply_fillet_to_edges",
+    "apply_fillet_by_alignment",
+    "get_adapter_id",
+]

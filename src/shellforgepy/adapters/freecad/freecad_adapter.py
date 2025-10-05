@@ -1,6 +1,7 @@
 from typing import Optional
 
 import numpy as np
+from shellforgepy.adapters.font_resolver import FontResolutionError, resolve_font
 
 # FreeCAD imports will be available when run in FreeCAD environment
 try:
@@ -17,7 +18,6 @@ except ImportError:
 import logging
 
 _logger = logging.getLogger(__name__)
-
 # FreeCAD specific adapter implementations
 # Here, cad-backend-specific should be implemented
 # Any code that can be implemented backend-agnostic should go in geometry/ or construct/ or produce/ or similar
@@ -394,20 +394,70 @@ def create_text_object(
     if padding < 0:
         raise ValueError("Padding cannot be negative")
 
-    if font_path is None:
-        font_path = font
+    spec = resolve_font(font=font, font_path=font_path, require_path=True)
+    font_file = spec.path
+    if not font_file:
+        raise FontResolutionError("A font file is required for FreeCAD text creation")
 
-    if font_path is None:
-        font_path = "/Users/mege/Library/Fonts/lintsec.regular.ttf"
+    if FreeCAD is None or Part is None or Base is None:
+        raise RuntimeError("FreeCAD core modules are not available")
 
-    S1 = Draft.make_shapestring(text, font_path, size)
-    extr = S1.Shape.extrude(Base.Vector(0, 0, thickness))
+    doc = getattr(FreeCAD, "ActiveDocument", None)
+    created_doc = False
+    shapestring_obj = None
 
-    # Apply padding offset
-    if padding > 0:
+    try:
+        if doc is None:
+            doc = FreeCAD.newDocument("ShellForgePy_Text")
+            created_doc = True
+
+        shapestring_obj = Draft.make_shapestring(text, font_file, size)
+        if shapestring_obj is None:
+            raise RuntimeError("Draft.make_shapestring returned no object")
+
+        if hasattr(doc, "recompute"):
+            doc.recompute()
+
+        shape = getattr(shapestring_obj, "Shape", None)
+        if shape is None:
+            raise RuntimeError("ShapeString object does not expose a Shape")
+
+        extr = shape.extrude(Base.Vector(0, 0, thickness))
+
         bbox = extr.BoundBox
-        offset = Base.Vector(-bbox.XMin + padding, -bbox.YMin + padding, -bbox.ZMin)
-        extr.translate(offset)
+        current_width = bbox.XMax - bbox.XMin
+        current_height = bbox.YMax - bbox.YMin
+        if current_width <= 0 or current_height <= 0:
+            raise RuntimeError("Generated text has degenerate dimensions")
+
+        scale_xy = size / current_height
+        if abs(scale_xy - 1.0) > 1e-9:
+            scale_matrix = FreeCAD.Matrix()
+            scale_matrix.scale(scale_xy, scale_xy, 1.0)
+            extr = extr.transformGeometry(scale_matrix)
+            bbox = extr.BoundBox
+
+    finally:
+        if shapestring_obj is not None and doc is not None and not created_doc:
+            try:
+                doc.removeObject(shapestring_obj.Name)
+                doc.recompute()
+            except Exception:  # pragma: no cover - cleanup best effort
+                _logger.debug(
+                    "Failed to remove temporary ShapeString object", exc_info=True
+                )
+
+        if created_doc and doc is not None:
+            try:
+                FreeCAD.closeDocument(doc.Name)
+            except Exception:  # pragma: no cover - cleanup best effort
+                _logger.debug(
+                    "Failed to close temporary FreeCAD document", exc_info=True
+                )
+
+    bbox = extr.BoundBox
+    offset = Base.Vector(-bbox.XMin + padding, -bbox.YMin + padding, -bbox.ZMin)
+    extr.translate(offset)
 
     return extr
 

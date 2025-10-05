@@ -3,6 +3,7 @@ from typing import List, Optional
 
 import cadquery as cq
 import numpy as np
+from shellforgepy.adapters.font_resolver import resolve_font
 
 _logger = logging.getLogger(__name__)
 
@@ -433,6 +434,7 @@ def create_text_object(
     font=None,
     *,
     padding=0.0,
+    font_path=None,
 ):
     """Create an extruded text solid anchored to the XY origin.
 
@@ -449,14 +451,18 @@ def create_text_object(
     if padding < 0:
         raise ValueError("Padding cannot be negative")
 
+    spec = resolve_font(font=font, font_path=font_path)
+
     text_kwargs = {
         "combine": True,
         "clean": True,
         "halign": "left",
         "valign": "baseline",
     }
-    if font:
-        text_kwargs["font"] = font
+    if spec.family:
+        text_kwargs["font"] = spec.family
+    if spec.path:
+        text_kwargs["fontPath"] = spec.path
 
     text_wp = cq.Workplane("XY").text(text, size, thickness, **text_kwargs)
     solid = text_wp.val()
@@ -464,6 +470,22 @@ def create_text_object(
         raise RuntimeError("CadQuery text generation returned no solid")
 
     bbox = solid.BoundingBox()
+    current_height = bbox.ymax - bbox.ymin
+    if current_height <= 0:
+        raise RuntimeError("CadQuery text generation produced zero-height geometry")
+
+    scale_xy = size / current_height
+    if abs(scale_xy - 1.0) > 1e-9:
+        scale_matrix = cq.Matrix(
+            (
+                (scale_xy, 0.0, 0.0, 0.0),
+                (0.0, scale_xy, 0.0, 0.0),
+                (0.0, 0.0, 1.0, 0.0),
+            )
+        )
+        solid = solid.transformGeometry(scale_matrix)
+        bbox = solid.BoundingBox()
+
     offset = cq.Vector(-bbox.xmin + padding, -bbox.ymin + padding, -bbox.zmin)
     return solid.translate(offset)
 
