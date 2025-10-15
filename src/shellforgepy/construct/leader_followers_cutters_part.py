@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 
 from shellforgepy.adapters._adapter import (
@@ -9,6 +10,8 @@ from shellforgepy.adapters._adapter import (
 from shellforgepy.adapters.freecad.freecad_adapter import get_vertex_points
 from shellforgepy.construct.named_part import NamedPart
 from shellforgepy.construct.part_collector import PartCollector
+
+_logger = logging.getLogger(__name__)
 
 
 def _ensure_list(items):

@@ -411,7 +411,7 @@ class MeshPartition:
             [self.mesh.vertices[v] for v in corner_vertices]
         )
 
-        _logger.info(f"There are {len(corner_vertices)} corner vertices.")
+        _logger.debug(f"There are {len(corner_vertices)} corner vertices.")
 
         connector_hints = [
             hint

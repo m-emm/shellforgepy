@@ -40,6 +40,10 @@ CONFIG_KEYS = {
     "runs_dir": "runs_dir",
     "render_executable": "render.executable",
     "render_args": "render.args",
+    "orca_debug_level": "orca.debug_level",
+    "orca_env": "orca.env",
+    "render_script": "render.script",
+    "upload_printer": "upload.printer",
 }
 
 CONFIG_KEY_DOCUMENTATION = {
@@ -50,6 +54,10 @@ CONFIG_KEY_DOCUMENTATION = {
     "runs_dir": "Path to the directory where runs are stored.",
     "render_executable": "Path to the render executable.",
     "render_args": "Arguments to pass to the render executable.",
+    "orca_debug_level": "Debug level to use when running OrcaSlicer.",
+    "orca_env": "Environment variables to set when running OrcaSlicer.",
+    "render_script": "Path to a custom rendering script to generate preview images.",
+    "upload_printer": "Network address of the 3D printer to upload the print job to.",
 }
 
 
@@ -350,7 +358,9 @@ def run_workflow(args: argparse.Namespace) -> int:
 
     env = os.environ.copy()
     env[RUN_ID_ENV] = run_id
-    env["SHELLFORGEPY_PRODUCTION"] = "1" if production_mode else "0"
+    # Only override PROD setting when slicing, to allow scripts to control production mode otherwise
+    if args.slice or args.upload:
+        env["SHELLFORGEPY_PRODUCTION"] = "1"
     env[RUN_DIR_ENV] = str(run_directory)
     env[EXPORT_DIR_ENV] = str(run_directory)
     env[MANIFEST_ENV] = str(manifest_path)
@@ -484,7 +494,7 @@ def run_workflow(args: argparse.Namespace) -> int:
         raise WorkflowError(f"OrcaSlicer executable not found: {orca_exec_path}")
 
     debug_level = str(
-        args.orca_debug or _resolve_config_key_value(config, "orca.debug_level") or 6
+        args.orca_debug or _resolve_config_key_value(config, "orca_debug_level") or 6
     )
     project_filename = f"{target_path.stem}.3mf"
     project_path = run_directory / project_filename
@@ -516,7 +526,7 @@ def run_workflow(args: argparse.Namespace) -> int:
 
     _logger.info("Running OrcaSlicer: %s", format_command(slicer_cmd))
 
-    orca_env_settings = _resolve_config_key_value(config, "orca.env")
+    orca_env_settings = _resolve_config_key_value(config, "orca_env")
     orca_env: Dict[str, str] = {}
     if isinstance(orca_env_settings, dict):
         for key, value in orca_env_settings.items():
@@ -531,7 +541,7 @@ def run_workflow(args: argparse.Namespace) -> int:
 
     execute_subprocess(slicer_cmd, env=orca_env)
 
-    render_script = _resolve_config_key_value(config, "render.script")
+    render_script = _resolve_config_key_value(config, "render_script")
     preview_path = run_directory / "plate_1_preview.png"
 
     preview_generated = False
@@ -601,7 +611,7 @@ def run_workflow(args: argparse.Namespace) -> int:
         if not gcode_files:
             raise WorkflowError("Upload requested but no G-code files were generated.")
 
-        printer = args.printer or _resolve_config_key_value(config, "upload.printer")
+        printer = args.printer or _resolve_config_key_value(config, "upload_printer")
 
         for gcode_file in gcode_files:
             _logger.info("Uploading %s", gcode_file)

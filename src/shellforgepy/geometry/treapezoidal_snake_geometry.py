@@ -40,6 +40,10 @@ def create_snake_vertices(cross_section, base_points, normals):
     if len(base_points) < 2:
         raise ValueError("Need at least 2 base points to create segments")
 
+    base_points = np.array(base_points)
+    normals = np.array(normals)
+    cross_section = np.array(cross_section)
+
     all_vertices = []
 
     for i, (base_point, normal) in enumerate(zip(base_points, normals)):

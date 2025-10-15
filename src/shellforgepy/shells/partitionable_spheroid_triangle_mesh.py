@@ -270,7 +270,7 @@ class PartitionableSpheroidTriangleMesh:
             )
             self.faces = corrected_faces
         else:
-            _logger.info("Faces are consistently wound.")
+            _logger.debug("Faces are consistently wound.")
 
         for face in self.faces:
             assert len(face) == 3, "All faces must be triangles"
@@ -668,8 +668,6 @@ class PartitionableSpheroidTriangleMesh:
         ) / 3.0
 
         if np.dot(triangle_0_normal, triangle_0_centroid) < 0:
-
-            print(f"Flipping triangles to ensure outward normals.")
 
             # flip all triangles
 

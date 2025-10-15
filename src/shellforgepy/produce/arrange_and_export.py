@@ -210,6 +210,11 @@ def arrange_and_export_parts(
     if env_export_dir:
         export_directory = env_export_dir
 
+    # Override prod flag with environment variable if set by workflow
+    env_prod = os.environ.get("SHELLFORGEPY_PRODUCTION")
+    if env_prod is not None:
+        prod = env_prod == "1"
+
     if isinstance(parts, PartList):
         parts_iterable = parts.as_list()
     else:
