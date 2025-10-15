@@ -407,6 +407,7 @@ class PartitionableSpheroidTriangleMesh:
         Calculate materialized shell triangle prisms per face,
         returning both geometry and a mapping from original vertex indices
         to inner and outer vertex IDs in the local face maps.
+
         """
 
         shell_maps = {}
@@ -575,7 +576,7 @@ class PartitionableSpheroidTriangleMesh:
             inner_verts[i] = inner_verts[i] - shrinkage * (inner_verts[i] - centroid)
 
         # Optional: border shrinking
-        if shrink_border > 0:
+        if abs(shrink_border) > 1e-6:
             outer_verts = shrink_triangle(*outer_verts, border_width=shrink_border)
             inner_verts = shrink_triangle(*inner_verts, border_width=shrink_border)
 
