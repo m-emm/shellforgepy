@@ -1511,6 +1511,7 @@ class MeshPartition:
         MeshPartition
             A new mesh partition with the region split along the given plane.
         """
+
         # Step 1: Collect triangle indices of this region
         region_faces = [
             face_idx

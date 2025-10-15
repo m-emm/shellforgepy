@@ -857,6 +857,8 @@ class PartitionableSpheroidTriangleMesh:
         next_index = len(V_orig)
         seen_edges = set()
 
+        _logger.info(f"Cutting at plane point {plane_point}, normal {plane_normal}")
+
         for tri_idx in triangle_indices:
             tri = F_orig[tri_idx]
             for a, b in triangle_edges(tri):

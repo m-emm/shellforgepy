@@ -629,3 +629,29 @@ def propagate_consistent_winding(polygons):
                 queue.append(neighbor)
 
     return [list(v) for v in polygons]
+
+
+def calc_distance_to_path(vertices, edges_on_path, point):
+    """Calc the minimum distance from a point to a path defined by vertices and edges."""
+    min_dist_sq = float("inf")
+    point = np.array(point)
+
+    for edge in edges_on_path:
+        v0 = np.array(vertices[edge[0]])
+        v1 = np.array(vertices[edge[1]])
+
+        edge_vec = v1 - v0
+        edge_len_sq = np.dot(edge_vec, edge_vec)
+        if edge_len_sq == 0.0:
+            # Degenerate edge, treat as point
+            dist_sq = np.dot(point - v0, point - v0)
+        else:
+            t = np.dot(point - v0, edge_vec) / edge_len_sq
+            t = max(0.0, min(1.0, t))  # Clamp to segment
+            projection = v0 + t * edge_vec
+            dist_sq = np.dot(point - projection, point - projection)
+
+        if dist_sq < min_dist_sq:
+            min_dist_sq = dist_sq
+
+    return sqrt(min_dist_sq)

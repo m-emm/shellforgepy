@@ -42,6 +42,7 @@ from shellforgepy.geometry.m_screws import (
     m_screws_table,
 )
 from shellforgepy.geometry.mesh_utils import (
+    calc_distance_to_path,
     convert_to_traditional_face_vertex_maps,
     merge_meshes,
     write_shell_maps_to_stl,
@@ -104,6 +105,7 @@ __all__ = [
     "apply_fillet_to_edges",
     "arrange_and_export_parts",
     "arrange_and_export",
+    "calc_distance_to_path",
     "chain_translations",
     "convert_to_traditional_face_vertex_maps",
     "coordinate_system_transform_to_matrix",
