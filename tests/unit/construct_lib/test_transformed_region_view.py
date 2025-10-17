@@ -58,6 +58,31 @@ def test_transformed_shell_map():
         assert len(vmap["inner"]) == 3
         assert len(vmap["outer"]) == 3
 
+    outward_offset = 0.2
+    offset_shell_maps, _ = region_view.get_transformed_materialized_shell_maps(
+        shell_thickness=0.1, outward_offset=outward_offset
+    )
+    transformed_center = region_view.transform_point(
+        partition.mesh.vertices.mean(axis=0)
+    )
+    for face_id, base_shell_map in shell_maps.items():
+        offset_shell_map = offset_shell_maps[face_id]
+        outer_indices = vertex_index_map[face_id]["outer"].values()
+        for local_idx in outer_indices:
+            base_outer = base_shell_map["vertexes"][local_idx]
+            offset_outer = offset_shell_map["vertexes"][local_idx]
+            radial_vec = base_outer - transformed_center
+            radial_length = np.linalg.norm(radial_vec)
+            assert radial_length > 0
+            radial_dir = radial_vec / radial_length
+            delta = offset_outer - base_outer
+            radial_component = np.dot(delta, radial_dir)
+            assert np.isclose(
+                radial_component, outward_offset, atol=1e-6
+            ), f"Face {face_id} vertex {local_idx} expected radial offset {outward_offset}, got {radial_component}"
+            tangential_component = delta - radial_component * radial_dir
+            assert np.linalg.norm(tangential_component) < 1e-6
+
 
 def test_compute_connector_hints_on_transformed_region_view():
     # Step 1: Generate icosahedron geometry

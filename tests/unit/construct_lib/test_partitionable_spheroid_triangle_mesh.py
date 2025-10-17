@@ -442,7 +442,40 @@ def test_materialized_shell_maps_with_and_without_smoothing():
             offset, shell_thickness, atol=1e-6
         ), f"Offset is {offset}, expected {shell_thickness}"
 
-        # --- With smoothing
+    outward_offset = 0.25
+    shell_maps_no_offset, _ = mesh.calculate_materialized_shell_maps(
+        shell_thickness=shell_thickness,
+        smooth_inside=False,
+        shrinkage=0,
+        outward_offset=0,
+    )
+    shell_maps_with_offset, _ = mesh.calculate_materialized_shell_maps(
+        shell_thickness=shell_thickness,
+        smooth_inside=False,
+        shrinkage=0,
+        outward_offset=outward_offset,
+    )
+
+    sphere_center = mesh.vertices.mean(axis=0)
+    for face_idx in shell_maps_no_offset:
+        base_shell = shell_maps_no_offset[face_idx]
+        offset_shell = shell_maps_with_offset[face_idx]
+        for local_idx in range(3, 6):
+            base_outer = base_shell["vertexes"][local_idx]
+            offset_outer = offset_shell["vertexes"][local_idx]
+            radial_vec = base_outer - sphere_center
+            radial_length = np.linalg.norm(radial_vec)
+            assert radial_length > 0
+            radial_dir = radial_vec / radial_length
+            delta = offset_outer - base_outer
+            radial_component = np.dot(delta, radial_dir)
+            assert np.isclose(
+                radial_component, outward_offset, atol=1e-6
+            ), f"Face {face_idx} vertex {local_idx} expected radial offset {outward_offset}, got {radial_component}"
+            tangential_component = delta - radial_component * radial_dir
+            assert np.linalg.norm(tangential_component) < 1e-6
+
+    # --- With smoothing
     shell_maps_smoothed, _ = mesh.calculate_materialized_shell_maps(
         shell_thickness=shell_thickness, smooth_inside=True
     )

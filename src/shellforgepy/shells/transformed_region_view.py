@@ -154,7 +154,13 @@ class TransformedRegionView:
         return self.transform_point(vertex_coords)
 
     def get_transformed_materialized_shell_maps(
-        self, shell_thickness, shrinkage=0, shrink_border=0, smooth_inside=False
+        self,
+        shell_thickness,
+        shrinkage=0,
+        shrink_border=0,
+        smooth_inside=False,
+        smooth_outside=False,
+        outward_offset=0,
     ):
         """
         Return a dict of shell maps (face_id -> vertex/face map),
@@ -166,9 +172,13 @@ class TransformedRegionView:
                 shrinkage=shrinkage,
                 shrink_border=shrink_border,
                 smooth_inside=smooth_inside,
+                smooth_outside=smooth_outside,
+                outward_offset=outward_offset,
             )
         )
         region_faces = self.partition.get_faces_of_region(self.region_id)
+        if not region_faces:
+            raise ValueError(f"Region {self.region_id} has no faces!")
 
         result = {}
         for face_id in region_faces:

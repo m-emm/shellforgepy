@@ -400,8 +400,37 @@ class PartitionableSpheroidTriangleMesh:
             for face_index, local_idx in locations:
                 shell_maps[face_index]["vertexes"][local_idx] = avg_pos
 
+    @staticmethod
+    def smooth_outer_vertices(shell_maps, vertex_index_map):
+        # Step 1: Map from original vertex index → list of (face_index, local_vertex_id)
+        vertex_to_outer_locations = defaultdict(list)
+        for face_index, vmap in vertex_index_map.items():
+            for orig_idx, local_idx in vmap["outer"].items():
+                vertex_to_outer_locations[orig_idx].append((face_index, local_idx))
+
+        # Step 2: Compute average positions
+        averaged_positions = {}
+        for orig_idx, locations in vertex_to_outer_locations.items():
+            positions = [
+                shell_maps[face_index]["vertexes"][local_idx]
+                for (face_index, local_idx) in locations
+            ]
+            averaged_positions[orig_idx] = np.mean(positions, axis=0)
+
+        # Step 3: Set all outer vertices to the averaged position
+        for orig_idx, locations in vertex_to_outer_locations.items():
+            avg_pos = averaged_positions[orig_idx]
+            for face_index, local_idx in locations:
+                shell_maps[face_index]["vertexes"][local_idx] = avg_pos
+
     def calculate_materialized_shell_maps(
-        self, shell_thickness, shrinkage=0, shrink_border=0, smooth_inside=False
+        self,
+        shell_thickness,
+        shrinkage=0,
+        shrink_border=0,
+        smooth_inside=False,
+        smooth_outside=False,
+        outward_offset=0,
     ):
         """
         Calculate materialized shell triangle prisms per face,
@@ -433,6 +462,7 @@ class PartitionableSpheroidTriangleMesh:
                 shell_thickness=shell_thickness,
                 shrinkage=shrinkage,
                 shrink_border=shrink_border,
+                outward_offset=outward_offset,
             )
 
             shell_maps[face_index] = {
@@ -448,6 +478,9 @@ class PartitionableSpheroidTriangleMesh:
 
         if smooth_inside:
             self.smooth_inner_vertices(shell_maps, vertex_index_map)
+
+        if smooth_outside:
+            self.smooth_outer_vertices(shell_maps, vertex_index_map)
 
         return shell_maps, vertex_index_map
 
@@ -479,7 +512,7 @@ class PartitionableSpheroidTriangleMesh:
 
     @staticmethod
     def _project_inner_triangle(
-        spherical_vertexes, shell_thickness: float, sphere_center: np.ndarray
+        spherical_vertexes, inward_offset: float, sphere_center: np.ndarray
     ):
         """
         Given spherical triangle vertices, projects them inward onto a parallel plane using ray-plane intersection.
@@ -498,7 +531,7 @@ class PartitionableSpheroidTriangleMesh:
         tri_normal = np.cross(v1 - v0, v2 - v0)
         tri_normal /= np.linalg.norm(tri_normal)
 
-        plane_point = v0 + (-shell_thickness) * tri_normal
+        plane_point = v0 + (-inward_offset) * tri_normal
 
         def intersect_ray_plane(ray_origin, ray_dir, plane_point, plane_normal):
             denom = np.dot(ray_dir, plane_normal)
@@ -514,26 +547,26 @@ class PartitionableSpheroidTriangleMesh:
             inner = intersect_ray_plane(sphere_center, ray_dir, plane_point, tri_normal)
             inner_verts.append(inner)
 
-        inner_verts_spherical = [
-            cartesian_to_spherical_jackson(v - sphere_center) for v in inner_verts
-        ]
+        # inner_verts_spherical = [
+        #     cartesian_to_spherical_jackson(v - sphere_center) for v in inner_verts
+        # ]
 
-        for outer_vert_spherical, inner_vert_spherical in zip(
-            spherical_vertexes, inner_verts_spherical
-        ):
-            # inner radius must be less than outer radius
-            if inner_vert_spherical[0] >= outer_vert_spherical[0]:
-                print(
-                    f"tri_normal: {tri_normal}, norm_of_tri_normal: {np.linalg.norm(tri_normal)}"
-                )
-                print(f"innner verts: {inner_verts}")
-                print(f"outer_verts: {outer_verts}")
-                print(f"outer_vert_spherical: {outer_vert_spherical}")
-                print(f"inner_verts_spherical: {inner_verts_spherical}")
-                print(f"inner triangle area: {triangle_area(*inner_verts)}")
-                raise ValueError(
-                    f"Inner radius {inner_vert_spherical[0]} must be less than outer radius {outer_vert_spherical[0]}"
-                )
+        # for outer_vert_spherical, inner_vert_spherical in zip(
+        #     spherical_vertexes, inner_verts_spherical
+        # ):
+        #     # inner radius must be less than outer radius
+        #     if inner_vert_spherical[0] >= outer_vert_spherical[0]:
+        #         print(
+        #             f"tri_normal: {tri_normal}, norm_of_tri_normal: {np.linalg.norm(tri_normal)}"
+        #         )
+        #         print(f"innner verts: {inner_verts}")
+        #         print(f"outer_verts: {outer_verts}")
+        #         print(f"outer_vert_spherical: {outer_vert_spherical}")
+        #         print(f"inner_verts_spherical: {inner_verts_spherical}")
+        #         print(f"inner triangle area: {triangle_area(*inner_verts)}")
+        #         raise ValueError(
+        #             f"Inner radius {inner_vert_spherical[0]} must be less than outer radius {outer_vert_spherical[0]}"
+        #         )
 
         return inner_verts
 
@@ -544,6 +577,7 @@ class PartitionableSpheroidTriangleMesh:
         shell_thickness,
         shrinkage=0.1,
         shrink_border=0,
+        outward_offset=0,
     ):
         """
         Improved version: constructs a triangle prism where the inner triangle
@@ -558,12 +592,9 @@ class PartitionableSpheroidTriangleMesh:
             if len(triangle_spherical_vertexes[i]) != 3:
                 raise ValueError("Each vertex must be (r, theta, phi)")
 
-        outer_verts = [
-            spherical_to_cartesian_jackson(
-                v, radius_offset=0, sphere_center=sphere_center
-            )
-            for v in triangle_spherical_vertexes
-        ]
+        outer_verts = PartitionableSpheroidTriangleMesh._project_inner_triangle(
+            triangle_spherical_vertexes, -outward_offset, sphere_center
+        )
 
         inner_verts = PartitionableSpheroidTriangleMesh._project_inner_triangle(
             triangle_spherical_vertexes, shell_thickness, sphere_center

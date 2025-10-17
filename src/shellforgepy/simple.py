@@ -41,6 +41,7 @@ from shellforgepy.geometry.m_screws import (
     list_supported_sizes,
     m_screws_table,
 )
+from shellforgepy.geometry.mesh_builders import create_fibonacci_sphere_geometry
 from shellforgepy.geometry.mesh_utils import (
     calc_distance_to_path,
     convert_to_traditional_face_vertex_maps,
@@ -119,6 +120,7 @@ __all__ = [
     "create_extruded_polygon",
     "create_extruded_polygon",
     "create_filleted_box",
+    "create_fibonacci_sphere_geometry",
     "create_hex_prism",
     "create_nut",
     "create_right_triangle",
@@ -171,9 +173,17 @@ def _setup_logging():
     import os
     import sys
 
-    # Allow disabling logging setup via environment variable
+    def is_running_under_pytest():
+        running_under_pytest = (
+            bool(os.getenv("PYTEST_VERSION")) or "pytest" in sys.modules
+        )
+        return running_under_pytest
 
-    if not os.environ.get("SHELLFORGEPY_NO_LOGGING_INIT", False):
+    # Allow disabling logging setup via environment variable, and do not init if running under pytest
+    if (
+        not os.environ.get("SHELLFORGEPY_NO_LOGGING_INIT", False)
+        and not is_running_under_pytest()
+    ):
         import logging
 
         logging.basicConfig(
