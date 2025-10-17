@@ -65,8 +65,19 @@ def test_transformed_shell_map():
     transformed_center = region_view.transform_point(
         partition.mesh.vertices.mean(axis=0)
     )
+    outer_vertex_positions: dict[int, np.ndarray] = {}
     for face_id, base_shell_map in shell_maps.items():
         offset_shell_map = offset_shell_maps[face_id]
+        outer_tri = np.array([base_shell_map["vertexes"][i] for i in [3, 4, 5]])
+        outer_normal = np.cross(
+            outer_tri[1] - outer_tri[0], outer_tri[2] - outer_tri[0]
+        )
+        outer_normal /= np.linalg.norm(outer_normal)
+        normal_sign = np.sign(
+            np.dot(outer_normal, outer_tri.mean(axis=0) - transformed_center)
+        )
+        if normal_sign == 0:
+            normal_sign = 1.0
         outer_indices = vertex_index_map[face_id]["outer"].values()
         for local_idx in outer_indices:
             base_outer = base_shell_map["vertexes"][local_idx]
@@ -77,11 +88,32 @@ def test_transformed_shell_map():
             radial_dir = radial_vec / radial_length
             delta = offset_outer - base_outer
             radial_component = np.dot(delta, radial_dir)
+            normal_component = np.dot(delta, outer_normal)
             assert np.isclose(
-                radial_component, outward_offset, atol=1e-6
-            ), f"Face {face_id} vertex {local_idx} expected radial offset {outward_offset}, got {radial_component}"
+                normal_component, outward_offset * normal_sign, atol=1e-6
+            ), f"Face {face_id} vertex {local_idx} expected normal offset {outward_offset}, got {normal_component}"
             tangential_component = delta - radial_component * radial_dir
             assert np.linalg.norm(tangential_component) < 1e-6
+
+    outer_vertex_positions = {}
+    smoothed_shell_maps, smoothed_vertex_index_map = (
+        region_view.get_transformed_materialized_shell_maps(
+            shell_thickness=0.1, smooth_outside=True
+        )
+    )
+    shared_outer_count = 0
+    for face_id, face_map in smoothed_shell_maps.items():
+        vmap = smoothed_vertex_index_map[face_id]
+        for orig_idx, local_idx in vmap["outer"].items():
+            position = face_map["vertexes"][local_idx]
+            if orig_idx not in outer_vertex_positions:
+                outer_vertex_positions[orig_idx] = position
+            else:
+                shared_outer_count += 1
+                assert np.allclose(
+                    position, outer_vertex_positions[orig_idx], atol=1e-6
+                ), f"Transformed outer vertex {orig_idx} not smoothed consistently"
+    assert shared_outer_count > 0, "Expected shared outer vertices to verify smoothing"
 
 
 def test_compute_connector_hints_on_transformed_region_view():

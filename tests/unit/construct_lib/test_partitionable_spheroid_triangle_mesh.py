@@ -460,6 +460,16 @@ def test_materialized_shell_maps_with_and_without_smoothing():
     for face_idx in shell_maps_no_offset:
         base_shell = shell_maps_no_offset[face_idx]
         offset_shell = shell_maps_with_offset[face_idx]
+        outer_tri = np.array([base_shell["vertexes"][i] for i in [3, 4, 5]])
+        outer_normal = np.cross(
+            outer_tri[1] - outer_tri[0], outer_tri[2] - outer_tri[0]
+        )
+        outer_normal /= np.linalg.norm(outer_normal)
+        normal_sign = np.sign(
+            np.dot(outer_normal, outer_tri.mean(axis=0) - sphere_center)
+        )
+        if normal_sign == 0:
+            normal_sign = 1.0
         for local_idx in range(3, 6):
             base_outer = base_shell["vertexes"][local_idx]
             offset_outer = offset_shell["vertexes"][local_idx]
@@ -469,9 +479,10 @@ def test_materialized_shell_maps_with_and_without_smoothing():
             radial_dir = radial_vec / radial_length
             delta = offset_outer - base_outer
             radial_component = np.dot(delta, radial_dir)
+            normal_component = np.dot(delta, outer_normal)
             assert np.isclose(
-                radial_component, outward_offset, atol=1e-6
-            ), f"Face {face_idx} vertex {local_idx} expected radial offset {outward_offset}, got {radial_component}"
+                normal_component, outward_offset * normal_sign, atol=1e-6
+            ), f"Face {face_idx} vertex {local_idx} expected normal offset {outward_offset}, got {normal_component}"
             tangential_component = delta - radial_component * radial_dir
             assert np.linalg.norm(tangential_component) < 1e-6
 
@@ -494,3 +505,29 @@ def test_materialized_shell_maps_with_and_without_smoothing():
     assert (
         len(inner_vertex_global_positions) < 10
     ), f"Expected re-use of inner vertices after smoothing, got {len(inner_vertex_global_positions)}"
+
+    shell_maps_outer_smoothed, vertex_index_map_outer = (
+        mesh.calculate_materialized_shell_maps(
+            shell_thickness=shell_thickness,
+            smooth_inside=False,
+            smooth_outside=True,
+            shrinkage=0,
+        )
+    )
+
+    outer_vertex_positions: dict[int, np.ndarray] = {}
+    shared_outer_count = 0
+    for face_idx, vmap in vertex_index_map_outer.items():
+        for orig_idx, local_idx in vmap["outer"].items():
+            position = shell_maps_outer_smoothed[face_idx]["vertexes"][local_idx]
+            if orig_idx not in outer_vertex_positions:
+                outer_vertex_positions[orig_idx] = position
+            else:
+                shared_outer_count += 1
+                reference = outer_vertex_positions[orig_idx]
+                assert np.allclose(
+                    position, reference, atol=1e-6
+                ), f"Outer vertex for original index {orig_idx} not smoothed consistently"
+    assert (
+        shared_outer_count > 0
+    ), "Expected at least one shared vertex to validate outer smoothing"

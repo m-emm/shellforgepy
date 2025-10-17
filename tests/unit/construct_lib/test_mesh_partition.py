@@ -428,6 +428,16 @@ def test_materialized_shell_maps_outward_offset_partition():
         for face_idx in partition.get_faces_of_region(region_id):
             base_shell = shell_maps_base[face_idx]
             offset_shell = shell_maps_offset[face_idx]
+            outer_tri = np.array([base_shell["vertexes"][i] for i in [3, 4, 5]])
+            outer_normal = np.cross(
+                outer_tri[1] - outer_tri[0], outer_tri[2] - outer_tri[0]
+            )
+            outer_normal /= np.linalg.norm(outer_normal)
+            normal_sign = np.sign(
+                np.dot(outer_normal, outer_tri.mean(axis=0) - sphere_center)
+            )
+            if normal_sign == 0:
+                normal_sign = 1.0
             for local_idx in range(3, 6):
                 base_outer = base_shell["vertexes"][local_idx]
                 offset_outer = offset_shell["vertexes"][local_idx]
@@ -437,9 +447,10 @@ def test_materialized_shell_maps_outward_offset_partition():
                 radial_dir = radial_vec / radial_length
                 delta = offset_outer - base_outer
                 radial_component = np.dot(delta, radial_dir)
+                normal_component = np.dot(delta, outer_normal)
                 assert np.isclose(
-                    radial_component, outward_offset, atol=1e-6
-                ), f"Region {region_id} face {face_idx} vertex {local_idx} expected radial offset {outward_offset}, got {radial_component}"
+                    normal_component, outward_offset * normal_sign, atol=1e-6
+                ), f"Region {region_id} face {face_idx} vertex {local_idx} expected normal offset {outward_offset}, got {normal_component}"
                 tangential_component = delta - radial_component * radial_dir
                 assert np.linalg.norm(tangential_component) < 1e-6
 
