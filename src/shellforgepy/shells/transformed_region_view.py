@@ -234,12 +234,28 @@ class TransformedRegionView:
 
         return hits
 
+    def get_region_centroid(self) -> np.ndarray:
+        """
+        Compute the centroid of the transformed region.
+
+        Returns:
+        --------
+        np.ndarray
+            Centroid of the region.
+        """
+        V, _, _ = self.get_transformed_vertices_faces_boundary_edges()
+
+        centroid = np.mean(V, axis=0)
+
+        return centroid
+
     def compute_transformed_connector_hints(
         self,
         shell_thickness,
         merge_connectors=False,
         min_connector_distance=None,
         min_corner_distance=None,
+        min_edge_length=None,
     ):
         """
         Compute connector hints for this transformed region view.
@@ -262,6 +278,7 @@ class TransformedRegionView:
             merge_connectors,
             min_connector_distance=min_connector_distance,
             min_corner_distance=min_corner_distance,
+            min_edge_length=min_edge_length,
         )
         return [
             transform_connector_hint(h, self.transform)
@@ -325,6 +342,26 @@ class TransformedRegionView:
 
         return centroid
 
+    def get_all_face_normals(self) -> np.ndarray:
+        """
+        Compute the normal vectors of all faces in the transformed region.
+
+        Returns:
+        --------
+        np.ndarray
+            Array of normal vectors for all faces.
+        """
+        V, F, _ = self.get_transformed_vertices_faces_boundary_edges()
+
+        normals = []
+        for face in F:
+            a, b, c = [V[i] for i in face]
+            n = np.cross(b - a, c - a)
+            n_normalized = normalize(n)
+            normals.append(n_normalized)
+
+        return np.array(normals)
+
     def face_normal(self, face_index: int) -> np.ndarray:
         """
         Compute the normal vector of a face in the transformed region.
@@ -339,18 +376,28 @@ class TransformedRegionView:
         np.ndarray
             Normal vector of the face.
         """
+
+        all_face_normals = self.get_all_face_normals()
+        return all_face_normals[face_index]
+
+    def get_all_face_areas(self):
+        """
+        Compute the areas of all faces in the transformed region.
+
+        Returns:
+        --------
+        np.ndarray
+            Array of areas for all faces.
+        """
         V, F, _ = self.get_transformed_vertices_faces_boundary_edges()
 
-        if face_index < 0 or face_index >= len(F):
-            raise ValueError(
-                f"face_index {face_index} is out of bounds for region with {len(F)} faces."
-            )
+        areas = []
+        for face in F:
+            a, b, c = [V[i] for i in face]
+            area = triangle_area(a, b, c)
+            areas.append(area)
 
-        face = F[face_index]
-        a, b, c = [V[i] for i in face]
-        n = np.cross(b - a, c - a)
-
-        return normalize(n)
+        return areas
 
     def face_vertices(self, face_index: int) -> np.ndarray:
         """

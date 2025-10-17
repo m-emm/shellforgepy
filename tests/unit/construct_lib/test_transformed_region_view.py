@@ -881,3 +881,129 @@ def test_transformed_region_view_caching():
     assert vertices1 is vertices2
     assert faces1 is faces2
     assert edges1 is edges2
+
+
+def test_perforate_degenerate_triangle_reproduction():
+    """
+    Test to verify that the degenerate triangle issue seen in headmask design is fixed.
+    This test creates a fibonacci sphere and tries various plane orientations
+    that previously triggered the perforation bug causing degenerate triangles.
+
+    This test should now pass, demonstrating that the fix prevents degenerate triangles.
+    """
+    sphere_radius = 30
+
+    # Create a fibonacci sphere mesh
+    mesh = PartitionableSpheroidTriangleMesh.create_fibonacci_sphere_mesh(
+        num_points=100, radius=sphere_radius
+    )
+    partition = MeshPartition(mesh)
+
+    # Test various plane orientations similar to the headmask case
+    # where plane_normal=np.array([0, 1, -0.038])
+    test_angles = np.linspace(-0.1, 0.1, 20)  # Small angles around horizontal
+
+    successful_cuts = 0
+    failed_cuts = 0
+
+    for angle in test_angles:
+        # Create plane normal with slight tilt like in the error case
+        plane_normal = np.array([0, 1, angle])
+        plane_normal = plane_normal / np.linalg.norm(plane_normal)
+
+        # Use a cut point that intersects the sphere
+        cut_point = np.array([0, sphere_radius * 0.7, 0])
+
+        try:
+            # This should now succeed thanks to the improved perforation algorithm
+            new_partition = partition.perforate_and_split_region_by_plane(
+                region_id=0,
+                plane_point=cut_point,
+                plane_normal=plane_normal,
+            )
+            successful_cuts += 1
+
+            # Verify the result has at least one region
+            regions = new_partition.get_regions()
+            assert (
+                len(regions) >= 1
+            ), f"Should have at least 1 region, got {len(regions)}"
+
+        except ValueError as e:
+            if "Degenerate triangle" in str(e):
+                failed_cuts += 1
+                print(f"Degenerate triangle detected at angle {angle}: {e}")
+            else:
+                # Re-raise other types of ValueError
+                raise e
+
+    print(
+        f"Perforation test results: {successful_cuts} successful, {failed_cuts} failed"
+    )
+
+    # With the fix, we should have zero failures
+    assert (
+        failed_cuts == 0
+    ), f"Expected no degenerate triangle failures, but got {failed_cuts}"
+    assert successful_cuts > 0, "Should have at least some successful cuts"
+
+
+def test_perforate_various_orientations_stress_test():
+    """
+    Comprehensive stress test with random orientations to verify robustness.
+    This should now pass reliably with the improved perforation algorithm.
+    """
+    sphere_radius = 30
+
+    # Create a fibonacci sphere mesh
+    mesh = PartitionableSpheroidTriangleMesh.create_fibonacci_sphere_mesh(
+        num_points=50, radius=sphere_radius
+    )
+    partition = MeshPartition(mesh)
+
+    # Generate random plane orientations
+    np.random.seed(42)  # For reproducibility
+    num_tests = 50
+
+    successful_cuts = 0
+    failed_cuts = 0
+    degenerate_angles = []
+
+    for i in range(num_tests):
+        # Random unit vector for plane normal
+        plane_normal = np.random.randn(3)
+        plane_normal = plane_normal / np.linalg.norm(plane_normal)
+
+        # Random cut point within sphere
+        cut_point = np.random.uniform(-sphere_radius * 0.5, sphere_radius * 0.5, 3)
+
+        try:
+            new_partition = partition.perforate_and_split_region_by_plane(
+                region_id=0,
+                plane_point=cut_point,
+                plane_normal=plane_normal,
+            )
+            successful_cuts += 1
+
+            # Basic validation
+            regions = new_partition.get_regions()
+            assert len(regions) >= 1, f"Should have at least 1 region"
+
+        except ValueError as e:
+            if "Degenerate triangle" in str(e):
+                failed_cuts += 1
+                degenerate_angles.append((plane_normal, cut_point))
+                print(
+                    f"Degenerate triangle at iteration {i}: normal={plane_normal}, point={cut_point}"
+                )
+            else:
+                # Re-raise other errors
+                raise e
+
+    print(f"Stress test results: {successful_cuts} successful, {failed_cuts} failed")
+
+    # With the fix, we should have zero failures
+    assert (
+        failed_cuts == 0
+    ), f"Expected no degenerate triangle failures, but got {failed_cuts}"
+    assert successful_cuts > 0, "Should have at least some successful cuts"

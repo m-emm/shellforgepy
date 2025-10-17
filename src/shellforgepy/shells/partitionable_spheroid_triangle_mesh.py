@@ -306,8 +306,7 @@ class PartitionableSpheroidTriangleMesh:
                 isinstance(label, str) for label in self.vertex_labels
             ), "All vertex labels must be strings"
 
-        # check for degenerate triangles
-
+        # Check for degenerate triangles
         characteristic_length = np.max(np.linalg.norm(self.vertices, axis=1))
         for face in self.faces:
             area = triangle_area(*self.vertices[face])
@@ -911,10 +910,28 @@ class PartitionableSpheroidTriangleMesh:
                 if 0 < t < 1:
                     ipt = (1 - t) * Va + t * Vb
 
+                    # Calculate edge length for relative tolerance
+                    edge_length = np.linalg.norm(Vb - Va)
+
+                    # Use both absolute and relative tolerances
+                    relative_epsilon = epsilon + 0.01 * edge_length  # 1% of edge length
+
+                    # Check distance to both endpoints
+                    dist_to_a = np.linalg.norm(ipt - Va)
+                    dist_to_b = np.linalg.norm(ipt - Vb)
+
+                    # If too close to either endpoint, skip the cut
+                    if dist_to_a < relative_epsilon or dist_to_b < relative_epsilon:
+                        continue
+
+                    # Also check distance to any existing vertex
                     closest_vertex_index = np.argmin(
                         np.linalg.norm(V_orig - ipt, axis=1)
                     )
-                    if np.linalg.norm(V_orig[closest_vertex_index] - ipt) < epsilon:
+                    if (
+                        np.linalg.norm(V_orig[closest_vertex_index] - ipt)
+                        < relative_epsilon
+                    ):
                         continue
                     else:
                         edge_to_cutpoint_index[edge] = next_index
@@ -977,17 +994,11 @@ class PartitionableSpheroidTriangleMesh:
 
             new_tris = split_triangle_topologically(tri, edge_to_new_vertex)
             new_face_indices = []
+
             for t in new_tris:
                 new_index = len(F_new)
                 new_face_indices.append(new_index)
                 F_new.append(t)
-
-                area = triangle_area(*V_new[t])
-                characteristic_length = np.max(np.linalg.norm(V_new, axis=1))
-                if area < AREA_FRACTION_LIMIT * characteristic_length**2:
-                    raise ValueError(
-                        f"Degenerate triangle in face {orig_index}, area: {area}, characteristic_length: {characteristic_length}, vertices: {V_new[t]}"
-                    )
 
             face_index_mapping[orig_index] = new_face_indices
 

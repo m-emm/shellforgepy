@@ -381,6 +381,7 @@ class MeshPartition:
         merge_connectors=False,
         min_connector_distance=None,
         min_corner_distance=None,
+        min_edge_length=None,
     ) -> list[ConnectorHint]:
         shell_maps, vertex_index_map = self.mesh.calculate_materialized_shell_maps(
             shell_thickness
@@ -419,6 +420,14 @@ class MeshPartition:
             if not any(v in corner_vertices for v in hint.triangle_a_vertex_indices)
             and not any(v in corner_vertices for v in hint.triangle_b_vertex_indices)
         ]
+
+        def edge_length(hint: ConnectorHint) -> float:
+            return np.linalg.norm(hint.start_vertex - hint.end_vertex)
+
+        if min_edge_length is not None:
+            connector_hints = [
+                hint for hint in connector_hints if edge_length(hint) >= min_edge_length
+            ]
 
         if min_corner_distance is not None:
 

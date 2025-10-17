@@ -52,5 +52,24 @@ ALIGNMENT_AXIS = {
     Alignment.STACK_BACK: 1,
 }
 
+ALIGNMENT_STACK_ALIGNMENT = {
+    Alignment.LEFT: Alignment.STACK_LEFT,
+    Alignment.RIGHT: Alignment.STACK_RIGHT,
+    Alignment.TOP: Alignment.STACK_TOP,
+    Alignment.BOTTOM: Alignment.STACK_BOTTOM,
+    Alignment.FRONT: Alignment.STACK_FRONT,
+    Alignment.BACK: Alignment.STACK_BACK,
+    Alignment.CENTER: None,
+    Alignment.STACK_LEFT: Alignment.STACK_LEFT,
+    Alignment.STACK_RIGHT: Alignment.STACK_RIGHT,
+    Alignment.STACK_TOP: Alignment.STACK_TOP,
+    Alignment.STACK_BOTTOM: Alignment.STACK_BOTTOM,
+    Alignment.STACK_FRONT: Alignment.STACK_FRONT,
+    Alignment.STACK_BACK: Alignment.STACK_BACK,
+}
+
 for k, v in ALIGNMENT_AXIS.items():
     setattr(k, "axis", v)
+
+for k, v in ALIGNMENT_STACK_ALIGNMENT.items():
+    setattr(k, "stack_alignment", v)
