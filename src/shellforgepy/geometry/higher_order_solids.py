@@ -494,3 +494,26 @@ def create_rounded_slab(
                 retval = retval.cut(moved_stencil2)
     retval = translate(length / 2, width / 2, 0)(retval)
     return retval
+
+
+def create_distorted_cube(corners):
+    if len(corners) != 8:
+        raise ValueError("Distorted cube requires exactly 8 corners")
+    maps = {
+        "vertexes": {i: tuple(map(float, corners[i])) for i in range(8)},
+        "faces": {
+            0: [0, 2, 1],
+            1: [0, 3, 2],
+            2: [4, 5, 6],
+            3: [4, 6, 7],
+            4: [0, 1, 5],
+            5: [0, 5, 4],
+            6: [2, 3, 6],
+            7: [3, 7, 6],
+            8: [1, 2, 5],
+            9: [2, 6, 5],
+            10: [0, 4, 3],
+            11: [3, 4, 7],
+        },
+    }
+    return create_solid_from_traditional_face_vertex_maps(maps)

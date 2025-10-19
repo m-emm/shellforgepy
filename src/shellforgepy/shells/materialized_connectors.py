@@ -217,6 +217,10 @@ def compute_transforms_from_hint(
     male_female_region_calculator=None,
 ):
     region_a, region_b = hint.region_a, hint.region_b
+
+    if region_a == region_b:
+        raise ValueError("Regions for connector hint must be different")
+
     if male_female_region_calculator is not None:
         male_region, female_region = male_female_region_calculator(hint)
     else:

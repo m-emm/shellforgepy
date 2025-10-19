@@ -69,6 +69,7 @@ from .construct.named_part import NamedPart
 from .construct.part_collector import PartCollector
 from .geometry.face_point_cloud import face_point_cloud
 from .geometry.higher_order_solids import (
+    create_distorted_cube,
     create_hex_prism,
     create_right_triangle,
     create_ring,
@@ -89,7 +90,11 @@ from .produce.arrange_and_export import (
     export_solid_to_stl,
 )
 from .produce.production_parts_model import PartInfo, PartList
-from .shells.materialized_connectors import create_screw_connector_normal
+from .shells.connector_hint import ConnectorHint
+from .shells.materialized_connectors import (
+    compute_transforms_from_hint,
+    create_screw_connector_normal,
+)
 from .shells.mesh_partition import MeshPartition
 from .shells.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
@@ -106,8 +111,10 @@ __all__ = [
     "apply_fillet_to_edges",
     "arrange_and_export_parts",
     "arrange_and_export",
+    "ConnectorHint",
     "calc_distance_to_path",
     "chain_translations",
+    "compute_transforms_from_hint",
     "convert_to_traditional_face_vertex_maps",
     "coordinate_system_transform_to_matrix",
     "coordinate_system_transform",
@@ -117,6 +124,7 @@ __all__ = [
     "create_cone",
     "create_cylinder_screw",
     "create_cylinder",
+    "create_distorted_cube",
     "create_extruded_polygon",
     "create_extruded_polygon",
     "create_filleted_box",
