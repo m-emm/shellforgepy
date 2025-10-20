@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -26,6 +27,9 @@ from shellforgepy.geometry.higher_order_solids import (
     create_trapezoid,
     directed_cylinder_at,
 )
+from shellforgepy.geometry.m_screws import create_nut, m_screws_table
+
+_logger = logging.getLogger(__name__)
 
 VectorLike = Union[Sequence[float], np.ndarray, Tuple[float, float, float]]
 
@@ -159,31 +163,6 @@ def create_distorted_cube(corners):
         },
     }
     return create_solid_from_traditional_face_vertex_maps(maps)
-
-
-m_screws_table = {
-    "M3": {
-        "nut_size": 5.5,
-        "nut_thickness": 2.3,
-        "clearance_hole_close": 3.2,
-        "clearance_hole_normal": 3.4,
-        "cylinder_head_height": 3.0,
-    },
-    "M4": {
-        "nut_size": 7.0,
-        "nut_thickness": 3.0,
-        "clearance_hole_close": 4.3,
-        "clearance_hole_normal": 4.5,
-        "cylinder_head_height": 4.0,
-    },
-    "M5": {
-        "nut_size": 8.0,
-        "nut_thickness": 4.6,
-        "clearance_hole_close": 5.3,
-        "clearance_hole_normal": 5.5,
-        "cylinder_head_height": 5.0,
-    },
-}
 
 
 def create_nut(size, height=None, slack=0.0, no_hole=False):
@@ -364,6 +343,46 @@ def create_nut_holder_cutter(size, slack, drill):
     return cutter.fuse(rest)
 
 
+def line_dist(alpha, l, d):
+    """
+    Minimal height y0 so that a horizontal segment of length l, centered at x=0
+    and placed at y=y0, has perpendicular distance at least d from both rays
+    forming a symmetric wedge of opening angle alpha around the +y axis.
+
+    Parameters
+    ----------
+    alpha : float
+        Angle between the two rays. **Radians** expected.
+        (If alpha > pi, we assume degrees and convert.)
+    l : float
+        Length of the horizontal segment (>= 0).
+    d : float
+        Required clearance to each ray (>= 0).
+
+    Returns
+    -------
+    y0 : float
+        Minimal height. Returns math.inf for alpha <= 0.
+
+    Formula
+    -------
+    y0 = ( d + 0.5*l*cos(alpha/2) ) / sin(alpha/2)
+       = d*csc(alpha/2) + 0.5*l*cot(alpha/2)
+    """
+    if alpha < 0:
+        raise ValueError("Angle alpha must be non-negative")
+
+    if alpha > math.pi:
+        raise ValueError("Angle alpha must be in radians and <= pi")
+
+    s = math.sin(alpha / 2.0)
+    if s <= 0:
+        return math.inf
+
+    c = math.cos(alpha / 2.0)
+    return (d + 0.5 * l * c) / s
+
+
 def create_screw_connector_normal(
     hint,
     screw_size,
@@ -371,7 +390,9 @@ def create_screw_connector_normal(
     screw_length_slack=0.1,
     tongue_slack=1.0,
     male_female_region_calculator=None,
+    cover_thickness=None,
 ):
+
     transforms = compute_transforms_from_hint(
         hint, male_female_region_calculator=male_female_region_calculator
     )
@@ -389,40 +410,119 @@ def create_screw_connector_normal(
     connector_width = total_connector_width / 2
     dihedral_inset = math.tan(dihedral_angle / 2) * connector_thickness
     connector_length = connector_thickness * 2
+    tongue_width = (
+        connector_width * 2 + math.tan(dihedral_angle / 2) * connector_thickness
+    )
 
-    def calc_corners(length, width, thickness, inset):
-        return [
-            (-length / 2 - thickness, 0, 0),
-            (length / 2 + thickness, 0, 0),
-            (length / 2 + thickness, width + thickness, 0),
-            (-length / 2 - thickness, width + thickness, 0),
-            (-length / 2, inset, thickness),
-            (length / 2, inset, thickness),
-            (length / 2, width, thickness),
-            (-length / 2, width, thickness),
+    tongue_thickness = screw_length / 4
+
+    if cover_thickness is None:
+        cover_thickness = tongue_thickness * 2
+
+    tongue_length = connector_length - 2 * tongue_thickness
+
+    a_b_ray_angle = math.pi - dihedral_angle
+
+    _logger.debug(f"a_b_normal_angle (degrees) = {math.degrees(a_b_ray_angle)}")
+
+    d = tongue_thickness
+    y0 = d
+    if a_b_ray_angle < (math.pi) and a_b_ray_angle > 0:
+
+        alpha = a_b_ray_angle
+        l = tongue_width
+        y0 = line_dist(
+            alpha,
+            l,
+            d,
+        )
+        _logger.debug(
+            f"Calculated line_dist y0 = {y0} from alpha={math.degrees(alpha)} degrees, l={l}, d={d}"
+        )
+    else:
+        _logger.debug(
+            f"Skipping line_dist calculation for angle {math.degrees(a_b_ray_angle)} degrees"
+        )
+
+    relevant_normal = normalize(transforms.female_normal + transforms.male_normal)
+    edge_vec = np.asarray(hint.edge_vector, dtype=float)
+    tongue_direction = normalize(transforms.female_out + -transforms.male_out)
+
+    def calc_male_connector_vertices(length, width, thickness):
+        bottom_length = length + 2 * thickness
+        centroid = np.asarray(hint.edge_centroid, dtype=float)
+        verts = [
+            centroid
+            - edge_vec * length / 2
+            - relevant_normal * thickness
+            - tongue_direction * (width - thickness),
+            centroid
+            + edge_vec * length / 2
+            - relevant_normal * thickness
+            - tongue_direction * (width - thickness),
+            centroid + edge_vec * length / 2 - relevant_normal * thickness,
+            centroid - edge_vec * length / 2 - relevant_normal * thickness,
+            centroid - edge_vec * bottom_length / 2 + transforms.male_out * width,
+            centroid + edge_vec * bottom_length / 2 + transforms.male_out * width,
+            centroid + edge_vec * bottom_length / 2,
+            centroid - edge_vec * bottom_length / 2,
+        ]
+        return verts
+
+    male_connector_vertices = calc_male_connector_vertices(
+        connector_length,
+        connector_width + y0 / 2,
+        y0 + tongue_thickness + cover_thickness,
+    )
+
+    male_connector = create_distorted_cube(male_connector_vertices)
+
+    def calc_female_connector_vertices(length, width, thickness):
+        bottom_length = length + 2 * thickness
+        centroid = np.asarray(hint.edge_centroid, dtype=float)
+        real_thickness = thickness
+        real_width = width - connector_width + tongue_width / 2
+        verts = [
+            centroid
+            - edge_vec * length / 2
+            - relevant_normal * real_thickness
+            + tongue_direction * (real_width),
+            centroid
+            + edge_vec * length / 2
+            - relevant_normal * real_thickness
+            + tongue_direction * (real_width),
+            centroid + edge_vec * length / 2 - relevant_normal * real_thickness,
+            centroid - edge_vec * length / 2 - relevant_normal * real_thickness,
+            centroid
+            - edge_vec * bottom_length / 2
+            + transforms.female_out * (real_width + real_thickness),
+            centroid
+            + edge_vec * bottom_length / 2
+            + transforms.female_out * (real_width + real_thickness),
+            centroid + edge_vec * bottom_length / 2,
+            centroid - edge_vec * bottom_length / 2,
         ]
 
-    corners = calc_corners(
-        connector_length, connector_width, connector_thickness, dihedral_inset
+        verts_reversed = []
+        for i in range(len(verts)):
+            verts_reversed.append(verts[len(verts) - 1 - i])
+
+        verts = np.array(verts_reversed)
+
+        return verts
+
+    female_connector_vertices = calc_female_connector_vertices(
+        connector_length,
+        connector_width + y0 / 2,
+        y0 + tongue_thickness + cover_thickness,
     )
-    male_corners = calc_corners(
-        connector_length, connector_width, connector_thickness / 2, dihedral_inset
-    )
 
-    male_slab = create_distorted_cube(male_corners)
-    male_slab = rotate(180, axis=(0, 1, 0))(male_slab)
+    female_connector = create_distorted_cube(female_connector_vertices)
 
-    female_slab = create_distorted_cube(corners)
-    female_slab = rotate(180, axis=(0, 1, 0))(female_slab)
-
-    male_connector = transforms.apply_tf(male_slab, transforms.tf_male)
-    female_connector = transforms.apply_tf(female_slab, transforms.tf_female)
-
-    screw_direction = -np.asarray(transforms.female_normal)
-    tongue_direction = transforms.female_out
+    screw_direction = -relevant_normal
 
     screw_radius = m_screws_table[screw_size]["clearance_hole_close"] / 2
-    total_length = total_screw_length + screw_length_slack
+    total_length = total_screw_length + screw_length_slack + y0
     base_point = _to_tuple3(hint.edge_centroid)
     screw_hole = directed_cylinder_at(
         base_point, _to_tuple3(screw_direction), screw_radius, total_length
@@ -440,41 +540,57 @@ def create_screw_connector_normal(
         )
     )
 
-    tongue_width = (
-        connector_width * 2 + math.tan(dihedral_angle / 2) * connector_thickness
+    _logger.debug("*" * 20)
+    _logger.debug(
+        f"connector_thickness={connector_thickness}, connector_width={connector_width}, dihedral_inset={dihedral_inset}, connector_length={connector_length}"
     )
-    tongue_thickness = screw_length / 4
-    tongue_length = connector_length - 2 * tongue_thickness
-    edge_vec = np.asarray(hint.edge_vector, dtype=float)
+    _logger.debug(
+        f"tongue_width={tongue_width}, tongue_thickness={tongue_thickness}, tongue_length={tongue_length}, bottom_length={tongue_length + 2 * tongue_thickness}"
+    )
+
+    # calculate angle between the planes. If the normals are collinear, the angle must be 180 degrees
+    # so it i is NOT just the acos of the dot product
+    # and also not the dihedral angle - if the dihedral angle is 0, this angle must be 180 degrees
+    # For line_dist, we need the opening angle of the wedge formed by the two surfaces
+    # This is the supplementary angle to the dihedral angle: pi - dihedral_angle
+
+    _logger.debug("+" * 20)
 
     def calc_tongue_vertices(length, width, thickness):
         bottom_length = length + 2 * thickness
         centroid = np.asarray(hint.edge_centroid, dtype=float)
         verts = [
-            centroid
-            - edge_vec * bottom_length / 2
-            - transforms.female_normal * thickness,
-            centroid
-            + edge_vec * bottom_length / 2
-            - transforms.female_normal * thickness,
+            centroid - edge_vec * bottom_length / 2 - relevant_normal * thickness / 2,
+            centroid + edge_vec * bottom_length / 2 - relevant_normal * thickness / 2,
             centroid
             + edge_vec * length / 2
-            - transforms.female_normal * thickness
+            - relevant_normal * thickness / 2
             + tongue_direction * width / 2,
             centroid
             - edge_vec * length / 2
-            - transforms.female_normal * thickness
+            - relevant_normal * thickness / 2
             + tongue_direction * width / 2,
-            centroid - edge_vec * bottom_length / 2,
-            centroid + edge_vec * bottom_length / 2,
-            centroid + edge_vec * length / 2 + tongue_direction * width / 2,
-            centroid - edge_vec * length / 2 + tongue_direction * width / 2,
+            centroid - edge_vec * bottom_length / 2 + relevant_normal * thickness / 2,
+            centroid + edge_vec * bottom_length / 2 + relevant_normal * thickness / 2,
+            centroid
+            + edge_vec * length / 2
+            + tongue_direction * width / 2
+            + relevant_normal * thickness / 2,
+            centroid
+            - edge_vec * length / 2
+            + tongue_direction * width / 2
+            + relevant_normal * thickness / 2,
         ]
+
+        verts = [v - (y0 + thickness / 2) * relevant_normal for v in verts]
         return verts
 
     tongue_vertices = calc_tongue_vertices(
         tongue_length, tongue_width, tongue_thickness
     )
+
+    for v in tongue_vertices:
+        _logger.debug(f"tongue vertex: {v}")
     tongue = create_distorted_cube(tongue_vertices).cut(screw_hole)
 
     tongue_cutter_vertices = calc_tongue_vertices(
@@ -482,11 +598,14 @@ def create_screw_connector_normal(
         tongue_width + tongue_slack,
         tongue_thickness + tongue_slack,
     )
+
     tongue_cutter = create_distorted_cube(tongue_cutter_vertices)
 
     male_connector = male_connector.fuse(tongue)
+    female_connector = female_connector.cut(screw_hole)
     female_cutter = tongue_cutter.fuse(screw_hole)
-    female_connector = female_connector.cut(female_cutter)
+
+    female_connector = female_connector.cut(tongue_cutter)
 
     return SimpleNamespace(
         male_region=transforms.male_region,

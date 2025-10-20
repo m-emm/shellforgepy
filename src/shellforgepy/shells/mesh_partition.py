@@ -383,6 +383,9 @@ class MeshPartition:
         min_corner_distance=None,
         min_edge_length=None,
     ) -> list[ConnectorHint]:
+
+        final_hints = []
+
         shell_maps, vertex_index_map = self.mesh.calculate_materialized_shell_maps(
             shell_thickness
         )
@@ -396,6 +399,21 @@ class MeshPartition:
 
         if merge_connectors:
             connector_hints = merge_collinear_connectors(connector_hints)
+
+        hints_by_region_pair = defaultdict(list)
+        for hint_index, hint in enumerate(connector_hints):
+            key = tuple(sorted((hint.region_a, hint.region_b)))
+            hints_by_region_pair[key].append((hint_index, hint))
+
+        scores = defaultdict(
+            lambda: {
+                "corner_penalty": 0,
+                "edge_length_penalty": 0,
+                "corner_distance_penalty": 0,
+                "connector_distance_penalty": 0,
+                "is_central_score": 0,
+            }
+        )
 
         # filter out corner connectors
 
@@ -414,42 +432,33 @@ class MeshPartition:
 
         _logger.debug(f"There are {len(corner_vertices)} corner vertices.")
 
-        connector_hints = [
-            hint
-            for hint in connector_hints
-            if not any(v in corner_vertices for v in hint.triangle_a_vertex_indices)
-            and not any(v in corner_vertices for v in hint.triangle_b_vertex_indices)
-        ]
+        for hint_index, hint in enumerate(connector_hints):
+            if any(v in corner_vertices for v in hint.triangle_a_vertex_indices) or any(
+                v in corner_vertices for v in hint.triangle_b_vertex_indices
+            ):
+                scores[hint_index]["corner_penalty"] = 1
 
         def edge_length(hint: ConnectorHint) -> float:
             return np.linalg.norm(hint.start_vertex - hint.end_vertex)
 
         if min_edge_length is not None:
-            connector_hints = [
-                hint for hint in connector_hints if edge_length(hint) >= min_edge_length
-            ]
+            for hint_index, hint in enumerate(connector_hints):
+                if edge_length(hint) < min_edge_length:
+                    scores[hint_index]["edge_length_penalty"] = 1
 
         if min_corner_distance is not None:
-
-            connector_hints = [
-                hint
-                for hint in connector_hints
-                if all(
+            for hint_index, hint in enumerate(connector_hints):
+                if any(
                     np.linalg.norm(hint.edge_centroid - corner_vertex)
-                    >= min_corner_distance
+                    < min_corner_distance
                     for corner_vertex in corner_vertex_coordinates
-                )
-            ]
+                ):
+                    scores[hint_index]["corner_distance_penalty"] = 1
 
         if (min_connector_distance is not None) or (min_corner_distance is not None):
             if min_connector_distance is None:
                 min_connector_distance = 0  # no limit for connector distance
             filtered_hints = []
-
-            hints_by_region_pair = defaultdict(list)
-            for hint_index, hint in enumerate(connector_hints):
-                key = tuple(sorted((hint.region_a, hint.region_b)))
-                hints_by_region_pair[key].append((hint_index, hint))
 
             for region_pair, hints_for_pair in hints_by_region_pair.items():
 
@@ -467,12 +476,55 @@ class MeshPartition:
                         closest_distance = distance
                         closest_hint = (hint_index, hint)
 
-                filtered_hints.append(closest_hint)
+                scores[closest_hint[0]]["is_central_score"] = 1
+
+            for region_pair, hints_for_pair in hints_by_region_pair.items():
+                # get the best scored hint, at least one per region pair
+                best_hint = None
+                best_score = -np.inf
+                for hint_index, hint in hints_for_pair:
+                    score = 0
+                    score -= scores[hint_index]["corner_penalty"] * 10
+                    score -= scores[hint_index]["edge_length_penalty"] * 10
+                    score -= scores[hint_index]["corner_distance_penalty"] * 15
+                    score -= scores[hint_index]["connector_distance_penalty"] * 10
+                    score += scores[hint_index]["is_central_score"] * 1
+
+                    if score > best_score:
+                        best_score = score
+                        best_hint = (hint_index, hint)
+                filtered_hints.append(best_hint)
+
+            for region_pair, hints_for_pair in hints_by_region_pair.items():
+                # get the best scored hint, at least one per region pair
+                best_hint = None
+                best_score = -np.inf
+                for hint_index, hint in hints_for_pair:
+                    score = 0
+                    score -= scores[hint_index]["corner_penalty"] * 10
+                    score -= scores[hint_index]["edge_length_penalty"] * 10
+                    score -= scores[hint_index]["corner_distance_penalty"] * 15
+                    score -= scores[hint_index]["connector_distance_penalty"] * 10
+                    score += scores[hint_index]["is_central_score"] * 1
+
+                    if score > best_score:
+                        best_score = score
+                        best_hint = (hint_index, hint)
+                filtered_hints.append(best_hint)
 
             # now try to add more hints, but only if they are sufficiently far apart and not too close to corners
             for hint_index, hint in enumerate(connector_hints):
                 if hint_index in [h[0] for h in filtered_hints]:
                     continue
+
+                # if any penalty, skip
+                if (
+                    scores[hint_index]["corner_penalty"] > 0
+                    or scores[hint_index]["edge_length_penalty"] > 0
+                    or scores[hint_index]["corner_distance_penalty"] > 0
+                ):
+                    continue
+
                 far_enough_from_others = all(
                     np.linalg.norm(hint.edge_centroid - h.edge_centroid)
                     >= min_connector_distance
@@ -495,8 +547,18 @@ class MeshPartition:
 
             connector_hints = [h[1] for h in filtered_hints]
 
+            # finally, throw out any hints that are now to close to each other
+            for hint_index, hint in enumerate(connector_hints):
+                too_close = any(
+                    np.linalg.norm(hint.edge_centroid - h2.edge_centroid)
+                    < min_connector_distance
+                    for h2 in final_hints
+                )
+                if not too_close:
+                    final_hints.append(hint)
+
         return sorted(
-            connector_hints,
+            final_hints,
             key=lambda h: (h.region_a, h.region_b, tuple(h.edge_centroid)),
         )
 
