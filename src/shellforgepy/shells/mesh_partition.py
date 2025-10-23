@@ -1,3 +1,4 @@
+import copy
 import logging
 from collections import Counter, defaultdict, deque
 from typing import List, Optional
@@ -21,6 +22,7 @@ from shellforgepy.shells.connector_utils import (
 from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
 )
+from shellforgepy.shells.paths import VertexPath
 from shellforgepy.shells.region_edge_feature import RegionEdgeFeature
 
 _logger = logging.getLogger(__name__)
@@ -375,6 +377,37 @@ class MeshPartition:
 
         return local_vertex_indices
 
+    def compute_all_connector_hints(
+        self,
+        shell_thickness,
+    ) -> list[ConnectorHint]:
+        """
+        Computes connector hints for all region pairs in the mesh partition.
+
+        Args:
+            shell_thickness (float): The thickness of the shell to consider for connector computation.
+            merge_connectors (bool): Whether to merge collinear connectors.
+            min_connector_distance (float, optional): Minimum distance between connectors.
+            min_corner_distance (float, optional): Minimum distance from corners.
+            min_edge_length (float, optional): Minimum edge length for connectors.
+
+        Returns:
+            list[ConnectorHint]: A list of computed connector hints.
+        """
+
+        shell_maps, vertex_index_map = self.mesh.calculate_materialized_shell_maps(
+            shell_thickness
+        )
+
+        connector_hints = compute_connector_hints_from_shell_maps(
+            mesh_faces=self.mesh.faces,
+            face_to_region=self.face_to_region_map,
+            shell_maps=shell_maps,
+            vertex_index_map=vertex_index_map,
+        )
+
+        return connector_hints
+
     def compute_connector_hints(
         self,
         shell_thickness,
@@ -386,15 +419,8 @@ class MeshPartition:
 
         final_hints = []
 
-        shell_maps, vertex_index_map = self.mesh.calculate_materialized_shell_maps(
-            shell_thickness
-        )
-
-        connector_hints = compute_connector_hints_from_shell_maps(
-            mesh_faces=self.mesh.faces,
-            face_to_region=self.face_to_region_map,
-            shell_maps=shell_maps,
-            vertex_index_map=vertex_index_map,
+        connector_hints = self.compute_all_connector_hints(
+            shell_thickness=shell_thickness,
         )
 
         if merge_connectors:
@@ -561,6 +587,77 @@ class MeshPartition:
             final_hints,
             key=lambda h: (h.region_a, h.region_b, tuple(h.edge_centroid)),
         )
+
+    def compute_connector_hints_continuous(
+        self,
+        shell_thickness,
+        min_connector_distance,
+    ) -> list[ConnectorHint]:
+
+        connector_hints = self.compute_all_connector_hints(
+            shell_thickness=shell_thickness,
+        )
+
+        connector_hint_by_edge = {}
+
+        for hint in connector_hints:
+            edge_key = tuple(sorted((hint.start_vertex_index, hint.end_vertex_index)))
+            if edge_key not in connector_hint_by_edge:
+                connector_hint_by_edge[edge_key] = []
+            connector_hint_by_edge[edge_key].append(hint)
+
+        for edge_key, hints in connector_hint_by_edge.items():
+            assert len(hints) <= 1, f"Multiple hints for edge {edge_key}"
+
+        connector_hint_by_edge = {k: v[0] for k, v in connector_hint_by_edge.items()}
+
+        retval = []
+        for (r1, r2), paths in self.calc_boundary_paths().items():
+
+            for path in paths:
+
+                connector_hints_by_vertex = defaultdict(list)
+
+                for i in range(len(path) - 1):
+                    v_start = path[i]
+                    v_end = path[i + 1]
+                    edge_key = tuple(sorted((v_start, v_end)))
+
+                    if edge_key in connector_hint_by_edge:
+                        hint = connector_hint_by_edge[edge_key]
+                        connector_hints_by_vertex[v_start].append(hint)
+                        connector_hints_by_vertex[v_end].append(hint)
+
+                def position_from_vertex_index(vertex_index):
+                    return self.mesh.vertices[vertex_index]
+
+                vp = VertexPath(self.mesh.vertices, path)
+                partition_points = vp.calc_partitioning(
+                    min_distance=min_connector_distance
+                )
+
+                for point in partition_points:
+
+                    edge = (point.start_vertex_index, point.end_vertex_index)
+                    if edge not in connector_hint_by_edge:
+                        edge = (point.end_vertex_index, point.start_vertex_index)
+
+                    hint_on_edge = connector_hint_by_edge[edge]
+
+                    length = vp.point_on_edge_length(point)
+
+                    start_length = length - min_connector_distance / 2
+                    end_length = length + min_connector_distance / 2
+
+                    average_position = vp.average_vertex_function(
+                        start_length, end_length, position_from_vertex_index
+                    )
+
+                    hint = copy.deepcopy(hint_on_edge)
+                    hint.edge_centroid = average_position
+
+                    retval.append(hint)
+        return retval
 
     def get_num_faces_in_region(self, region_id):
         """
@@ -2082,3 +2179,83 @@ class MeshPartition:
                 matched_features.append(edge_feature_map[key])
 
         return matched_features
+
+    def calc_boundary_paths(self):
+        """
+        Calculate paths on the boundaries between regions, per region pair.
+
+        Returns:
+            List of paths, where each path is a list of vertex indices in proper walkable order.
+        """
+
+        paths_by_region_pairs = {}
+        for region_pair, edges in self.boundary_edges.items():
+
+            if not edges:
+                paths_by_region_pairs[region_pair] = []
+
+            edges = [(int(e[0]), int(e[1])) for e in edges]
+
+            # Create undirected graph
+            G = nx.Graph()
+            G.add_edges_from(edges)
+
+            paths = []
+
+            # Process each connected component
+            for component in nx.connected_components(G):
+                subgraph = G.subgraph(component)
+
+                if len(component) <= 2:
+                    # Simple cases: isolated vertex or single edge
+                    paths.append(list(component))
+                    continue
+
+                # Check if it's a simple path (exactly 2 endpoints with degree 1)
+                degrees = dict(subgraph.degree())
+                endpoints = [node for node, degree in degrees.items() if degree == 1]
+
+                if len(endpoints) == 2 and all(d <= 2 for d in degrees.values()):
+                    # This is a simple path - traverse from one endpoint to the other
+                    start, end = endpoints
+                    try:
+                        # Find the shortest path (which should be the only path in a simple path graph)
+                        path = nx.shortest_path(subgraph, start, end)
+                        paths.append(path)
+                    except nx.NetworkXNoPath:
+                        # Shouldn't happen in a connected component, but fallback
+                        paths.append(list(component))
+
+                elif len(endpoints) == 0 and all(d == 2 for d in degrees.values()):
+                    # This is a cycle - start from any node and traverse
+                    start_node = next(iter(component))
+                    # For a cycle, we can traverse using DFS but need to ensure we get the right order
+                    visited = set()
+                    path = []
+                    current = start_node
+
+                    while current is not None:
+                        path.append(current)
+                        visited.add(current)
+
+                        # Find next unvisited neighbor
+                        next_node = None
+                        for neighbor in subgraph.neighbors(current):
+                            if neighbor not in visited:
+                                next_node = neighbor
+                                break
+
+                        current = next_node
+
+                    paths.append(path)
+
+                else:
+                    # More complex structure - could be a tree or branched structure
+                    # For now, use DFS traversal from a node with minimum degree
+                    min_degree_node = min(component, key=lambda n: degrees[n])
+                    path = list(nx.dfs_preorder_nodes(subgraph, min_degree_node))
+                    paths.append(path)
+
+            paths_by_region_pairs[region_pair] = paths
+
+        return paths_by_region_pairs

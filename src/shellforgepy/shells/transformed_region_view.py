@@ -286,6 +286,37 @@ class TransformedRegionView:
             if h.region_a == self.region_id or h.region_b == self.region_id
         ]
 
+    def compute_transformed_connector_hints_continuous(
+        self,
+        shell_thickness,
+        min_connector_distance=None,
+    ):
+        """
+        Compute connector hints for this transformed region view.
+
+        Parameters:
+        -----------
+        shell_thickness : float
+            Thickness of the shell to use when computing materialized prisms.
+        merge_connectors : bool
+            Whether to merge collinear connectors after computation.
+
+        Returns:
+        --------
+        List[ConnectorHint]
+            List of connector hints on the transformed region.
+        """
+
+        connector_hints = self.partition.compute_connector_hints_continuous(
+            shell_thickness,
+            min_connector_distance=min_connector_distance,
+        )
+        return [
+            transform_connector_hint(h, self.transform)
+            for h in connector_hints
+            if h.region_a == self.region_id or h.region_b == self.region_id
+        ]
+
     def average_normal_at_vertex(self, vertex_index: int) -> np.ndarray:
         """
         Compute the average normal vector at a vertex in the transformed region.
