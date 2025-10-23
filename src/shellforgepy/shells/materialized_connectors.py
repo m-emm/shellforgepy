@@ -391,6 +391,7 @@ def create_screw_connector_normal(
     tongue_slack=1.0,
     male_female_region_calculator=None,
     cover_thickness=None,
+    shell_thickness=0.0,
 ):
 
     transforms = compute_transforms_from_hint(
@@ -606,6 +607,13 @@ def create_screw_connector_normal(
     female_cutter = tongue_cutter.fuse(screw_hole)
 
     female_connector = female_connector.cut(tongue_cutter)
+
+    male_connector = translate(*(-shell_thickness / 2 * relevant_normal))(
+        male_connector
+    )
+    female_connector = translate(*(shell_thickness / 2 * relevant_normal))(
+        female_connector
+    )
 
     return SimpleNamespace(
         male_region=transforms.male_region,

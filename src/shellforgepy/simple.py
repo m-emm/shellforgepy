@@ -82,8 +82,8 @@ from .geometry.spherical_tools import (
     coordinate_system_transform,
     coordinate_system_transform_to_matrix,
     coordinate_system_transformation_function,
-    matrix_to_coordinate_coordinate_system_transformation_function,
     matrix_to_coordinate_system_transform,
+    matrix_to_coordinate_system_transformation_function,
 )
 from .geometry.treapezoidal_snake_geometry import create_trapezoidal_snake_geometry
 from .produce.arrange_and_export import (
@@ -174,7 +174,7 @@ __all__ = [
     "write_shell_maps_to_stl",
     "write_stl_binary",
     "matrix_to_coordinate_system_transform",
-    "matrix_to_coordinate_coordinate_system_transformation_function",
+    "matrix_to_coordinate_system_transformation_function",
 ]
 
 
