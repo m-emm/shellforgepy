@@ -465,11 +465,15 @@ def face_point_cloud(face_key):
 
     top_index = np.argmax(all_points[:, 1])
     bottom_index = np.argmin(all_points[:, 1])
+    left_index = np.argmin(all_points[:, 0])
+    right_index = np.argmax(all_points[:, 0])
 
     back_index = np.argmin(all_points[:, 2])
 
     all_labels[top_index] = "top"
     all_labels[bottom_index] = "bottom"
     all_labels[back_index] = "back"
+    all_labels[left_index] = "left"
+    all_labels[right_index] = "right"
 
     return all_points, all_labels

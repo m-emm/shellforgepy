@@ -611,6 +611,7 @@ def create_screw_connector_normal(
         male_region=transforms.male_region,
         female_region=transforms.female_region,
         male_connector=male_connector,
+        tongue=tongue,
         male_cutter=None,
         female_connector=female_connector,
         female_cutter=female_cutter,

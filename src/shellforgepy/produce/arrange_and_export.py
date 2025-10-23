@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from shellforgepy.adapters._adapter import get_bounding_box
 from shellforgepy.construct.alignment_operations import rotate_part, translate
 from shellforgepy.construct.part_collector import PartCollector
 from shellforgepy.produce.production_parts_model import PartList
+
+_logger = logging.getLogger(__name__)
 
 
 def export_solid_to_stl(
@@ -52,10 +55,6 @@ def _arrange_parts_for_production(
     if bed_depth is None:
         bed_depth = bed_width  # assume square bed
 
-    def _print(msg):
-        if verbose:
-            print(msg)
-
     # Prepare parts as rectangles with dimensions, applying production transformations
     rects = []
     for part_entry in parts_list:
@@ -63,7 +62,7 @@ def _arrange_parts_for_production(
 
         # Apply flip transformation if needed (180° rotation around Y-axis)
         if part_entry.get("flip", False):
-            _print(f"Flipping part '{part_entry['name']}'")
+            _logger.info(f"Flipping part '{part_entry['name']}'")
             # Rotate 180° around Y-axis to flip for printing
             shape = rotate_part(shape, angle=180, axis=(0, 1, 0))
 
@@ -74,12 +73,12 @@ def _arrange_parts_for_production(
         ):
             angle = part_entry["prod_rotation_angle"]
             axis = part_entry["prod_rotation_axis"]
-            _print(
+            _logger.info(
                 f"Rotating part '{part_entry['name']}' by {angle}° around axis {axis}"
             )
             shape = rotate_part(shape, angle=angle, axis=axis)
         else:
-            _print(f"No production rotation for part '{part_entry['name']}'")
+            _logger.info(f"No production rotation for part '{part_entry['name']}'")
 
         # Get bounding box after transformations
         min_point, max_point = get_bounding_box(shape)
@@ -123,6 +122,19 @@ def _arrange_parts_for_production(
             raise ValueError(
                 f"Part '{rect['name']}' too wide for bed ({width:.1f}mm > {bed_width}mm)"
             )
+        else:
+            _logger.info(
+                f"Part '{rect['name']}' fits width-wise: {width:.1f}mm <= {bed_width}mm"
+            )
+
+        if height > bed_depth:
+            raise ValueError(
+                f"Part '{rect['name']}' too deep for bed ({height:.1f}mm > {bed_depth}mm)"
+            )
+        else:
+            _logger.info(
+                f"Part '{rect['name']}' fits depth-wise: {height:.1f}mm <= {bed_depth}mm"
+            )
 
         # Check if we need a new row
         if arranged and x_cursor + width > bed_width:
@@ -130,7 +142,7 @@ def _arrange_parts_for_production(
             x_cursor = 0.0
             row_depth = 0.0
 
-        _print(f"Placing '{rect['name']}' at ({x_cursor:.1f}, {y_cursor:.1f})")
+        _logger.info(f"Placing '{rect['name']}' at ({x_cursor:.1f}, {y_cursor:.1f})")
 
         # Position the part: move to origin first, then to final position
         shape = rect["shape"]
@@ -175,7 +187,7 @@ def _arrange_parts_for_production(
         for item in arranged:
             item["shape"] = translate(offset_x, offset_y, 0)(item["shape"])
 
-    _print(f"Arranged {len(arranged)} parts for production")
+    _logger.info(f"Arranged {len(arranged)} parts for production")
     return [{"name": item["name"], "part": item["shape"]} for item in arranged]
 
 

@@ -63,6 +63,12 @@ class VertexPath:
 
         return total_length
 
+    def length(self):
+        path_length_progressive = self.calculate_path_length_progressive(
+            [self.vertices[p] for p in self.path_vertex_indices]
+        )
+        return path_length_progressive[-1]
+
     @staticmethod
     def calculate_path_length_progressive(vertices):
         retval = []

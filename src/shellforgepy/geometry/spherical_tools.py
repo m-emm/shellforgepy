@@ -577,3 +577,25 @@ def matrix_to_coordinate_system_transform(matrix: np.ndarray) -> dict:
         "rotation_angle": float(angle),
         "translation": tuple(t),
     }
+
+
+def matrix_to_coordinate_system_transformation_function(
+    matrix: np.ndarray,
+    degree_rotation_function_generator,
+    translation_function_generator,
+):
+    transform = matrix_to_coordinate_system_transform(matrix)
+
+    def retval(part):
+        rotation_function = degree_rotation_function_generator(
+            np.degrees(transform["rotation_angle"]),
+            axis=transform["rotation_axis"],
+        )
+        translation_function = translation_function_generator(*transform["translation"])
+
+        rotated_part = rotation_function(part)
+        translated_part = translation_function(rotated_part)
+
+        return translated_part
+
+    return retval

@@ -649,6 +649,11 @@ class MeshPartition:
                     start_length = length - min_connector_distance / 2
                     end_length = length + min_connector_distance / 2
 
+                    if start_length < 0:
+                        start_length = 0
+                    if end_length > vp.length():
+                        end_length = vp.length()
+
                     average_position = vp.average_vertex_function(
                         start_length, end_length, position_from_vertex_index
                     )
