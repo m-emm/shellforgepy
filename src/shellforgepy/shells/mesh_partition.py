@@ -657,9 +657,12 @@ class MeshPartition:
                     average_position = vp.average_vertex_function(
                         start_length, end_length, position_from_vertex_index
                     )
+                    final_position = (
+                        average_position + vp.point_on_edge_coordinates(point)
+                    ) / 2
 
                     hint = copy.deepcopy(hint_on_edge)
-                    hint.edge_centroid = average_position
+                    hint.edge_centroid = final_position
 
                     retval.append(hint)
         return retval

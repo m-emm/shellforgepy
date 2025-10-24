@@ -10,7 +10,7 @@ This repository (`shellforgepy`) hosts the Python runtime for the ShellForge too
 - Keep adapter-specific dependencies inside their respective modules so core layers stay dependency-light.
 
 ## Testing
-- Prefer creating proper pytest tests, not ad-hoc scripts. Avoid running quick debug/test scripts.
+- Prefer creating proper pytest tests, not ad-hoc scripts. Avoid running quick debug/test scripts. **Avoid** "I will write a simple test..." -> **prefer** "I will write a proper unit test"
 - Pytest lives under `tests/unit`. Add `test_*.py` functions (no classes needed) and keep adapter-dependent tests behind the relevant extras if they require CadQuery/FreeCAD.
 - Run `python -m pytest` from the repo root before sending patches
 - For full testing, test with both adapters, that is, also run `./freecad_python.sh -m pytest` in the root dir. This will run in a freecad python interpreter and use the freecad engine.

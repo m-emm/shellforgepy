@@ -76,6 +76,7 @@ from .geometry.higher_order_solids import (
     create_rounded_slab,
     create_screw_thread,
     create_trapezoid,
+    directed_box_at,
     directed_cylinder_at,
 )
 from .geometry.spherical_tools import (
@@ -143,6 +144,7 @@ __all__ = [
     "create_text_object",
     "create_trapezoid",
     "create_trapezoidal_snake_geometry",
+    "directed_box_at",
     "directed_cylinder_at",
     "export_solid_to_stl",
     "face_point_cloud",

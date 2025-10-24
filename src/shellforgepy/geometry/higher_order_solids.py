@@ -228,6 +228,109 @@ def directed_cylinder_at(
         return cylinder
 
 
+def directed_box_at(
+    base_point,
+    height_direction,
+    width,
+    depth,
+    height,
+    width_direction=None,
+):
+    """Create a box oriented with its height along ``height_direction`` starting at ``base_point``.
+
+    The box is created and positioned so that its bottom face center is at ``base_point``
+    and its height dimension aligns with ``height_direction``.
+
+    Args:
+        base_point: XYZ coordinates of the box's bottom face center in millimetres.
+        height_direction: Vector indicating the height direction. Must be non-zero.
+        width: Box width (dimension in the local X direction before rotation).
+        depth: Box depth (dimension in the local Y direction before rotation).
+        height: Box height measured along ``height_direction``.
+        width_direction: Optional vector to specify the orientation of the width dimension.
+            If None, an appropriate orthogonal direction is automatically chosen.
+
+    Returns:
+        CAD solid positioned and oriented as requested.
+    """
+
+    # Create box at origin (extends from (0,0,0) to (width,depth,height))
+    box = create_box(width, depth, height)
+
+    # First, center the box so its center is at origin
+    box = translate(-width / 2, -depth / 2, -height / 2)(box)
+
+    height_direction = np.array(height_direction, dtype=np.float64)
+    if np.linalg.norm(height_direction) < 1e-8:
+        raise ValueError("Height direction vector cannot be zero")
+    height_direction /= np.linalg.norm(height_direction)
+
+    # Validate and determine width direction first (even for Z-aligned case)
+    if width_direction is not None:
+        width_direction = np.array(width_direction, dtype=np.float64)
+        if np.linalg.norm(width_direction) < 1e-8:
+            raise ValueError("Width direction vector cannot be zero")
+        width_direction /= np.linalg.norm(width_direction)
+
+        # Check that width_direction is not parallel to height_direction
+        if np.abs(np.dot(width_direction, height_direction)) > 0.99:
+            raise ValueError("Width direction cannot be parallel to height direction")
+    else:
+        # Automatically choose a width direction orthogonal to height_direction
+        # Try to use [1, 0, 0] first, then [0, 1, 0] if that's too parallel
+        candidate_width = np.array([1, 0, 0], dtype=np.float64)
+        if np.abs(np.dot(candidate_width, height_direction)) > 0.9:
+            candidate_width = np.array([0, 1, 0], dtype=np.float64)
+
+        # Make it orthogonal to height_direction using Gram-Schmidt
+        width_direction = (
+            candidate_width
+            - np.dot(candidate_width, height_direction) * height_direction
+        )
+        width_direction /= np.linalg.norm(width_direction)
+
+    # Check if we need to rotate at all
+    if np.allclose(height_direction, [0, 0, 1]):
+        # If height direction is already aligned with Z, position so bottom face center is at base_point
+        box = translate(base_point[0], base_point[1], base_point[2] + height / 2)(box)
+        return box
+
+    # Use coordinate system transform to position the box
+    # Default centered box coordinate system: up = Z (height), out = X (width)
+    default_origin = (0, 0, 0)
+    default_up = (0, 0, 1)  # height direction in default box
+    default_out = (1, 0, 0)  # width direction in default box
+
+    # Target coordinate system - we want the box center offset by +height/2 from base_point in height direction
+    target_offset = height / 2 * height_direction
+    target_origin = (
+        base_point[0] + target_offset[0],
+        base_point[1] + target_offset[1],
+        base_point[2] + target_offset[2],
+    )
+    target_up = tuple(height_direction.tolist())
+    target_out = tuple(width_direction.tolist())
+
+    transformation = coordinate_system_transform(
+        default_origin, default_up, default_out, target_origin, target_up, target_out
+    )
+
+    rotation = rotate(
+        np.degrees(transformation["rotation_angle"]),
+        axis=transformation["rotation_axis"],
+    )
+    the_translation = translate(
+        transformation["translation"][0],
+        transformation["translation"][1],
+        transformation["translation"][2],
+    )
+
+    box = rotation(box)
+    box = the_translation(box)
+
+    return box
+
+
 def create_ring(
     outer_radius,
     inner_radius,

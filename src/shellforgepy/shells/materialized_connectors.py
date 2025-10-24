@@ -478,6 +478,7 @@ def create_screw_connector_normal(
     )
 
     male_connector = create_distorted_cube(male_connector_vertices)
+    male_connector = translate(*(-connector_gap / 2 * tongue_direction))(male_connector)
 
     def calc_female_connector_vertices(length, width, thickness):
         bottom_length = length + 2 * thickness
@@ -520,6 +521,10 @@ def create_screw_connector_normal(
     )
 
     female_connector = create_distorted_cube(female_connector_vertices)
+
+    female_connector = translate(*(connector_gap / 2 * tongue_direction))(
+        female_connector
+    )
 
     screw_direction = -relevant_normal
 
@@ -584,6 +589,13 @@ def create_screw_connector_normal(
             + relevant_normal * thickness / 2,
         ]
 
+        # Adjust back vertices (0, 1, 4, 5) for connector gap
+        gap_offset = -connector_gap / 2 * tongue_direction
+        verts[0] += gap_offset
+        verts[1] += gap_offset
+        verts[4] += gap_offset
+        verts[5] += gap_offset
+
         verts = [v - (y0 + thickness / 2) * relevant_normal for v in verts]
         return verts
 
@@ -609,16 +621,12 @@ def create_screw_connector_normal(
 
     female_connector = female_connector.cut(tongue_cutter)
 
-    male_connector = translate(
-        *(
-            -(shell_thickness - 0.01) * relevant_normal
-            - tongue_direction * connector_gap
-        )
-    )(male_connector)
-    female_connector = translate(
-        *(-(shell_thickness - 0.01) * relevant_normal)
-        + tongue_direction * connector_gap
-    )(female_connector)
+    male_connector = translate(*(-(shell_thickness - 0.01) * relevant_normal))(
+        male_connector
+    )
+    female_connector = translate(*(-(shell_thickness - 0.01) * relevant_normal))(
+        female_connector
+    )
 
     return SimpleNamespace(
         male_region=transforms.male_region,
