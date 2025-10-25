@@ -28,6 +28,9 @@ from shellforgepy.geometry.higher_order_solids import (
     directed_cylinder_at,
 )
 from shellforgepy.geometry.m_screws import create_nut, m_screws_table
+from shellforgepy.geometry.spherical_tools import (
+    coordinate_system_transform as _coordinate_system_transform,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -78,47 +81,20 @@ def coordinate_system_transform(
     up_b,
     out_b,
 ):
-    def orthonormalize(u, v):
-        u = u / np.linalg.norm(u)
-        v_orth = v - np.dot(v, u) * u
-        v_norm = np.linalg.norm(v_orth)
-        if v_norm < 1e-8:
-            raise ValueError("Provided vectors are collinear")
-        v_orth /= v_norm
-        w = np.cross(u, v_orth)
-        return np.column_stack((u, v_orth, w))
+    transform = _coordinate_system_transform(
+        origin_a=origin_a,
+        up_a=up_a,
+        out_a=out_a,
+        origin_b=origin_b,
+        up_b=up_b,
+        out_b=out_b,
+    )
 
-    origin_a = np.asarray(origin_a, dtype=float)
-    origin_b = np.asarray(origin_b, dtype=float)
-    up_a = np.asarray(up_a, dtype=float)
-    out_a = np.asarray(out_a, dtype=float)
-    up_b = np.asarray(up_b, dtype=float)
-    out_b = np.asarray(out_b, dtype=float)
-
-    R_a = orthonormalize(up_a, out_a)
-    R_b = orthonormalize(up_b, out_b)
-
-    R = R_b @ R_a.T
-    trace = np.clip(np.trace(R), -1.0, 3.0)
-    angle = math.acos(np.clip((trace - 1) / 2.0, -1.0, 1.0))
-
-    if np.isclose(angle, 0.0):
-        axis = np.array([1.0, 0.0, 0.0])
-    elif np.isclose(angle, math.pi):
-        eigvals, eigvecs = np.linalg.eigh(R)
-        mask = np.isclose(eigvals, 1.0, atol=1e-5)
-        if not np.any(mask):
-            raise ValueError("Unable to derive rotation axis")
-        axis = eigvecs[:, mask][:, 0]
-        axis = axis / np.linalg.norm(axis)
-    else:
-        axis = np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]]) / (
-            2.0 * math.sin(angle)
-        )
-
-    rotated_origin = R @ (-origin_a)
-    translation = origin_b + rotated_origin
-    return CoordinateTransform(tuple(axis), angle, tuple(translation))
+    return CoordinateTransform(
+        rotation_axis=_to_tuple3(transform["rotation_axis"]),
+        rotation_angle=float(transform["rotation_angle"]),
+        translation=_to_tuple3(transform["translation"]),
+    )
 
 
 def _apply_transform(shape, transform):

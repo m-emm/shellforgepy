@@ -79,6 +79,7 @@ from .geometry.higher_order_solids import (
     directed_box_at,
     directed_cylinder_at,
 )
+from .geometry.modifications import slice_part
 from .geometry.spherical_tools import (
     coordinate_system_transform,
     coordinate_system_transform_to_matrix,
@@ -170,6 +171,7 @@ __all__ = [
     "PartitionableSpheroidTriangleMesh",
     "PartList",
     "rotate",
+    "slice_part",
     "stack_alignment_of",
     "TransformedRegionView",
     "translate",
