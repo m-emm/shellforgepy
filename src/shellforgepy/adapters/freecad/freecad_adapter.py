@@ -661,6 +661,21 @@ def rotate_part_native(part, base, dir, degree):
         return rotated
 
 
+def mirror_part_native(part, basePointVector, mirrorPlane):
+    """Mirror using native FreeCAD signature: mirror(basePointVector, mirrorPlane)."""
+    mirrored = part.copy()
+    mirrored_result = mirrored.mirror(basePointVector, mirrorPlane)
+
+    # FreeCAD's mirror may return a new shape or modify in-place
+    if mirrored_result is not None:
+        mirrored = mirrored_result
+
+    if hasattr(part, "reconstruct"):
+        return part.reconstruct(mirrored)
+    else:
+        return mirrored
+
+
 def fuse_parts(part1, part2):
     """Fuse two FreeCAD parts together."""
     return part1.fuse(part2)

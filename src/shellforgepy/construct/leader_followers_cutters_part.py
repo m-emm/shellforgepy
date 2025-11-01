@@ -1,9 +1,11 @@
+import copy
 import logging
 from types import SimpleNamespace
 
 from shellforgepy.adapters._adapter import (
     copy_part,
     get_bounding_box,
+    mirror_part_native,
     rotate_part_native,
     translate_part_native,
 )
@@ -32,12 +34,15 @@ class LeaderFollowersCuttersPart:
         followers=None,
         cutters=None,
         non_production_parts=None,
+        additional_data=None,
     ):
         self.leader = leader
         # Store raw parts directly for convenience during construction
         self.followers = _ensure_list(followers)
         self.cutters = _ensure_list(cutters)
         self.non_production_parts = _ensure_list(non_production_parts)
+        self.additional_data = additional_data if additional_data is not None else {}
+        assert isinstance(self.additional_data, dict)
 
     def use_as_cutter_on(self, part):
 
@@ -71,6 +76,7 @@ class LeaderFollowersCuttersPart:
             [_clone_part(follower) for follower in self.followers],
             [_clone_part(cutter) for cutter in self.cutters],
             [_clone_part(non_prod) for non_prod in self.non_production_parts],
+            additional_data=copy.deepcopy(self.additional_data),
         )
 
     def BoundingBox(self):
@@ -124,11 +130,17 @@ class LeaderFollowersCuttersPart:
 
         other_shape = _unwrap_named_part(other)
         new_leader = _unwrap_named_part(self.leader).fuse(other_shape)
+        new_additinoal_data = copy.deepcopy(self.additional_data)
+        new_additinoal_data.update(
+            other.additional_data if hasattr(other, "additional_data") else {}
+        )
+
         return LeaderFollowersCuttersPart(
             new_leader,
             [_clone_part(f) for f in self.followers],
             [_clone_part(c) for c in self.cutters],
             [_clone_part(n) for n in self.non_production_parts],
+            additional_data=new_additinoal_data,
         )
 
     def cut(self, other):
@@ -168,6 +180,7 @@ class LeaderFollowersCuttersPart:
             [_clone_part(follower) for follower in self.followers],
             [_clone_part(cutter) for cutter in self.cutters],
             [_clone_part(non_prod) for non_prod in self.non_production_parts],
+            additional_data=copy.deepcopy(self.additional_data),
         )
 
     def translate(self, *args):
@@ -190,6 +203,18 @@ class LeaderFollowersCuttersPart:
         ]
         return self
 
+    def mirror(self, *args, **kwargs):
+        """Mirror all parts in this composite."""
+        self.leader = mirror_part_native(self.leader, *args, **kwargs)
+        self.followers = [
+            follower.mirror(*args, **kwargs) for follower in self.followers
+        ]
+        self.cutters = [cutter.mirror(*args, **kwargs) for cutter in self.cutters]
+        self.non_production_parts = [
+            part.mirror(*args, **kwargs) for part in self.non_production_parts
+        ]
+        return self
+
     def reconstruct(self, transformed_result=None):
         """Reconstruct this composite after in-place transformation."""
 
@@ -200,6 +225,7 @@ class LeaderFollowersCuttersPart:
                 [follower for follower in transformed_result.followers],
                 [cutter for cutter in transformed_result.cutters],
                 [part for part in transformed_result.non_production_parts],
+                additional_data=copy.deepcopy(self.additional_data),
             )
 
         else:
@@ -209,6 +235,7 @@ class LeaderFollowersCuttersPart:
                 [_clone_part(follower) for follower in self.followers],
                 [_clone_part(cutter) for cutter in self.cutters],
                 [_clone_part(part) for part in self.non_production_parts],
+                additional_data=copy.deepcopy(self.additional_data),
             )
 
 

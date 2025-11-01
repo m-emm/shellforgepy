@@ -51,6 +51,9 @@ from shellforgepy.adapters._adapter_bridge import (
 from shellforgepy.adapters._adapter_bridge import get_vertices as adapter_get_vertices
 from shellforgepy.adapters._adapter_bridge import get_volume as adapter_get_volume
 from shellforgepy.adapters._adapter_bridge import mirror_part as adapter_mirror_part
+from shellforgepy.adapters._adapter_bridge import (
+    mirror_part_native as adapter_mirror_part_native,
+)
 from shellforgepy.adapters._adapter_bridge import rotate_part as adapter_rotate_part
 from shellforgepy.adapters._adapter_bridge import (
     rotate_part_native as adapter_rotate_part_native,
@@ -269,6 +272,11 @@ def translate_part_native(part, *args):
 
 def rotate_part_native(part, v1, v2, angle):
     return adapter_rotate_part_native(part, v1, v2, angle)
+
+
+def mirror_part_native(part, *args, **kwargs):
+    """Mirror using native CAD signature. Used by composite objects."""
+    return adapter_mirror_part_native(part, *args, **kwargs)
 
 
 def fuse_parts(part1, part2):

@@ -204,6 +204,10 @@ def directed_cylinder_at(
         if np.allclose(direction, out_1):
             out_1 = np.array([1, 0, 0], dtype=np.float64)
 
+        # check if direction is collinear with out_1
+        if np.abs(np.dot(direction, out_1)) > 0.99:
+            out_1 = np.array([1, 0, 0], dtype=np.float64)
+
         transformation = coordinate_system_transform(
             (0, 0, 0), (0, 0, 1), (1, 0, 0), base_point, direction, out_1
         )

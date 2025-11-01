@@ -202,6 +202,11 @@ def render_stl_to_png(
 
     img = rasterize_triangles(screen_tris, N_view, img_w, img_h)
 
+    # maximize contrast
+    img = img.astype(np.float32) / 255.0
+    img = (img - img.min()) / (img.max() - img.min() + 1e-12)
+    img = (img * 255).astype(np.uint8)
+
     if HAVE_PIL:
         Image.fromarray(img).save(out_path)
     return img

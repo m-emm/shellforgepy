@@ -726,3 +726,67 @@ def test_leader_followers_native_rotate_method():
 
     # After 90° rotation around Z, the center should have moved appropriately
     assert isinstance(leader_center, tuple)  # Basic sanity check
+
+
+@pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
+def test_named_part_native_mirror_method():
+    """Test NamedPart.mirror() method with native CadQuery signature."""
+    from shellforgepy.construct.named_part import NamedPart
+
+    # Create an asymmetric box positioned off-center
+    part = create_box(10, 20, 30)
+    part = translate(5, 0, 0)(part)  # Move to positive X
+    named_part = NamedPart("test", part)
+
+    # Use native CadQuery signature: mirror(mirrorPlane, basePointVector)
+    mirror_plane = cq.Vector(1, 0, 0)  # YZ plane (normal in X direction)
+    base_point = cq.Vector(0, 0, 0)  # Mirror across YZ plane at origin
+    mirrored_named_part = named_part.mirror(
+        mirrorPlane=mirror_plane, basePointVector=base_point
+    )
+
+    assert mirrored_named_part is not None
+
+    # Verify the mirror worked by checking that the center moved to negative X
+    from shellforgepy.simple import get_bounding_box_center
+
+    original_center = get_bounding_box_center(part)
+    mirrored_center = get_bounding_box_center(mirrored_named_part)
+
+    # The X coordinate should be negated (approximately)
+    assert np.allclose(mirrored_center[0], -original_center[0], atol=1e-6)
+    # Y and Z should remain the same
+    assert np.allclose(mirrored_center[1], original_center[1], atol=1e-6)
+    assert np.allclose(mirrored_center[2], original_center[2], atol=1e-6)
+
+
+@pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
+def test_leader_followers_native_mirror_method():
+    """Test LeaderFollowersCuttersPart with native mirror interface."""
+    from shellforgepy.construct.leader_followers_cutters_part import (
+        LeaderFollowersCuttersPart,
+    )
+    from shellforgepy.construct.named_part import NamedPart
+
+    # Create an asymmetric setup positioned off-center
+    leader = translate(3, 0, 0)(create_box(2, 2, 2))
+    follower = NamedPart("follower", translate(5, 0, 0)(create_box(1, 1, 1)))
+    group = LeaderFollowersCuttersPart(leader, followers=[follower])
+
+    # Use native CadQuery signature: mirror(mirrorPlane, basePointVector)
+    mirror_plane = cq.Vector(1, 0, 0)  # YZ plane (normal in X direction)
+    base_point = cq.Vector(0, 0, 0)  # Mirror across YZ plane at origin
+    mirrored_group = group.mirror(mirrorPlane=mirror_plane, basePointVector=base_point)
+
+    # Should return self (in-place modification)
+    assert mirrored_group is group
+
+    # Verify the mirror worked by checking that centers moved to negative X
+    from shellforgepy.simple import get_bounding_box_center
+
+    leader_center = get_bounding_box_center(group.leader)
+    follower_center = get_bounding_box_center(group.followers[0].part)
+
+    # Both should now be on the negative X side
+    assert leader_center[0] < 0  # Should be around -3
+    assert follower_center[0] < 0  # Should be around -5

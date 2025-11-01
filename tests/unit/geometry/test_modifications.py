@@ -1,7 +1,17 @@
 import numpy as np
-from shellforgepy.adapters._adapter import create_box, create_cylinder, get_volume
-from shellforgepy.geometry.modifications import slice_part
-from shellforgepy.simple import get_bounding_box
+from shellforgepy.adapters._adapter import (
+    create_box,
+    create_cone,
+    create_cylinder,
+    fuse_parts,
+    get_volume,
+)
+from shellforgepy.geometry.modifications import (
+    orient_for_flatness,
+    orient_for_flatness_riemannian,
+    slice_part,
+)
+from shellforgepy.simple import get_bounding_box, get_bounding_box_size
 
 
 def test_slice_part_basic_functionality():
@@ -530,3 +540,328 @@ def test_slice_part_custom_vs_automatic():
     assert len(custom_slices) < len(
         auto_slices
     ), f"Custom slicing should produce fewer slices due to length constraint"
+
+
+def test_orient_for_flatness_basic():
+    """Test basic functionality of orient_for_flatness with simple shapes."""
+    # Create a tall box (should be oriented to lie flat)
+    tall_box = create_box(2, 3, 10)  # 10 units tall
+
+    original_size = get_bounding_box_size(tall_box)
+    original_z_height = original_size[2]
+
+    # Orient for flatness
+    flattened_box = orient_for_flatness(tall_box, samples=20, z_rotation_samples=4)
+
+    # Check that it was actually optimized
+    optimized_size = get_bounding_box_size(flattened_box)
+    optimized_z_height = optimized_size[2]
+
+    # The Z-height should be significantly reduced
+    assert (
+        optimized_z_height < original_z_height * 0.8
+    ), f"Expected significant height reduction, got {optimized_z_height} vs {original_z_height}"
+
+    # Should have positive volume
+    assert get_volume(flattened_box) > 0
+
+
+def test_orient_for_flatness_cylinder():
+    """Test orient_for_flatness with a cylinder."""
+    # Create a tall thin cylinder
+    cylinder = create_cylinder(radius=1, height=8)
+
+    original_size = get_bounding_box_size(cylinder)
+    original_z_height = original_size[2]
+
+    # Orient for flatness
+    flattened_cylinder = orient_for_flatness(cylinder, samples=30, z_rotation_samples=6)
+
+    optimized_size = get_bounding_box_size(flattened_cylinder)
+    optimized_z_height = optimized_size[2]
+
+    # Should be flattened (cylinder lying on its side)
+    assert (
+        optimized_z_height < original_z_height * 0.5
+    ), f"Cylinder should lie flat, got {optimized_z_height} vs {original_z_height}"
+
+
+def test_orient_for_flatness_complex_shape():
+    """Test orient_for_flatness with a more complex fused shape."""
+    # Create a complex shape: box + cylinder
+    box = create_box(4, 4, 1)  # flat box
+    cylinder = create_cylinder(radius=0.5, height=6)  # tall cylinder
+
+    # Fuse them to create an L-shaped object
+    complex_shape = fuse_parts(box, cylinder)
+
+    original_size = get_bounding_box_size(complex_shape)
+    original_z_height = original_size[2]
+
+    # Orient for flatness with more samples for complex shape
+    flattened_shape = orient_for_flatness(
+        complex_shape, samples=40, z_rotation_samples=8
+    )
+
+    optimized_size = get_bounding_box_size(flattened_shape)
+    optimized_z_height = optimized_size[2]
+
+    # Should achieve some height reduction
+    assert (
+        optimized_z_height <= original_z_height
+    ), f"Should not increase height, got {optimized_z_height} vs {original_z_height}"
+
+    # Volume should be preserved
+    original_volume = get_volume(complex_shape)
+    optimized_volume = get_volume(flattened_shape)
+    assert (
+        abs(original_volume - optimized_volume) / original_volume < 0.01
+    ), "Volume should be preserved during rotation"
+
+
+def test_orient_for_flatness_already_flat():
+    """Test orient_for_flatness with an already flat part."""
+    # Create a very flat box
+    flat_box = create_box(10, 10, 0.1)
+
+    original_size = get_bounding_box_size(flat_box)
+    original_z_height = original_size[2]
+
+    # Orient for flatness (should return quickly for already flat parts)
+    result = orient_for_flatness(flat_box, samples=10)
+
+    # Should handle the degenerate case gracefully
+    result_size = get_bounding_box_size(result)
+
+    # Height should remain very small
+    assert result_size[2] < 1.0, "Flat part should remain flat"
+
+
+def test_orient_for_flatness_different_sample_counts():
+    """Test that different sample counts work and more samples generally give better results."""
+    # Create a shape that benefits from optimization
+    cone = create_cone(radius1=2, radius2=0, height=6)
+
+    # Test with few samples
+    result_few = orient_for_flatness(cone, samples=8, z_rotation_samples=2)
+    height_few = get_bounding_box_size(result_few)[2]
+
+    # Test with more samples
+    result_many = orient_for_flatness(cone, samples=20, z_rotation_samples=4)
+    height_many = get_bounding_box_size(result_many)[2]
+
+    # Both should work and produce reasonable results
+    original_height = get_bounding_box_size(cone)[2]
+
+    assert height_few < original_height, "Few samples should still improve orientation"
+    assert height_many < original_height, "Many samples should improve orientation"
+
+    # More samples should generally give equal or better results
+    assert (
+        height_many <= height_few * 1.1
+    ), "More samples should not be significantly worse"
+
+
+def test_orient_for_flatness_z_rotation_effect():
+    """Test that Z-axis rotation sampling actually makes a difference."""
+    # Create a rectangular box that would benefit from Z-rotation
+    rect_box = create_box(1, 4, 3)  # Width=1, Length=4, Height=3
+
+    # Test with no Z-rotation sampling
+    result_no_z = orient_for_flatness(rect_box, samples=20, z_rotation_samples=1)
+    height_no_z = get_bounding_box_size(result_no_z)[2]
+
+    # Test with Z-rotation sampling
+    result_with_z = orient_for_flatness(rect_box, samples=20, z_rotation_samples=8)
+    height_with_z = get_bounding_box_size(result_with_z)[2]
+
+    # Z-rotation sampling should help or at least not hurt
+    assert (
+        height_with_z <= height_no_z * 1.05
+    ), "Z-rotation sampling should not significantly worsen results"
+
+    # Both should achieve some flattening
+    original_height = get_bounding_box_size(rect_box)[2]
+    assert (
+        height_no_z < original_height
+    ), "Should achieve some flattening without Z-rotation"
+    assert (
+        height_with_z < original_height
+    ), "Should achieve some flattening with Z-rotation"
+
+
+def test_orient_for_flatness_riemannian_basic():
+    """Test basic functionality of the Riemannian optimization method."""
+    # Create a tall box (should be oriented to lie flat)
+    tall_box = create_box(2, 3, 10)  # 10 units tall
+
+    original_size = get_bounding_box_size(tall_box)
+    original_z_height = original_size[2]
+
+    # Orient for flatness using Riemannian optimization
+    flattened_box = orient_for_flatness_riemannian(
+        tall_box,
+        coarse_samples=32,  # Use fewer samples for faster testing
+        random_starts=1,
+        max_iters=5,
+        logger=None,  # Suppress logging in tests
+    )
+
+    # Check that it was actually optimized
+    optimized_size = get_bounding_box_size(flattened_box)
+    optimized_z_height = optimized_size[2]
+
+    # The Z-height should be significantly reduced
+    assert (
+        optimized_z_height < original_z_height * 0.8
+    ), f"Expected significant height reduction, got {optimized_z_height} vs {original_z_height}"
+
+    # Should have positive volume
+    assert get_volume(flattened_box) > 0
+
+
+def test_orient_for_flatness_riemannian_cylinder():
+    """Test Riemannian optimization with a cylinder."""
+    # Create a tall thin cylinder
+    cylinder = create_cylinder(radius=1, height=8)
+
+    original_size = get_bounding_box_size(cylinder)
+    original_z_height = original_size[2]
+
+    # Orient for flatness using Riemannian optimization
+    flattened_cylinder = orient_for_flatness_riemannian(
+        cylinder, coarse_samples=32, random_starts=1, max_iters=8, logger=None
+    )
+
+    optimized_size = get_bounding_box_size(flattened_cylinder)
+    optimized_z_height = optimized_size[2]
+
+    # Should be flattened (cylinder lying on its side)
+    assert (
+        optimized_z_height < original_z_height * 0.5
+    ), f"Cylinder should lie flat, got {optimized_z_height} vs {original_z_height}"
+
+
+def test_orient_for_flatness_riemannian_gradient_methods():
+    """Test different gradient estimation methods in Riemannian optimization."""
+    box = create_box(2, 5, 3)  # Rectangular box
+
+    original_size = get_bounding_box_size(box)
+    original_z_height = original_size[2]
+
+    # Test central differences method
+    result_central = orient_for_flatness_riemannian(
+        box,
+        coarse_samples=24,
+        random_starts=1,
+        max_iters=5,
+        grad_method="central",
+        logger=None,
+    )
+    height_central = get_bounding_box_size(result_central)[2]
+
+    # Test SPSA method
+    result_spsa = orient_for_flatness_riemannian(
+        box,
+        coarse_samples=24,
+        random_starts=1,
+        max_iters=5,
+        grad_method="spsa",
+        seed=42,  # Fix seed for reproducibility
+        logger=None,
+    )
+    height_spsa = get_bounding_box_size(result_spsa)[2]
+
+    # Both methods should improve over original
+    assert height_central < original_z_height, "Central diff should improve orientation"
+    assert height_spsa < original_z_height, "SPSA should improve orientation"
+
+    # Both should produce reasonable results (within 50% of each other)
+    ratio = max(height_central, height_spsa) / min(height_central, height_spsa)
+    assert (
+        ratio < 1.5
+    ), f"Gradient methods should give similar results, got ratio {ratio}"
+
+
+def test_orient_for_flatness_riemannian_complex_shape():
+    """Test Riemannian optimization with a complex fused shape."""
+    # Create a complex shape: box + cylinder
+    box = create_box(4, 4, 1)  # flat box
+    cylinder = create_cylinder(radius=0.5, height=6)  # tall cylinder
+
+    # Fuse them to create an L-shaped object
+    complex_shape = fuse_parts(box, cylinder)
+
+    original_size = get_bounding_box_size(complex_shape)
+    original_z_height = original_size[2]
+
+    # Orient for flatness with Riemannian optimization
+    flattened_shape = orient_for_flatness_riemannian(
+        complex_shape, coarse_samples=40, random_starts=2, max_iters=8, logger=None
+    )
+
+    optimized_size = get_bounding_box_size(flattened_shape)
+    optimized_z_height = optimized_size[2]
+
+    # Should achieve some height reduction
+    assert (
+        optimized_z_height <= original_z_height
+    ), f"Should not increase height, got {optimized_z_height} vs {original_z_height}"
+
+    # Volume should be preserved
+    original_volume = get_volume(complex_shape)
+    optimized_volume = get_volume(flattened_shape)
+    assert (
+        abs(original_volume - optimized_volume) / original_volume < 0.01
+    ), "Volume should be preserved during rotation"
+
+
+def test_orient_for_flatness_riemannian_convergence():
+    """Test that Riemannian optimization converges and produces info dict."""
+    cone = create_cone(radius1=2, radius2=0, height=6)
+
+    # Run optimization and capture info
+    result = orient_for_flatness_riemannian(
+        cone, coarse_samples=20, random_starts=1, max_iters=6, logger=None
+    )
+
+    # Should return just the part (like the basic version)
+    # Check that result is a CAD object with reasonable properties
+    result_size = get_bounding_box_size(result)
+    original_size = get_bounding_box_size(cone)
+
+    # Should improve orientation
+    assert result_size[2] <= original_size[2], "Should not worsen orientation"
+
+    # Should have same volume
+    original_volume = get_volume(cone)
+    result_volume = get_volume(result)
+    assert (
+        abs(original_volume - result_volume) / original_volume < 0.01
+    ), "Volume should be preserved"
+
+
+def test_orient_for_flatness_riemannian_edge_cases():
+    """Test Riemannian optimization with edge cases."""
+    # Test with already flat part
+    flat_box = create_box(10, 10, 0.1)
+
+    result = orient_for_flatness_riemannian(
+        flat_box, coarse_samples=8, max_iters=3, logger=None
+    )
+
+    # Should handle gracefully
+    result_size = get_bounding_box_size(result)
+    assert result_size[2] < 1.0, "Flat part should remain flat"
+
+    # Test with very few samples
+    small_box = create_box(1, 2, 3)
+
+    result_minimal = orient_for_flatness_riemannian(
+        small_box, coarse_samples=4, random_starts=0, max_iters=2, logger=None
+    )
+
+    # Should still work
+    assert (
+        get_volume(result_minimal) > 0
+    ), "Should produce valid result even with minimal parameters"

@@ -653,6 +653,21 @@ def rotate_part_native(part, v1, v2, angle):
         return rotation_retval
 
 
+def mirror_part_native(part, mirrorPlane, basePointVector):
+    """Mirror using native CadQuery signature: mirror(mirrorPlane, basePointVector)."""
+    # There are NO FRAMEWORK SPECIFC CALLS allowed here! Use adapter functions only!
+    #  isinstance(x, NamedPart)  or similar ARE FORBIDDEN here!
+    # if something is needed like this, do it in reconstruct
+
+    mirror_retval = part.mirror(
+        mirrorPlane=mirrorPlane, basePointVector=basePointVector
+    )
+    if hasattr(part, "reconstruct"):
+        return part.reconstruct(mirror_retval)
+    else:
+        return mirror_retval
+
+
 def fuse_parts(part1, part2):
     """Fuse two CadQuery parts together."""
     return part1.fuse(part2)

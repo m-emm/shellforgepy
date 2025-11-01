@@ -41,7 +41,13 @@ from shellforgepy.geometry.m_screws import (
     list_supported_sizes,
     m_screws_table,
 )
-from shellforgepy.geometry.mesh_builders import create_fibonacci_sphere_geometry
+from shellforgepy.geometry.mesh_builders import (
+    create_cube_geometry,
+    create_dodecahedron_geometry,
+    create_fibonacci_sphere_geometry,
+    create_icosahedron_geometry,
+    create_tetrahedron_geometry,
+)
 from shellforgepy.geometry.mesh_utils import (
     calc_distance_to_path,
     convert_to_traditional_face_vertex_maps,
@@ -63,7 +69,11 @@ from .construct.alignment_operations import (
     stack_alignment_of,
     translate,
 )
-from .construct.construct_utils import fibonacci_sphere, normalize
+from .construct.construct_utils import (
+    compute_triangle_normal,
+    fibonacci_sphere,
+    normalize,
+)
 from .construct.leader_followers_cutters_part import LeaderFollowersCuttersPart
 from .construct.named_part import NamedPart
 from .construct.part_collector import PartCollector
@@ -79,13 +89,18 @@ from .geometry.higher_order_solids import (
     directed_box_at,
     directed_cylinder_at,
 )
-from .geometry.modifications import slice_part
+from .geometry.modifications import (
+    orient_for_flatness,
+    orient_for_flatness_riemannian,
+    slice_part,
+)
 from .geometry.spherical_tools import (
     coordinate_system_transform,
     coordinate_system_transform_to_matrix,
     coordinate_system_transformation_function,
     matrix_to_coordinate_system_transform,
     matrix_to_coordinate_system_transformation_function,
+    ray_triangle_intersect,
 )
 from .geometry.treapezoidal_snake_geometry import create_trapezoidal_snake_geometry
 from .produce.arrange_and_export import (
@@ -115,10 +130,10 @@ __all__ = [
     "apply_fillet_to_edges",
     "arrange_and_export_parts",
     "arrange_and_export",
-    "ConnectorHint",
     "calc_distance_to_path",
     "chain_translations",
     "compute_transforms_from_hint",
+    "ConnectorHint",
     "convert_to_traditional_face_vertex_maps",
     "coordinate_system_transform_to_matrix",
     "coordinate_system_transform",
@@ -126,14 +141,17 @@ __all__ = [
     "create_bolt_thread",
     "create_box",
     "create_cone",
+    "create_cube_geometry",
     "create_cylinder_screw",
     "create_cylinder",
     "create_distorted_cube",
+    "create_dodecahedron_geometry",
     "create_extruded_polygon",
     "create_extruded_polygon",
-    "create_filleted_box",
     "create_fibonacci_sphere_geometry",
+    "create_filleted_box",
     "create_hex_prism",
+    "create_icosahedron_geometry",
     "create_nut",
     "create_right_triangle",
     "create_ring",
@@ -142,6 +160,7 @@ __all__ = [
     "create_screw_thread",
     "create_solid_from_traditional_face_vertex_maps",
     "create_sphere",
+    "create_tetrahedron_geometry",
     "create_text_object",
     "create_trapezoid",
     "create_trapezoidal_snake_geometry",
@@ -161,6 +180,8 @@ __all__ = [
     "LeaderFollowersCuttersPart",
     "list_supported_sizes",
     "m_screws_table",
+    "matrix_to_coordinate_system_transform",
+    "matrix_to_coordinate_system_transformation_function",
     "merge_meshes",
     "MeshPartition",
     "mirror",
@@ -177,8 +198,10 @@ __all__ = [
     "translate",
     "write_shell_maps_to_stl",
     "write_stl_binary",
-    "matrix_to_coordinate_system_transform",
-    "matrix_to_coordinate_system_transformation_function",
+    "orient_for_flatness",
+    "orient_for_flatness_riemannian",
+    "ray_triangle_intersect",
+    "compute_triangle_normal",
 ]
 
 

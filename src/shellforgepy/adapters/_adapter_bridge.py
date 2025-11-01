@@ -24,6 +24,7 @@ copy_part = selected_adapter.copy_part
 create_filleted_box = selected_adapter.create_filleted_box
 translate_part_native = selected_adapter.translate_part_native
 rotate_part_native = selected_adapter.rotate_part_native
+mirror_part_native = selected_adapter.mirror_part_native
 apply_fillet_to_edges = selected_adapter.apply_fillet_to_edges
 apply_fillet_by_alignment = selected_adapter.apply_fillet_by_alignment
 get_adapter_id = selected_adapter.get_adapter_id
@@ -59,6 +60,7 @@ __all__ = [
     "get_vertices",
     "get_volume",
     "mirror_part",
+    "mirror_part_native",
     "rotate_part_native",
     "rotate_part",
     "translate_part_native",

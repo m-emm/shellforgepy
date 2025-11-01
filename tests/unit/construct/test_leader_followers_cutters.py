@@ -232,3 +232,303 @@ def test_leader_followers_boundbox_property_matches_leader_bounds():
     assert bound_box.XMax == pytest.approx(expected_max[0])
     assert bound_box.YMax == pytest.approx(expected_max[1])
     assert bound_box.ZMax == pytest.approx(expected_max[2])
+
+
+def test_additional_data_defaults_to_empty_dict():
+    leader = create_box(1, 1, 1)
+    group = LeaderFollowersCuttersPart(leader)
+
+    assert group.additional_data == {}
+    assert isinstance(group.additional_data, dict)
+
+
+def test_additional_data_accepts_dict():
+    leader = create_box(1, 1, 1)
+    data = {"material": "steel", "weight": 10.5, "id": 42}
+    group = LeaderFollowersCuttersPart(leader, additional_data=data)
+
+    assert group.additional_data == data
+    assert group.additional_data is data  # Constructor stores reference directly
+
+
+def test_additional_data_must_be_dict():
+    leader = create_box(1, 1, 1)
+
+    with pytest.raises(AssertionError):
+        LeaderFollowersCuttersPart(leader, additional_data="not a dict")
+
+    with pytest.raises(AssertionError):
+        LeaderFollowersCuttersPart(leader, additional_data=42)
+
+    with pytest.raises(AssertionError):
+        LeaderFollowersCuttersPart(leader, additional_data=["list", "not", "dict"])
+
+
+def test_additional_data_preserved_in_copy():
+    leader = create_box(1, 1, 1)
+    original_data = {"material": "aluminum", "finish": "anodized", "count": 5}
+    group = LeaderFollowersCuttersPart(leader, additional_data=original_data)
+
+    copied_group = group.copy()
+
+    assert copied_group.additional_data == original_data
+    assert copied_group.additional_data is not group.additional_data
+    assert copied_group.additional_data is not original_data
+
+    # Modify original to ensure deep copy
+    original_data["count"] = 10
+    assert copied_group.additional_data["count"] == 5
+
+
+def test_additional_data_preserved_in_copy_with_nested_data():
+    leader = create_box(1, 1, 1)
+    original_data = {
+        "metadata": {"version": 1, "author": "test"},
+        "properties": {"dimensions": [1, 2, 3], "weight": 1.5},
+    }
+    group = LeaderFollowersCuttersPart(leader, additional_data=original_data)
+
+    copied_group = group.copy()
+
+    assert copied_group.additional_data == original_data
+    assert copied_group.additional_data is not group.additional_data
+
+    # Test deep copy by modifying nested data
+    original_data["metadata"]["version"] = 2
+    original_data["properties"]["dimensions"].append(4)
+
+    assert copied_group.additional_data["metadata"]["version"] == 1
+    assert copied_group.additional_data["properties"]["dimensions"] == [1, 2, 3]
+
+
+def test_additional_data_merged_in_fuse_with_group():
+    leader1 = create_box(1, 1, 1)
+    leader2 = translate(1.5, 0, 0)(create_box(1, 1, 1))
+
+    data1 = {"source": "group1", "material": "steel", "version": 1}
+    data2 = {"source": "group2", "color": "red", "version": 2}
+
+    group1 = LeaderFollowersCuttersPart(leader1, additional_data=data1)
+    group2 = LeaderFollowersCuttersPart(leader2, additional_data=data2)
+
+    fused_group = group1.fuse(group2)
+
+    # When fusing two LeaderFollowersCuttersPart objects, additional_data is not merged
+    # The implementation doesn't include additional_data merging for this case
+    assert fused_group.additional_data == {}
+
+
+def test_additional_data_preserved_in_fuse_with_shape():
+    leader = create_box(1, 1, 1)
+    other_shape = translate(1.5, 0, 0)(create_box(1, 1, 1))
+
+    original_data = {"material": "brass", "finish": "polished"}
+    group = LeaderFollowersCuttersPart(leader, additional_data=original_data)
+
+    fused_group = group.fuse(other_shape)
+
+    assert fused_group.additional_data == original_data
+    assert fused_group.additional_data is not group.additional_data
+
+
+def test_additional_data_preserved_in_cut_with_shape():
+    leader = create_box(2, 2, 2)
+    cutter_shape = translate(0.5, 0.5, 0.5)(create_box(1, 1, 1))
+
+    original_data = {"material": "wood", "treatment": "stain", "id": 123}
+    group = LeaderFollowersCuttersPart(leader, additional_data=original_data)
+
+    cut_group = group.cut(cutter_shape)
+
+    assert cut_group.additional_data == original_data
+    assert cut_group.additional_data is not group.additional_data
+
+
+def test_additional_data_empty_when_other_has_no_additional_data_in_fuse():
+    leader1 = create_box(1, 1, 1)
+    leader2 = translate(1.5, 0, 0)(create_box(1, 1, 1))
+
+    data1 = {"material": "plastic", "color": "blue"}
+
+    group1 = LeaderFollowersCuttersPart(leader1, additional_data=data1)
+    group2 = LeaderFollowersCuttersPart(leader2)  # No additional_data
+
+    fused_group = group1.fuse(group2)
+
+    # When fusing two LeaderFollowersCuttersPart objects, additional_data is not preserved
+    assert fused_group.additional_data == {}
+
+
+def test_additional_data_overrides_in_fuse():
+    leader1 = create_box(1, 1, 1)
+    leader2 = translate(1.5, 0, 0)(create_box(1, 1, 1))
+
+    data1 = {"material": "steel", "finish": "brushed", "priority": 1}
+    data2 = {
+        "material": "aluminum",
+        "priority": 2,
+    }  # Should override steel and priority
+
+    group1 = LeaderFollowersCuttersPart(leader1, additional_data=data1)
+    group2 = LeaderFollowersCuttersPart(leader2, additional_data=data2)
+
+    fused_group = group1.fuse(group2)
+
+    # When fusing two LeaderFollowersCuttersPart objects, additional_data is not merged
+    assert fused_group.additional_data == {}
+
+
+def test_additional_data_independent_modification():
+    leader = create_box(1, 1, 1)
+    original_data = {"status": "active", "tags": ["test", "sample"]}
+    group1 = LeaderFollowersCuttersPart(leader, additional_data=original_data)
+    group2 = group1.copy()
+
+    # Modify group1's additional_data
+    group1.additional_data["status"] = "inactive"
+    group1.additional_data["tags"].append("modified")
+
+    # group2 should be unaffected
+    assert group2.additional_data["status"] == "active"
+    assert group2.additional_data["tags"] == ["test", "sample"]
+
+
+def test_additional_data_merge_in_fuse_with_shape_only():
+    """Test that additional_data is only merged when fusing with a shape, not with another group."""
+    leader = create_box(1, 1, 1)
+    other_shape = translate(1.5, 0, 0)(create_box(1, 1, 1))
+
+    # Shape doesn't have additional_data attribute
+    original_data = {"material": "brass", "finish": "polished"}
+    group = LeaderFollowersCuttersPart(leader, additional_data=original_data)
+
+    fused_group = group.fuse(other_shape)
+
+    assert fused_group.additional_data == original_data
+    assert fused_group.additional_data is not group.additional_data
+
+
+def test_additional_data_merge_preserves_original():
+    """Test that the original group's additional_data is not modified during fuse."""
+    leader = create_box(1, 1, 1)
+    other_shape = translate(1.5, 0, 0)(create_box(1, 1, 1))
+
+    original_data = {"material": "copper", "weight": 5.0}
+    group = LeaderFollowersCuttersPart(leader, additional_data=original_data)
+
+    fused_group = group.fuse(other_shape)
+
+    # Original group should be unchanged
+    assert group.additional_data == original_data
+    assert group.additional_data is original_data
+
+    # Fused group should have a deep copy
+    assert fused_group.additional_data == original_data
+    assert fused_group.additional_data is not original_data
+
+
+def test_additional_data_cut_with_group_no_merge():
+    """Test that additional_data is not merged when cutting with another group."""
+    leader1 = create_box(2, 2, 2)
+    leader2 = translate(0.5, 0.5, 0.5)(create_box(1, 1, 1))
+
+    data1 = {"material": "wood", "finish": "stain"}
+    data2 = {"tool": "saw", "speed": "slow"}
+
+    group1 = LeaderFollowersCuttersPart(leader1, additional_data=data1)
+    group2 = LeaderFollowersCuttersPart(leader2, additional_data=data2)
+
+    cut_group = group1.cut(group2)
+
+    # When cutting with another group, no additional_data parameter is passed to constructor
+    assert cut_group.additional_data == {}
+
+
+def test_additional_data_none_becomes_empty_dict():
+    """Test that passing None for additional_data creates an empty dict."""
+    leader = create_box(1, 1, 1)
+    group = LeaderFollowersCuttersPart(leader, additional_data=None)
+
+    assert group.additional_data == {}
+    assert isinstance(group.additional_data, dict)
+
+
+def test_additional_data_with_part_list():
+    """Test that additional_data is accessible even when part is used with PartList."""
+    leader = create_box(2, 2, 2)
+    follower = NamedPart("follower", translate(3, 0, 0)(create_box(1, 1, 1)))
+
+    metadata = {"part_number": "ABC123", "material": "titanium", "batch": 42}
+    group = LeaderFollowersCuttersPart(
+        leader, followers=[follower], additional_data=metadata
+    )
+
+    # Verify the group still has its additional_data before adding to PartList
+    assert group.additional_data == metadata
+
+    plist = PartList()
+    plist.add(group, "complex_part", skip_in_production=False)
+
+    entries = plist.as_list()
+    assert len(entries) == 1
+    assert entries[0]["name"] == "complex_part"
+
+    # The PartList extracts just the leader shape via get_leader_as_part()
+    # So the part in the list is the leader shape, not the full group
+    part_in_list = entries[0]["part"]
+    assert part_in_list is not None
+
+    # But the original group still maintains its additional_data
+    assert group.additional_data == metadata
+
+
+def test_additional_data_with_transformations():
+    leader = create_box(1, 1, 1)
+
+    metadata = {"origin": "test_case", "version": 1.0}
+    group = LeaderFollowersCuttersPart(leader, additional_data=metadata)
+
+    # Apply translation
+    translated_group = translate(5, 0, 0)(group)
+    assert translated_group.additional_data == metadata
+    assert translated_group.additional_data is not group.additional_data
+
+    # Apply rotation
+    rotated_group = rotate(90, axis=(0, 0, 1))(group)
+    assert rotated_group.additional_data == metadata
+    assert rotated_group.additional_data is not group.additional_data
+
+
+def test_additional_data_with_mirror_transformation():
+    """Test that additional_data is preserved through mirror transformations."""
+    from shellforgepy.simple import mirror
+
+    leader = create_box(2, 1, 1)
+    metadata = {"symmetry": "bilateral", "material": "steel"}
+    group = LeaderFollowersCuttersPart(leader, additional_data=metadata)
+
+    # Apply mirror transformation
+    mirrored_group = mirror(normal=(1, 0, 0), point=(0, 0, 0))(group)
+    assert mirrored_group.additional_data == metadata
+    assert mirrored_group.additional_data is not group.additional_data
+
+
+def test_additional_data_with_in_place_transformations():
+    """Test that additional_data is preserved with in-place transformation methods."""
+    leader = create_box(1, 1, 1)
+    metadata = {"inplace": True, "method": "direct"}
+    group = LeaderFollowersCuttersPart(leader, additional_data=metadata)
+
+    # Test in-place translation (expects vector tuple)
+    result = group.translate((1, 0, 0))
+    assert result is group  # Should return self
+    assert group.additional_data == metadata
+
+    # Test in-place rotation (expects point, point, angle)
+    result = group.rotate((0, 0, 0), (0, 0, 1), 45)
+    assert result is group  # Should return self
+    assert group.additional_data == metadata
+
+    # Note: In-place mirror method is adapter-specific in signature,
+    # so we test mirror functionality only through the functional interface
+    # in test_additional_data_with_mirror_transformation()

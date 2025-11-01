@@ -2,6 +2,7 @@ import logging
 
 from shellforgepy.adapters._adapter import (
     copy_part,
+    mirror_part_native,
     rotate_part_native,
     translate_part_native,
 )
@@ -35,6 +36,12 @@ class NamedPart:
         rotated_part = rotate_part_native(self.part, *args)
         self.part = rotated_part
         return NamedPart(self.name, rotated_part)
+
+    def mirror(self, *args, **kwargs):
+        """We mimick most cad-systems in-place mirroring. We must do an in-place update of self.part."""
+        mirrored_part = mirror_part_native(self.part, *args, **kwargs)
+        self.part = mirrored_part
+        return NamedPart(self.name, mirrored_part)
 
     def reconstruct(self, transformed_result=None):
         """Reconstruct this NamedPart after transformation."""
