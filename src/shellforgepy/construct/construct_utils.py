@@ -1,9 +1,12 @@
+import logging
 import math
 from typing import Dict, List, Tuple
 
 import numpy as np
 from scipy.optimize import minimize_scalar
 from shellforgepy.construct.cylinder_spec import CylinderSpec
+
+_logger = logging.getLogger(__name__)
 
 
 def rotation_matrix_from_vectors(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -418,6 +421,98 @@ def triangle_min_angle(p0, p1, p2):
         angle = np.arccos(cos_angle)
         angles.append(np.degrees(angle))
     return min(angles)
+
+
+def intersect_edge_with_polygon(p1, p2, polygon_spec, epsilon=1e-8):
+    """
+    Returns the parameter t along the edge p1→p2 where it intersects the polygon boundary.
+    If multiple intersections, returns the first one. If no intersection, returns None.
+
+    This function finds where an edge intersects the boundary of a 3D polygon.
+    The polygon is assumed to lie approximately in a plane.
+    """
+    from shellforgepy.construct.polygon_spec import PolygonSpec
+
+    if not isinstance(polygon_spec, PolygonSpec):
+        raise TypeError("polygon_spec must be a PolygonSpec instance")
+
+    # First, find intersection with the polygon's plane
+    edge_vec = p2 - p1
+    to_p1 = p1 - polygon_spec.center
+
+    # Check if edge is parallel to plane
+    denom = np.dot(edge_vec, polygon_spec.normal)
+    if abs(denom) < epsilon:
+        return None  # Edge is parallel to plane
+
+    # Find intersection parameter with plane
+    t_plane = -np.dot(to_p1, polygon_spec.normal) / denom
+
+    if not (0 <= t_plane <= 1):
+        return None  # Intersection is outside edge segment
+
+    # Compute intersection point
+    intersection_point = p1 + t_plane * edge_vec
+
+    # Check if intersection point is inside the polygon
+    if polygon_spec.contains_point(intersection_point):
+        return t_plane
+
+    return None
+
+
+def compute_polygon_normal(points):
+    # Compute normal using Newell's method
+    # Use PCA to find the best-fit plane
+    points = np.array(points)
+    center = np.mean(points, axis=0)
+    centered_points = np.array(points) - center
+    _, _, vh = np.linalg.svd(centered_points)
+
+    normal = vh[-1, :]
+
+    return normalize(normal)
+
+
+def point_in_polygon_2d(point: np.ndarray, polygon) -> bool:
+    """
+    Test if a 2D point is inside a polygon using ray casting algorithm.
+
+    Args:
+        point: 2D point [x, y]
+        polygon: List of 2D points defining the polygon vertices [[x1, y1], [x2, y2], ...]
+
+    Returns:
+        True if point is inside polygon, False otherwise
+    """
+    point = np.array(point)
+    assert point.shape == (2,)
+    assert len(polygon) >= 3
+    assert isinstance(polygon, (list, np.ndarray))
+    polygon = np.array(polygon)
+    assert polygon.shape[1] == 2
+    assert polygon.shape[0] == len(polygon)
+    assert len(polygon.shape) == 2, "Polygon must be a linear array of 2D points"
+    assert np.all(np.isfinite(polygon)), "Polygon contains non-finite points"
+
+    x, y = point
+
+    n = len(polygon)
+    inside = False
+
+    p1x, p1y = polygon[0]
+    for i in range(1, n + 1):
+        p2x, p2y = polygon[i % n]
+        if y > min(p1y, p2y):
+            if y <= max(p1y, p2y):
+                if x <= max(p1x, p2x):
+                    if p1y != p2y:
+                        xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                    if p1x == p2x or x <= xinters:
+                        inside = not inside
+        p1x, p1y = p2x, p2y
+
+    return inside
 
 
 def compute_out_vector(normal, triangle, edge_centroid, edge_vector):

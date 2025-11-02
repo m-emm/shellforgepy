@@ -7,6 +7,7 @@ from shellforgepy.construct.construct_utils import (
     fit_sphere_to_points,
     intersect_edge_with_cylinder,
     normalize_edge,
+    point_in_polygon_2d,
     select_uniform_cylindrical_vertices,
     split_triangle_topologically,
     triangle_edges,
@@ -449,3 +450,33 @@ def test_fit_sphere_to_points():
     # Check that center and radius are close to expected
     assert np.linalg.norm(center - sphere_center) < 5.0
     assert abs(radius - sphere_radius) < 5.0
+
+
+def test_points_in_polygon_2d():
+
+    # Define a square polygon
+    polygon = [
+        np.array([0.0, 0.0]),
+        np.array([1.0, 0.0]),
+        np.array([1.0, 1.0]),
+        np.array([0.0, 1.0]),
+    ]
+
+    inside_points = [
+        np.array([0.5, 0.5]),
+        np.array([0.1, 0.1]),
+        np.array([0.9, 0.9]),
+    ]
+
+    outside_points = [
+        np.array([-0.1, 0.5]),
+        np.array([1.1, 0.5]),
+        np.array([0.5, -0.1]),
+        np.array([0.5, 1.1]),
+    ]
+
+    for pt in inside_points:
+        assert point_in_polygon_2d(pt, polygon), f"Point {pt} should be inside"
+
+    for pt in outside_points:
+        assert not point_in_polygon_2d(pt, polygon), f"Point {pt} should be outside"

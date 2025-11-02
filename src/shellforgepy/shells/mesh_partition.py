@@ -1,6 +1,8 @@
 import copy
+import heapq
 import logging
 from collections import Counter, defaultdict, deque
+from heapq import heappop, heappush
 from typing import List, Optional
 
 import networkx as nx
@@ -13,6 +15,7 @@ from shellforgepy.construct.construct_utils import (
     rotation_matrix_from_vectors,
     triangle_edges,
 )
+from shellforgepy.construct.polygon_spec import PolygonSpec
 from shellforgepy.geometry.spherical_tools import cartesian_to_spherical_jackson
 from shellforgepy.shells.connector_hint import ConnectorHint
 from shellforgepy.shells.connector_utils import (
@@ -23,6 +26,7 @@ from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
 )
 from shellforgepy.shells.paths import VertexPath
+from shellforgepy.shells.polygon_perforation import create_edge_filter
 from shellforgepy.shells.region_edge_feature import RegionEdgeFeature
 
 _logger = logging.getLogger(__name__)
@@ -148,7 +152,6 @@ class MeshPartition:
             A list of vertex indices forming a closed path (first == last),
             covering all vertices in vertex_set and any minimal fillers.
         """
-        from heapq import heappop, heappush
 
         V = self.mesh.vertices
         vertex_set = set(vertex_set)
@@ -900,7 +903,6 @@ class MeshPartition:
         seed_vertex: Optional[int] = None,
         verbose: bool = True,
     ) -> "MeshPartition":
-        import heapq
 
         if not (0 < target_area_fraction < 1):
             raise ValueError("target_area_fraction must be between 0 and 1 (exclusive)")
@@ -1833,6 +1835,273 @@ class MeshPartition:
 
         return MeshPartition(new_mesh, new_face_to_region)
 
+    def perforate_and_split_region_by_polygon(
+        self,
+        region_id: int,
+        polygon_points_3d: List[np.ndarray],
+        epsilon: float = 1e-9,
+        min_relative_area=1e-2,
+        min_angle_deg=5.0,
+    ) -> "MeshPartition":
+        """
+        Perforate and split a region using a 3D polygon boundary.
+
+        This method follows the same pattern as perforate_and_split_region_by_cylinder
+        but uses polygon geometry instead of cylindrical geometry.
+
+        Args:
+            region_id: ID of the region to split
+            polygon_points_3d: List of 3D points defining the polygon boundary
+            epsilon: Numerical tolerance for perforation
+            min_relative_area: Minimum relative area for new triangles
+            min_angle_deg: Minimum angle in degrees for new triangles
+
+        Returns:
+            New MeshPartition with polygon region split off
+        """
+
+        def select_faces_inside_polygon_projected_area(
+            mesh,
+            faces_to_consider,
+            polygon_spec,
+            epsilon=1e-2,
+        ):
+            """Select faces that have centroids inside the polygon when projected to polygon plane."""
+            inside_faces = set()
+
+            for f_idx in faces_to_consider:
+                face = mesh.faces[f_idx]
+                # Get face centroid
+                centroid = mesh.triangle_centroid(face)
+
+                # Project centroid onto polygon plane
+                distance = np.dot(centroid - polygon_spec.center, polygon_spec.normal)
+                projected_point = centroid - distance * polygon_spec.normal
+
+                # Check if projected point is inside polygon
+                if polygon_spec.contains_point(projected_point):
+                    inside_faces.add(f_idx)
+
+            return inside_faces
+
+        # Create polygon specification
+        polygon_spec = PolygonSpec.from_points_3d(polygon_points_3d)
+
+        # Get faces in the target region
+        region_faces = [
+            idx for idx, r in self.face_to_region_map.items() if r == region_id
+        ]
+
+        # EDGE-CONSTRAINED polygon perforation: only cut between polygon edge endpoints
+        # Use proven plane cutting for each original polygon edge with constraints
+        new_mesh = self.mesh
+        face_index_map = {i: [i] for i in range(len(self.mesh.faces))}
+
+        _logger.info(f"Perforating with {len(polygon_points_3d)} polygon edges")
+
+        # Cut along each original polygon edge using constrained plane perforation
+        for edge_idx in range(len(polygon_points_3d)):
+            p1 = polygon_points_3d[edge_idx]
+            p2 = polygon_points_3d[(edge_idx + 1) % len(polygon_points_3d)]
+
+            edge_vector = p2 - p1
+            edge_length = np.linalg.norm(edge_vector)
+            if edge_length < 1e-8:
+                continue
+
+            # Create cutting plane orthogonal to both edge vector and polygon normal
+            plane_normal = np.cross(edge_vector, polygon_spec.normal)
+            plane_normal_length = np.linalg.norm(plane_normal)
+            if plane_normal_length < 1e-8:
+                continue
+            plane_normal = plane_normal / plane_normal_length
+
+            edge_filter = create_edge_filter(p1, p2, polygon_spec.normal)
+
+            # Use plane perforation with our custom vertex filter
+            perforation_result = new_mesh.compute_plane_perforation(
+                plane_point=p1,  # Any point on the plane
+                plane_normal=plane_normal,
+                vertex_filter=edge_filter,
+                triangle_indices=region_faces,
+            )
+
+            # Apply perforation to get new mesh
+            new_mesh, face_map = new_mesh.apply_perforation(perforation_result)
+
+            # Update face index mapping
+            updated_face_map = {}
+            for old_idx, new_faces in face_index_map.items():
+                updated_face_map[old_idx] = []
+                for new_face in new_faces:
+                    if new_face in face_map:
+                        updated_face_map[old_idx].extend(face_map[new_face])
+                    else:
+                        updated_face_map[old_idx].append(new_face)
+            face_index_map = updated_face_map
+
+            _logger.info(
+                f"Successfully cut edge {edge_idx} with {len(perforation_result.new_vertices)} new vertices"
+            )
+
+        # Final mesh is the result of all edge-constrained cuts
+        final_mesh = new_mesh
+        final_face_map = face_index_map
+
+        # Create new face-to-region mapping
+        new_face_to_region = {}
+        max_region_id = max(self.face_to_region_map.values())
+        new_region_id = max_region_id + 1
+
+        # Collect all new faces from perforation
+        all_new_faces = set()
+        for face_list in final_face_map.values():
+            all_new_faces.update(face_list)
+
+        # Add all faces in the region that were not perforated
+        all_new_faces.update(
+            idx for idx, r in self.face_to_region_map.items() if r == region_id
+        )
+
+        # Select faces inside the polygon
+        selected_faces = select_faces_inside_polygon_projected_area(
+            mesh=final_mesh,
+            faces_to_consider=all_new_faces,
+            polygon_spec=polygon_spec,
+            epsilon=epsilon,
+        )
+
+        # Assign region IDs based on polygon containment
+        for old_face_idx, new_face_indices in final_face_map.items():
+            old_region = self.face_to_region_map[old_face_idx]
+            for new_face in new_face_indices:
+                if old_region != region_id:
+                    # Face wasn't in target region, keep original assignment
+                    new_face_to_region[new_face] = old_region
+                elif new_face in selected_faces:
+                    # Face is inside polygon, assign to new region
+                    new_face_to_region[new_face] = new_region_id
+                else:
+                    # Face is outside polygon, keep original region
+                    new_face_to_region[new_face] = region_id
+
+        # Handle faces from other regions (not in target region)
+        for face_idx in range(len(final_mesh.faces)):
+            if face_idx not in new_face_to_region:
+                # Find which original face this came from
+                for orig_idx, mapped_faces in final_face_map.items():
+                    if face_idx in mapped_faces:
+                        new_face_to_region[face_idx] = self.face_to_region_map[orig_idx]
+                        break
+
+        return MeshPartition(final_mesh, new_face_to_region)
+
+    def _perforate_along_constrained_edge(
+        self,
+        mesh,
+        edge_start: np.ndarray,
+        edge_end: np.ndarray,
+        plane_normal: np.ndarray,
+        epsilon: float,
+        triangle_indices,
+    ):
+        """
+        Perforate mesh along a constrained edge - only create intersection vertices
+        that lie between edge_start and edge_end (not extending to infinity like plane cutting).
+        """
+
+        V_orig = mesh.vertices
+        F_orig = mesh.faces
+        labels_orig = mesh.vertex_labels
+
+        edge_vector = edge_end - edge_start
+        edge_length = np.linalg.norm(edge_vector)
+        edge_direction = edge_vector / edge_length
+
+        edge_to_cutpoint_index = {}
+        new_vertices = []
+        new_labels = []
+        next_index = len(V_orig)
+        seen_edges = set()
+
+        # Only consider triangles in the specified region
+        triangle_indices = set(
+            triangle_indices if triangle_indices is not None else range(len(F_orig))
+        )
+
+        for tri_idx in triangle_indices:
+            tri = F_orig[tri_idx]
+            for a, b in triangle_edges(tri):
+                edge = normalize_edge(a, b)
+                if edge in seen_edges:
+                    continue
+                seen_edges.add(edge)
+
+                Va, Vb = V_orig[edge[0]], V_orig[edge[1]]
+
+                # Check if this mesh edge intersects with our constraint edge line
+                # Using line-line intersection in 3D projected onto the plane
+
+                # Project both mesh edge and constraint edge onto the cutting plane
+                mesh_edge_vec = Vb - Va
+
+                # Find intersection of mesh edge with the cutting plane
+                w = Va - edge_start
+                denom = np.dot(plane_normal, mesh_edge_vec)
+
+                if abs(denom) < epsilon:
+                    continue  # Mesh edge is parallel to cutting plane
+
+                t_mesh = -np.dot(plane_normal, w) / denom
+                if not (0 < t_mesh < 1):
+                    continue  # Intersection point not on mesh edge
+
+                intersection_point = Va + t_mesh * mesh_edge_vec
+
+                # Check if intersection point lies between edge_start and edge_end
+                to_intersection = intersection_point - edge_start
+                t_constraint = np.dot(to_intersection, edge_direction) / edge_length
+
+                if not (0 <= t_constraint <= 1):
+                    continue  # Intersection point not within constraint edge bounds
+
+                # Additional distance check to constraint edge line
+                # Project intersection onto constraint edge line
+                projected_on_constraint = edge_start + t_constraint * edge_vector
+                distance_to_constraint_line = np.linalg.norm(
+                    intersection_point - projected_on_constraint
+                )
+
+                if distance_to_constraint_line > epsilon * 10:
+                    continue  # Too far from constraint edge line
+
+                # Valid constrained intersection - add new vertex
+                relative_epsilon = epsilon + 0.01 * np.linalg.norm(mesh_edge_vec)
+                dist_to_a = np.linalg.norm(intersection_point - Va)
+                dist_to_b = np.linalg.norm(intersection_point - Vb)
+
+                if dist_to_a < relative_epsilon or dist_to_b < relative_epsilon:
+                    continue  # Too close to existing vertices
+
+                edge_to_cutpoint_index[edge] = next_index
+                new_vertices.append(intersection_point)
+                new_labels.append(f"{labels_orig[edge[0]]}__{labels_orig[edge[1]]}")
+                next_index += 1
+
+        # Apply the perforation using existing logic
+        from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
+            PerforationResult,
+        )
+
+        perforation = PerforationResult(
+            edge_to_new_vertex_index=edge_to_cutpoint_index,
+            new_vertices=new_vertices,
+            new_labels=new_labels,
+            triangle_indices=triangle_indices,
+        )
+
+        return mesh.apply_perforation(perforation)
+
     def find_regions_of_vertex_by_index(self, vertex_index: int) -> List[int]:
         """
         Find all regions that contain a specific vertex by its index.
@@ -2267,3 +2536,190 @@ class MeshPartition:
             paths_by_region_pairs[region_pair] = paths
 
         return paths_by_region_pairs
+
+    def project_polygon_onto_mesh(
+        self,
+        region_id: int,
+        polygon_points_2d: List[tuple],
+        ray_origin: np.ndarray,
+        ray_direction: np.ndarray,
+        target_segment_length: float = 3.0,
+    ) -> List[np.ndarray]:
+        """Project a 2D polygon onto the mesh surface by casting rays from edge points.
+
+        Args:
+            region_id: ID of the region to project onto
+            polygon_points_2d: List of 2D polygon vertices as (x, y) tuples
+            ray_origin: Starting point for the central ray
+            ray_direction: Direction of the central ray
+            target_segment_length: Target length for subdivided edge segments
+
+        Returns:
+            List of 3D points on the mesh surface defining the projected polygon
+
+        Raises:
+            ValueError: If no central intersection found or polygon is invalid
+        """
+        from shellforgepy.geometry.spherical_tools import ray_triangle_intersect
+
+        polygon_points_2d = np.array(polygon_points_2d)
+        if polygon_points_2d.shape[1] != 2:
+            raise ValueError("Polygon points must be 2D (x, y) coordinates")
+
+        ray_direction = normalize(np.array(ray_direction))
+        ray_origin = np.array(ray_origin)
+
+        # Get mesh faces for the specified region
+        region_faces = self.get_faces_of_region(region_id)
+        if not region_faces:
+            raise ValueError(f"Region {region_id} has no faces")
+
+        # Find the central hit point to establish the projection plane
+        central_hit = None
+        central_face_id = None
+
+        for face_idx in region_faces:
+            face = self.mesh.faces[face_idx]
+            triangle = self.mesh.vertices[face]
+
+            hit_point = ray_triangle_intersect(ray_origin, ray_direction, triangle)
+            if hit_point is not None:
+                central_hit = hit_point
+                central_face_id = face_idx
+                break
+
+        if central_hit is None:
+            raise ValueError(
+                "No central intersection found when projecting polygon onto mesh"
+            )
+
+        # Calculate face normal for the hit face
+        face = self.mesh.faces[central_face_id]
+        triangle = self.mesh.vertices[face]
+        v0, v1, v2 = triangle
+        central_normal = normalize(compute_triangle_normal(v0, v1, v2))
+
+        _logger.debug(f"Central hit point: {central_hit}")
+        _logger.debug(f"Central normal: {central_normal}")
+
+        # Create a local coordinate system at the hit point
+        # Use the face normal as the Z axis
+        local_z = normalize(central_normal)
+
+        # Choose an arbitrary perpendicular direction for X axis
+        if abs(local_z[2]) < 0.9:  # Not pointing mostly up/down
+            local_x = normalize(np.cross(local_z, np.array([0, 0, 1])))
+        else:
+            local_x = normalize(np.cross(local_z, np.array([1, 0, 0])))
+
+        # Y axis completes the right-handed system
+        local_y = normalize(np.cross(local_z, local_x))
+
+        # Generate subsampled points along polygon edges
+        subsampled_2d_points = []
+
+        for i in range(len(polygon_points_2d)):
+            # Current vertex (always include)
+            current_vertex = polygon_points_2d[i]
+            next_vertex = polygon_points_2d[(i + 1) % len(polygon_points_2d)]
+
+            # Always add the current vertex
+            subsampled_2d_points.append(current_vertex)
+
+            # Calculate edge vector and length
+            edge_vector = next_vertex - current_vertex
+            edge_length = np.linalg.norm(edge_vector)
+
+            # Determine number of subdivisions needed
+            num_subdivisions = max(1, int(np.ceil(edge_length / target_segment_length)))
+
+            # Add intermediate points along the edge (excluding the next vertex to avoid duplication)
+            for j in range(1, num_subdivisions):
+                t = j / num_subdivisions
+                intermediate_point = current_vertex + t * edge_vector
+                subsampled_2d_points.append(intermediate_point)
+
+        projected_points = []
+
+        # Project each subsampled point onto the mesh surface
+        for point_2d in subsampled_2d_points:
+            x_2d, y_2d = point_2d
+
+            # Convert 2D polygon point to 3D using local coordinate system
+            point_3d = central_hit + x_2d * local_x + y_2d * local_y
+
+            # Cast ray from this 3D point toward the mesh (opposite to normal direction)
+            ray_start = (
+                point_3d - 20 * local_z
+            )  # Start ray some distance away from surface
+            ray_dir = local_z  # Ray toward the surface
+
+            # Find intersection with any face in the region
+            hit_found = False
+            for face_idx in region_faces:
+                face = self.mesh.faces[face_idx]
+                triangle = self.mesh.vertices[face]
+
+                hit_point = ray_triangle_intersect(ray_start, ray_dir, triangle)
+                if hit_point is not None:
+                    projected_points.append(hit_point)
+                    hit_found = True
+                    break
+
+            if not hit_found:
+                _logger.warning(f"Failed to project 2D point ({x_2d:.1f}, {y_2d:.1f})")
+
+        return projected_points
+
+    def _validate_points_on_surface(
+        self, region_id: int, points: List[np.ndarray], tolerance: float
+    ):
+        """Validate that all points lie approximately on the mesh surface."""
+        region_faces = self.get_faces_of_region(region_id)
+
+        for i, point in enumerate(points):
+            # Find the closest face to this point
+            min_distance = float("inf")
+
+            for face_idx in region_faces:
+                face = self.mesh.faces[face_idx]
+                face_vertices = self.mesh.vertices[face]
+                distance = self._point_to_triangle_distance(point, face_vertices)
+                min_distance = min(min_distance, distance)
+
+            if min_distance > tolerance:
+                raise ValueError(
+                    f"Polygon point {i} is {min_distance:.3f} units from mesh surface "
+                    f"(tolerance: {tolerance:.3f})"
+                )
+
+    def _point_to_triangle_distance(
+        self, point: np.ndarray, triangle: np.ndarray
+    ) -> float:
+        """Calculate minimum distance from point to triangle."""
+        # Simple implementation - distance to triangle plane
+        # A more sophisticated implementation would consider edges and vertices
+        v0, v1, v2 = triangle
+
+        # Calculate triangle normal
+        edge1 = v1 - v0
+        edge2 = v2 - v0
+        normal = normalize(np.cross(edge1, edge2))
+
+        # Distance to plane
+        to_point = point - v0
+        return abs(np.dot(to_point, normal))
+
+    def _calculate_polygon_plane(
+        self, points: List[np.ndarray]
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Calculate the best-fit plane for the polygon points."""
+        points = np.array(points)
+        centroid = np.mean(points, axis=0)
+
+        # Use PCA to find the best-fit plane
+        centered_points = points - centroid
+        _, _, vh = np.linalg.svd(centered_points)
+        normal = vh[-1]  # Last row is the normal to the best-fit plane
+
+        return centroid, normalize(normal)

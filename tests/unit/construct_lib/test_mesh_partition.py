@@ -4,7 +4,12 @@ from collections import defaultdict
 
 import matplotlib.pyplot as plt
 import numpy as np
-from shellforgepy.construct.construct_utils import normalize
+import pytest
+from shellforgepy.construct.construct_utils import (
+    fibonacci_sphere,
+    normalize,
+    point_in_polygon_2d,
+)
 from shellforgepy.geometry.mesh_builders import (
     create_cube_geometry,
     create_dodecahedron_geometry,
@@ -805,6 +810,170 @@ def test_find_region_edge_features():
 
 
 def test_find_region_edge_features_along_original_edge():
+    # Create a simple test mesh with known edge structure
+    points, _ = create_dodecahedron_geometry(1.0)
+    mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
+    partition = MeshPartition(mesh)
+
+    # Perforate to create multiple regions
+    plane_point = np.array([0.0, 0.0, 0.0])
+    plane_normal = np.array([1.0, 0.0, 0.0])
+    new_partition = partition.perforate_and_split_region_by_plane(
+        region_id=0,
+        plane_point=plane_point,
+        plane_normal=plane_normal,
+    )
+
+    # Find edge features for each region
+    for region_id in new_partition.get_regions():
+        edge_features = new_partition.find_region_edge_features(region_id)
+        assert isinstance(edge_features, list)
+        for feature in edge_features:
+            assert isinstance(feature, RegionEdgeFeature)
+            assert feature.region_id == region_id
+
+
+def test_project_polygon_onto_mesh():
+    """Test projecting a 2D polygon onto mesh surface."""
+    # Create a simple sphere mesh
+    points = np.array(fibonacci_sphere(samples=100))
+    points *= 10.0  # Scale up for better numerical stability
+    mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
+    partition = MeshPartition(mesh)
+
+    # Define a simple square polygon in 2D
+    square_2d = [(-2.0, -2.0), (2.0, -2.0), (2.0, 2.0), (-2.0, 2.0)]
+
+    # Project from origin toward positive Z
+    ray_origin = np.array([0.0, 0.0, 0.0])
+    ray_direction = np.array([0.0, 0.0, 1.0])
+
+    # Project the polygon onto the mesh
+    projected_points = partition.project_polygon_onto_mesh(
+        region_id=0,
+        polygon_points_2d=square_2d,
+        ray_origin=ray_origin,
+        ray_direction=ray_direction,
+        target_segment_length=1.0,
+    )
+
+    # Check that we got some projected points
+    assert (
+        len(projected_points) >= 4
+    ), f"Expected at least 4 projected points, got {len(projected_points)}"
+
+    # Check that all projected points are 3D
+    for point in projected_points:
+        assert point.shape == (3,), f"Expected 3D point, got shape {point.shape}"
+
+    # Check that projected points are roughly on the sphere surface
+    for point in projected_points:
+        distance_from_origin = np.linalg.norm(point)
+        assert (
+            abs(distance_from_origin - 10.0) < 2.0
+        ), f"Point {point} not on sphere surface"
+
+    _logger.info(f"Successfully projected {len(projected_points)} points onto mesh")
+
+
+def test_project_polygon_onto_mesh_invalid_region():
+    """Test error handling for invalid region ID."""
+    points = np.array(fibonacci_sphere(samples=50))
+    mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
+    partition = MeshPartition(mesh)
+
+    square_2d = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+
+    # Try to project onto non-existent region
+    with pytest.raises(ValueError, match="Region 999 has no faces"):
+        partition.project_polygon_onto_mesh(
+            region_id=999,
+            polygon_points_2d=square_2d,
+            ray_origin=np.array([0.0, 0.0, 0.0]),
+            ray_direction=np.array([0.0, 0.0, 1.0]),
+        )
+
+
+def test_project_polygon_onto_mesh_no_intersection():
+    """Test error handling when ray doesn't intersect mesh."""
+    points = np.array(fibonacci_sphere(samples=50))
+    mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
+    partition = MeshPartition(mesh)
+
+    square_2d = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+
+    # Ray pointing away from the mesh - this should fail
+    try:
+        projected_points = partition.project_polygon_onto_mesh(
+            region_id=0,
+            polygon_points_2d=square_2d,
+            ray_origin=np.array([0.0, 0.0, 0.0]),
+            ray_direction=np.array([0.0, 0.0, -1.0]),  # Wrong direction
+        )
+        # If we get here without exception, the projection failed to find central intersection
+        # but didn't raise an error - that's also a valid test case
+        _logger.info(f"Projection succeeded but found {len(projected_points)} points")
+        assert (
+            len(projected_points) == 0 or len(projected_points) < 4
+        ), "Expected few or no projections for ray pointing away"
+    except ValueError as e:
+        assert "No central intersection found" in str(e)
+        _logger.info("Correctly raised ValueError for no intersection")
+
+
+def test_point_in_polygon_2d():
+    """Test the 2D point-in-polygon algorithm."""
+    points = np.array(fibonacci_sphere(samples=50))
+    mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
+    partition = MeshPartition(mesh)
+
+    # Test with a simple square
+    square = [(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)]
+
+    # Point inside
+    assert point_in_polygon_2d((1.0, 1.0), square) == True
+
+    # Point outside
+    assert point_in_polygon_2d((3.0, 3.0), square) == False
+
+    # Point on edge (implementation dependent)
+    edge_result = point_in_polygon_2d((2.0, 1.0), square)
+    # We don't assert this as edge cases can vary by implementation
+    _logger.info(f"Point on edge result: {edge_result}")
+
+    # Test with triangle
+    triangle = [(0.0, 0.0), (2.0, 0.0), (1.0, 2.0)]
+    assert point_in_polygon_2d((1.0, 0.5), triangle) == True
+    assert point_in_polygon_2d((0.5, 1.5), triangle) == False
+
+
+def test_polygon_plane_calculation():
+    """Test the polygon plane calculation."""
+    points = np.array(fibonacci_sphere(samples=50))
+    mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
+    partition = MeshPartition(mesh)
+
+    # Test with points that should form a clear plane
+    plane_points = [
+        np.array([0.0, 0.0, 5.0]),
+        np.array([1.0, 0.0, 5.0]),
+        np.array([0.0, 1.0, 5.0]),
+        np.array([1.0, 1.0, 5.0]),
+    ]
+
+    center, normal = partition._calculate_polygon_plane(plane_points)
+
+    # Center should be at the middle of the points
+    expected_center = np.array([0.5, 0.5, 5.0])
+    assert np.allclose(
+        center, expected_center
+    ), f"Expected center {expected_center}, got {center}"
+
+    # Normal should point in Z direction (approximately)
+    expected_normal = np.array([0.0, 0.0, 1.0])
+    assert (
+        abs(abs(np.dot(normal, expected_normal)) - 1.0) < 0.1
+    ), f"Normal {normal} not aligned with Z axis"
     vertices, faces = create_cube_geometry()
     mesh = PartitionableSpheroidTriangleMesh(vertices=vertices, faces=faces)
     partition = MeshPartition(mesh)

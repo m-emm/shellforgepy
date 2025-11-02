@@ -1,11 +1,11 @@
 import numpy as np
-from shellforgepy.geometry.mesh_utils import validate_and_fix_mesh_segment
+from shellforgepy.geometry.mesh_utils import (
+    propagate_consistent_winding,
+    validate_and_fix_mesh_segment,
+)
 from shellforgepy.geometry.spherical_tools import (
     coordinate_system_transform,
     coordinate_system_transform_to_matrix,
-)
-from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
-    propagate_consistent_winding,
 )
 
 

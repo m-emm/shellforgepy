@@ -1,6 +1,6 @@
 import copy
 import logging
-from collections import defaultdict, deque
+from collections import defaultdict
 from dataclasses import dataclass
 
 import numpy as np
@@ -15,6 +15,7 @@ from shellforgepy.construct.construct_utils import (
     triangle_min_angle,
 )
 from shellforgepy.construct.cylinder_spec import CylinderSpec
+from shellforgepy.geometry.mesh_utils import propagate_consistent_winding
 from shellforgepy.geometry.spherical_tools import (
     cartesian_to_spherical_jackson,
     spherical_to_cartesian_jackson,
@@ -40,94 +41,6 @@ def calc_edge_to_triangle_map(triangles):
             edge_to_tri[normalize_edge(*edge)].append(i)
 
     return edge_to_tri
-
-
-def propagate_consistent_winding(triangles):
-    """
-    Propagate consistent winding order across all triangles in a mesh using breadth-first traversal.
-
-    This function ensures that all triangles in a mesh have consistent vertex winding order
-    (all clockwise or all counter-clockwise) by propagating the winding direction from a
-    starting triangle to its neighbors through shared edges. This is essential for ensuring
-    consistent surface normal directions in 3D meshes.
-
-    Algorithm Overview:
-    1. Start with triangle 0 as the reference winding direction
-    2. Use breadth-first search to traverse all connected triangles
-    3. For each shared edge between current and neighbor triangles:
-       - If the edge appears in the same direction in both triangles, flip the neighbor
-       - If the edge appears in opposite directions, keep the neighbor unchanged
-    4. Continue until all connected triangles are processed
-
-    Args:
-        triangles (array-like): Collection of triangles, where each triangle is represented
-                              as a sequence of 3 vertex indices [v0, v1, v2]. The input
-                              can be a numpy array, list of lists, or any nested sequence.
-
-    Returns:
-        numpy.ndarray: Array of triangles with consistent winding order. The output has
-                      the same shape as the input but with corrected vertex ordering.
-                      Triangle 0 retains its original winding direction, and all other
-                      triangles are adjusted to maintain consistency.
-
-    Implementation Details:
-        - Uses an edge-to-triangle mapping for efficient neighbor lookup
-        - Employs breadth-first search to ensure systematic propagation
-        - Handles disconnected mesh components by starting from triangle 0
-        - Preserves the original winding direction of the first triangle
-        - Shared edges must appear in opposite directions for consistent winding
-
-    Edge Direction Logic:
-        For two triangles sharing an edge (a,b):
-        - If both triangles traverse the edge as (a→b), they have the same winding
-        - If one traverses (a→b) and the other (b→a), they have opposite winding
-        - Consistent winding requires opposite edge directions between neighbors
-
-    Example:
-        >>> triangles = [[0, 1, 2], [1, 3, 2], [2, 3, 4]]
-        >>> consistent = propagate_consistent_winding(triangles)
-        >>> # Result ensures all triangles have consistent surface normal direction
-
-    Note:
-        This function assumes the mesh is manifold (each edge shared by at most 2 triangles).
-        For non-manifold meshes, the behavior is undefined and may not produce the expected
-        consistent winding across all components.
-    """
-    triangles = [list(tri) for tri in triangles]
-    edge_to_tri = calc_edge_to_triangle_map(triangles)
-
-    visited = set()
-    queue = deque([0])  # Start with triangle 0
-    visited.add(0)
-
-    while queue:
-        current = queue.popleft()
-        current_tri = triangles[current]
-
-        for i in range(3):
-            a, b = current_tri[i], current_tri[(i + 1) % 3]
-            edge_key = normalize_edge(a, b)
-            neighbors = edge_to_tri[edge_key]
-
-            for neighbor in neighbors:
-                if neighbor == current or neighbor in visited:
-                    continue
-
-                neighbor_tri = triangles[neighbor]
-
-                # Find how this edge appears in neighbor
-                for j in range(3):
-                    na, nb = neighbor_tri[j], neighbor_tri[(j + 1) % 3]
-                    if {a, b} == {na, nb}:
-                        if (a, b) == (na, nb):
-                            # Same direction: flip neighbor
-                            triangles[neighbor] = neighbor_tri[::-1]
-                        break
-
-                visited.add(neighbor)
-                queue.append(neighbor)
-
-    return np.array(triangles)
 
 
 def is_valid_path(vertex_path, edge_graph):
@@ -286,7 +199,7 @@ class PartitionableSpheroidTriangleMesh:
         for canonical_edge, edges in edges_by_canoncial_edge.items():
             if len(edges) != 2:
                 raise ValueError(
-                    f"Edge {canonical_edge} appears {len(edges)} times, ected 2"
+                    f"Edge {canonical_edge} appears {len(edges)} times, expected 2"
                 )
             assert edges[0] == (
                 edges[1][1],
@@ -871,7 +784,12 @@ class PartitionableSpheroidTriangleMesh:
         return canon_faces
 
     def compute_plane_perforation(
-        mesh, plane_point, plane_normal, epsilon=1e-8, triangle_indices=None
+        mesh,
+        plane_point,
+        plane_normal,
+        epsilon=1e-8,
+        triangle_indices=None,
+        vertex_filter=None,
     ) -> PerforationResult:
         V_orig = mesh.vertices
         F_orig = mesh.faces
@@ -933,13 +851,18 @@ class PartitionableSpheroidTriangleMesh:
                         < relative_epsilon
                     ):
                         continue
-                    else:
-                        edge_to_cutpoint_index[edge] = next_index
-                        new_vertices.append(ipt)
-                        new_labels.append(
-                            f"{labels_orig[edge[0]]}__{labels_orig[edge[1]]}"
-                        )
-                        next_index += 1
+
+                    # Apply optional vertex filter function
+                    if vertex_filter is not None and not vertex_filter(
+                        ipt, edge, Va, Vb
+                    ):
+                        continue
+
+                    # Add the intersection vertex
+                    edge_to_cutpoint_index[edge] = next_index
+                    new_vertices.append(ipt)
+                    new_labels.append(f"{labels_orig[edge[0]]}__{labels_orig[edge[1]]}")
+                    next_index += 1
 
         # expand triangle indices to those touched by perforated edges
         if edge_to_cutpoint_index:
@@ -1013,10 +936,15 @@ class PartitionableSpheroidTriangleMesh:
         )
 
     def perforate_along_plane(
-        self, plane_point, plane_normal, epsilon=1e-8, triangle_indices=None
+        self,
+        plane_point,
+        plane_normal,
+        epsilon=1e-8,
+        triangle_indices=None,
+        vertex_filter=None,
     ):
         perf = self.compute_plane_perforation(
-            plane_point, plane_normal, epsilon, triangle_indices
+            plane_point, plane_normal, epsilon, triangle_indices, vertex_filter
         )
         return self.apply_perforation(perf)
 
@@ -1152,5 +1080,175 @@ class PartitionableSpheroidTriangleMesh:
         )
         perf = self.compute_cylinder_perforation(
             cylinder, epsilon, triangle_indices, min_relative_area, min_angle_deg
+        )
+        return self.apply_perforation(perf)
+
+    def compute_polygon_perforation(
+        self,
+        polygon_spec,
+        epsilon=1e-8,
+        triangle_indices=None,
+        min_relative_area=1e-2,
+        min_angle_deg=5.0,
+    ) -> PerforationResult:
+        """
+        Compute perforation result for a polygon by finding edge intersections.
+
+        This method follows the same pattern as compute_cylinder_perforation,
+        but finds intersections with polygon boundaries instead of cylinder walls.
+
+        Args:
+            polygon_spec: PolygonSpec defining the 3D polygon
+            epsilon: Numerical tolerance for intersections
+            triangle_indices: Triangles to consider (None for all)
+            min_relative_area: Minimum relative area for new triangles
+            min_angle_deg: Minimum angle in degrees for new triangles
+
+        Returns:
+            PerforationResult with new vertices and triangle updates
+        """
+        from shellforgepy.construct.construct_utils import (
+            intersect_edge_with_polygon,
+            normalize_edge,
+            triangle_area,
+            triangle_edges,
+            triangle_min_angle,
+        )
+        from shellforgepy.construct.polygon_spec import PolygonSpec
+
+        if not isinstance(polygon_spec, PolygonSpec):
+            raise TypeError("polygon_spec must be a PolygonSpec instance")
+
+        V_orig = self.vertices
+        F_orig = self.faces
+        labels_orig = self.vertex_labels
+
+        all_tri_indices = range(len(F_orig))
+        triangle_indices = set(
+            all_tri_indices if triangle_indices is None else triangle_indices
+        )
+
+        edge_to_cutpoint_index = {}
+        new_vertices = []
+        new_labels = []
+        next_index = len(V_orig)
+        seen_edges = set()
+
+        characteristic_length = np.max(np.linalg.norm(V_orig, axis=1))
+
+        # Precompute edge-to-face map to evaluate triangle quality for edge splits
+        edge_to_tri_indices = defaultdict(set)
+        for tri_idx, tri in enumerate(F_orig):
+            for edge in triangle_edges(tri):
+                norm_edge = normalize_edge(*edge)
+                edge_to_tri_indices[norm_edge].add(tri_idx)
+
+        for tri_idx in triangle_indices:
+            tri = F_orig[tri_idx]
+            for a, b in triangle_edges(tri):
+                edge = normalize_edge(a, b)
+                if edge in seen_edges:
+                    continue
+                seen_edges.add(edge)
+
+                p1, p2 = V_orig[edge[0]], V_orig[edge[1]]
+                t = intersect_edge_with_polygon(p1, p2, polygon_spec, epsilon)
+                if t is None:
+                    continue
+
+                if not (0 < t < 1):
+                    continue
+
+                ipt = (1 - t) * p1 + t * p2
+
+                # Skip if too close to existing vertex
+                if (
+                    np.linalg.norm(
+                        V_orig[np.argmin(np.linalg.norm(V_orig - ipt, axis=1))] - ipt
+                    )
+                    < epsilon
+                ):
+                    continue
+
+                # Check triangle quality for each adjacent triangle
+                acceptable = True
+                for face_idx in edge_to_tri_indices[edge]:
+                    face = F_orig[face_idx]
+                    if edge[0] in face and edge[1] in face:
+                        third = [v for v in face if v not in edge][0]
+                        p0, p1_, p2 = V_orig[edge[0]], ipt, V_orig[third]
+                        p1b, p2b = ipt, V_orig[edge[1]]
+
+                        area1 = triangle_area(p0, p1_, p2)
+                        area2 = triangle_area(p1b, p2b, p2)
+
+                        if (
+                            area1 < min_relative_area * characteristic_length**2
+                            or area2 < min_relative_area * characteristic_length**2
+                        ):
+                            acceptable = False
+                            break
+
+                        angle1 = triangle_min_angle(p0, p1_, p2)
+                        angle2 = triangle_min_angle(p1b, p2b, p2)
+
+                        if angle1 < min_angle_deg or angle2 < min_angle_deg:
+                            acceptable = False
+                            break
+
+                if not acceptable:
+                    continue
+
+                # Accept the insertion
+                edge_to_cutpoint_index[edge] = next_index
+                new_vertices.append(ipt)
+                new_labels.append(f"{labels_orig[edge[0]]}__{labels_orig[edge[1]]}")
+                next_index += 1
+                _logger.debug(
+                    f"Inserted cutpoint {ipt} on edge {edge} of triangle {tri_idx}"
+                )
+
+        # Update affected triangles
+        affected_tri_indices = set()
+        for cut_edge in edge_to_cutpoint_index:
+            affected_tri_indices.update(edge_to_tri_indices[cut_edge])
+
+        triangle_indices.update(affected_tri_indices)
+
+        return PerforationResult(
+            edge_to_new_vertex_index=edge_to_cutpoint_index,
+            new_vertices=new_vertices,
+            new_labels=new_labels,
+            triangle_indices=triangle_indices,
+        )
+
+    def perforate_with_polygon(
+        self,
+        polygon_spec,
+        epsilon: float = 1e-8,
+        triangle_indices=None,
+        min_relative_area=1e-2,
+        min_angle_deg=5.0,
+    ):
+        """
+        Perforate the mesh with a polygon, creating new vertices at polygon boundary intersections.
+
+        Args:
+            polygon_spec: PolygonSpec defining the polygon
+            epsilon: Numerical tolerance
+            triangle_indices: Which triangles to consider (None for all)
+            min_relative_area: Minimum relative area for new triangles
+            min_angle_deg: Minimum angle in degrees for new triangles
+
+        Returns:
+            (new_mesh, face_index_mapping) - new mesh with perforation applied
+        """
+        from shellforgepy.construct.polygon_spec import PolygonSpec
+
+        if not isinstance(polygon_spec, PolygonSpec):
+            raise TypeError("polygon_spec must be a PolygonSpec instance")
+
+        perf = self.compute_polygon_perforation(
+            polygon_spec, epsilon, triangle_indices, min_relative_area, min_angle_deg
         )
         return self.apply_perforation(perf)
