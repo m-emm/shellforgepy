@@ -33,6 +33,7 @@ from shellforgepy.adapters._adapter import (
     get_volume,
 )
 from shellforgepy.geometry.m_screws import (
+    MScrew,
     create_bolt_thread,
     create_cylinder_screw,
     create_nut,
@@ -74,7 +75,10 @@ from .construct.construct_utils import (
     fibonacci_sphere,
     normalize,
 )
-from .construct.leader_followers_cutters_part import LeaderFollowersCuttersPart
+from .construct.leader_followers_cutters_part import (
+    LeaderFollowersCuttersPart,
+    reset_to_original_orientation,
+)
 from .construct.named_part import NamedPart
 from .construct.part_collector import PartCollector
 from .geometry.face_point_cloud import face_point_cloud
@@ -180,6 +184,7 @@ __all__ = [
     "LeaderFollowersCuttersPart",
     "list_supported_sizes",
     "m_screws_table",
+    "MScrew",
     "matrix_to_coordinate_system_transform",
     "matrix_to_coordinate_system_transformation_function",
     "merge_meshes",
@@ -191,6 +196,7 @@ __all__ = [
     "PartInfo",
     "PartitionableSpheroidTriangleMesh",
     "PartList",
+    "reset_to_original_orientation",
     "rotate",
     "slice_part",
     "stack_alignment_of",

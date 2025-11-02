@@ -12,6 +12,7 @@ import math
 
 import pytest
 from shellforgepy.geometry.m_screws import (
+    MScrew,
     create_bolt_thread,
     create_cylinder_screw,
     create_nut,
@@ -364,3 +365,21 @@ def test_dimensional_consistency():
         expected_outer = info["nut_size"] / math.cos(math.radians(30))
         actual_outer = get_nut_outer_diameter(size)
         assert abs(actual_outer - expected_outer) < 1e-10
+
+
+def test_m_screw_class():
+    """Test the MScrew class functionality."""
+
+    for size in list_supported_sizes():
+        screw = MScrew.from_size(size)
+        assert screw.size == size
+        assert screw.pitch == get_thread_pitch(size)
+        assert screw.nut_size == m_screws_table[size]["nut_size"]
+    screw = MScrew.from_size("M3")
+    assert screw.size == "M3"
+    assert screw.pitch == 0.5
+    assert screw.nut_size == 5.5
+
+    # Test unsupported size
+    with pytest.raises(KeyError, match="Unsupported screw size"):
+        MScrew.from_size("M999")

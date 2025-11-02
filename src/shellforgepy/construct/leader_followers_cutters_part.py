@@ -249,3 +249,9 @@ def _clone_part(part):
     if isinstance(part, NamedPart):
         return part.copy()
     return copy_part(part)
+
+
+def reset_to_original_orientation(leader_followers_cutters_part):
+    """Reset the orientation of a LeaderFollowersCuttersPart to its original state."""
+
+    return leader_followers_cutters_part.copy()

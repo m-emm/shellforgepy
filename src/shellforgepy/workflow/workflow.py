@@ -621,6 +621,30 @@ def run_workflow(args: argparse.Namespace) -> int:
                 raise WorkflowError(f"Failed to upload {gcode_file}: {exc}") from exc
 
     _logger.info("Workflow completed successfully. Run directory: %s", run_directory)
+
+    # Open Orca GUI if requested
+    if args.open and slice_requested:
+        if project_path.exists():
+            _logger.info("Opening OrcaSlicer GUI with project file: %s", project_path)
+            try:
+                # Start OrcaSlicer in the background
+                open_cmd = [str(orca_exec_path), str(project_path)]
+                subprocess.Popen(
+                    open_cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,  # Detach from parent process
+                )
+                _logger.info("OrcaSlicer GUI started in background")
+            except Exception as exc:
+                _logger.warning("Failed to open OrcaSlicer GUI: %s", exc)
+        else:
+            _logger.warning(
+                "Cannot open GUI: 3MF project file not found at %s", project_path
+            )
+    elif args.open and not slice_requested:
+        _logger.warning("--open option requires slicing (use --slice or --upload)")
+
     return 0
 
 
@@ -729,6 +753,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     run_parser.add_argument(
         "--printer",
         help="Printer host (ip[:port]) to use for uploads",
+    )
+    run_parser.add_argument(
+        "--open",
+        action="store_true",
+        help="Open the generated 3MF file in OrcaSlicer GUI after slicing",
     )
     run_parser.add_argument(
         "target_args",

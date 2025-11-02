@@ -532,3 +532,16 @@ def test_additional_data_with_in_place_transformations():
     # Note: In-place mirror method is adapter-specific in signature,
     # so we test mirror functionality only through the functional interface
     # in test_additional_data_with_mirror_transformation()
+
+
+def test_use_complex_part_as_leader():
+
+    basic_part = create_box(2, 2, 2)
+
+    wrapped_1 = LeaderFollowersCuttersPart(basic_part)
+
+    re_wrapped = LeaderFollowersCuttersPart(wrapped_1)
+
+    basic_part_2 = create_box(1, 1, 1)
+
+    re_wrapped_fused = re_wrapped.fuse(basic_part_2)

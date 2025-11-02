@@ -17,6 +17,8 @@ allowing them to work with any supported CAD backend.
 """
 
 import math
+from dataclasses import dataclass
+from typing import Optional
 
 from shellforgepy.adapters._adapter import (
     create_cylinder,
@@ -39,9 +41,11 @@ m_screws_table = {
         "clearance_hole_loose": 2.6,
         "pitch": 0.4,
         "core_hole": 1.6,
+        "nut_circle_diameter": 4.32,
         "nut_thickness": 1.6,
         "cylinder_head_diameter": 3.8,
         "cylinder_head_height": 2,
+        "wrench_socket_outer_diameter": 7.0,
         "min_thread_length": 16,
     },
     "M3": {
@@ -58,6 +62,7 @@ m_screws_table = {
         "nut_thickness": 2.3,
         "cylinder_head_diameter": 5.5,
         "cylinder_head_height": 3,
+        "wrench_socket_outer_diameter": 8.0,
         "min_thread_length": 18,
         "thread_inset_hole_diameter": 4.3,
         "thread_inset_length": 6,
@@ -76,7 +81,7 @@ m_screws_table = {
         "nut_thickness": 3.0,
         "cylinder_head_diameter": 7,
         "cylinder_head_height": 4,
-        "wrench_socket_outer_diameter": 12.5,
+        "wrench_socket_outer_diameter": 10.0,
         "min_thread_length": 20,
     },
     "M5": {
@@ -93,7 +98,7 @@ m_screws_table = {
         "nut_thickness": 4.6,
         "cylinder_head_diameter": 8.5,
         "cylinder_head_height": 5,
-        "wrench_socket_outer_diameter": 13,
+        "wrench_socket_outer_diameter": 11.5,
         "min_thread_length": 22,
         "thread_inset_hole_diameter": 6.2,
         "thread_inset_length": 8,
@@ -112,6 +117,7 @@ m_screws_table = {
         "nut_thickness": 5.1,
         "cylinder_head_diameter": 10,
         "cylinder_head_height": 6,
+        "wrench_socket_outer_diameter": 13.5,
         "min_thread_length": 24,
     },
     "M8": {
@@ -128,6 +134,7 @@ m_screws_table = {
         "nut_thickness": 6.6,
         "cylinder_head_diameter": 13,
         "cylinder_head_height": 8,
+        "wrench_socket_outer_diameter": 16.5,
         "min_thread_length": 28,
     },
     "M10": {
@@ -144,6 +151,7 @@ m_screws_table = {
         "nut_thickness": 8.2,
         "cylinder_head_diameter": 16,
         "cylinder_head_height": 10,
+        "wrench_socket_outer_diameter": 20.0,
         "min_thread_length": 32,
     },
     "M12": {
@@ -160,9 +168,43 @@ m_screws_table = {
         "nut_thickness": 10.6,
         "cylinder_head_diameter": 18,
         "cylinder_head_height": 12,
+        "wrench_socket_outer_diameter": 22.5,
         "min_thread_length": 36,
     },
 }
+
+
+@dataclass
+class MScrew:
+    size: str
+    nut_size: float
+    cap_screw_size: float
+    cap_screw_head_size: float
+    grub_screw_wrench_size: float
+    clearance_hole_close: float
+    clearance_hole_normal: float
+    clearance_hole_loose: float
+    pitch: float
+    core_hole: float
+    nut_thickness: float
+    nut_circle_diameter: float
+    cylinder_head_diameter: float
+    cylinder_head_height: float
+    min_thread_length: float
+    wrench_socket_outer_diameter: float
+    thread_inset_hole_diameter: Optional[float] = None
+    thread_inset_length: Optional[float] = None
+
+    @staticmethod
+    def from_size(size: str) -> "MScrew":
+        """Create an MScrew instance from the global screw table, safely handling optional fields."""
+        if size not in m_screws_table:
+            raise KeyError(f"Unsupported screw size: {size}")
+        specs = m_screws_table[size].copy()
+        # Fill missing optional fields
+        specs.setdefault("thread_inset_hole_diameter", None)
+        specs.setdefault("thread_inset_length", None)
+        return MScrew(size=size, **specs)
 
 
 def get_nut_outer_diameter(size):

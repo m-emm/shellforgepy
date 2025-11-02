@@ -1,4 +1,5 @@
 import numpy as np
+from shellforgepy.adapters._adapter import get_bounding_box_size
 from shellforgepy.construct.alignment_operations import rotate, translate
 from shellforgepy.construct.leader_followers_cutters_part import (
     LeaderFollowersCuttersPart,
@@ -338,3 +339,49 @@ def test_leader_followers_vertices_alias_and_bounds():
         assert bbox.xmin - 1e-9 <= coords[0] <= bbox.xmax + 1e-9
         assert bbox.ymin - 1e-9 <= coords[1] <= bbox.ymax + 1e-9
         assert bbox.zmin - 1e-9 <= coords[2] <= bbox.zmax + 1e-9
+
+
+def test_follower_follows():
+    """Test that a follower correctly follows the leader's transformations."""
+    leader = create_box(2, 2, 2)
+    follower = create_box(1, 1, 1)
+    follower = translate(3, 3, 3)(follower)
+
+    group = LeaderFollowersCuttersPart(leader, followers=[follower])
+
+    original_leader_center = get_bounding_box_center(group.leader)
+    original_follower_center = get_bounding_box_center(group.followers[0])
+
+    translated_group = translate(5, 5, 5)(group)
+
+    translated_leader_center = get_bounding_box_center(translated_group.leader)
+    translated_follower_center = get_bounding_box_center(translated_group.followers[0])
+
+    assert np.allclose(
+        translated_leader_center,
+        (
+            original_leader_center[0] + 5,
+            original_leader_center[1] + 5,
+            original_leader_center[2] + 5,
+        ),
+    )
+
+    assert np.allclose(
+        translated_follower_center,
+        (
+            original_follower_center[0] + 5,
+            original_follower_center[1] + 5,
+            original_follower_center[2] + 5,
+        ),
+    )
+
+    rotated_group = rotate(45, axis=(0, 1, 0))(group)
+
+    original_size = get_bounding_box_size(leader)
+    rotated_size = get_bounding_box_size(rotated_group.leader)
+
+    original_follower_size = get_bounding_box_size(follower)
+    rotated_follower_size = get_bounding_box_size(rotated_group.followers[0])
+
+    assert np.allclose(rotated_size[0] / np.sqrt(2), original_size[0])
+    assert np.allclose(rotated_follower_size[0] / np.sqrt(2), original_follower_size[0])
