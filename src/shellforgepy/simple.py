@@ -90,6 +90,8 @@ from .geometry.higher_order_solids import (
     create_rounded_slab,
     create_screw_thread,
     create_trapezoid,
+    create_triangular_prism,
+    create_triangular_prism_geometry,
     directed_box_at,
     directed_cylinder_at,
 )
@@ -105,6 +107,7 @@ from .geometry.spherical_tools import (
     matrix_to_coordinate_system_transform,
     matrix_to_coordinate_system_transformation_function,
     ray_triangle_intersect,
+    transform_point_with_matrix,
 )
 from .geometry.treapezoidal_snake_geometry import create_trapezoidal_snake_geometry
 from .produce.arrange_and_export import (
@@ -208,6 +211,9 @@ __all__ = [
     "orient_for_flatness_riemannian",
     "ray_triangle_intersect",
     "compute_triangle_normal",
+    "transform_point_with_matrix",
+    "create_triangular_prism_geometry",
+    "create_triangular_prism",
 ]
 
 

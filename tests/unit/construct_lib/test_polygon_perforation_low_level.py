@@ -65,7 +65,7 @@ def test_polygon_perforation_boundary_quality():
     hexagon = create_regular_hexagon_points(radius=hexagon_radius)
 
     # EXACT REPLICATION: Project polygon exactly like workshop test
-    projected_polygon = partition.project_polygon_onto_mesh(
+    projected_polygon, inside_vertex_ids = partition.project_polygon_onto_mesh(
         region_id=0,  # Project onto the main region
         polygon_points_2d=hexagon,
         ray_origin=np.array([0.0, 0.0, 0.0]),
@@ -78,7 +78,7 @@ def test_polygon_perforation_boundary_quality():
     hexagon_3d = []
     for pt_2d in hexagon:
         # Project each vertex onto mesh to get proper 3D coordinates
-        single_projected = partition.project_polygon_onto_mesh(
+        single_projected, _ = partition.project_polygon_onto_mesh(
             region_id=0,
             polygon_points_2d=[pt_2d],  # Single point
             ray_origin=np.array([0.0, 0.0, 0.0]),
@@ -86,7 +86,7 @@ def test_polygon_perforation_boundary_quality():
             target_segment_length=1.0,
         )
         if single_projected:
-            hexagon_3d.append(np.array(single_projected[0]))
+            hexagon_3d.append(single_projected[0])  # Already a numpy array
 
     # EXACT REPLICATION: Perforate exactly like workshop test
     original_regions = set(partition.get_regions())

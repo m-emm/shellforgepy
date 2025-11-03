@@ -624,3 +624,27 @@ def create_distorted_cube(corners):
         },
     }
     return create_solid_from_traditional_face_vertex_maps(maps)
+
+
+def create_triangular_prism_geometry(corners):
+    if len(corners) != 6:
+        raise ValueError("Triangular prism requires exactly 6 corners")
+    maps = {
+        "vertexes": {i: tuple(map(float, corners[i])) for i in range(6)},
+        "faces": {
+            0: [0, 2, 1],  # bottom
+            1: [3, 4, 5],  # top
+            2: [0, 1, 4],
+            3: [0, 4, 3],
+            4: [1, 2, 5],
+            5: [1, 5, 4],
+            6: [2, 0, 3],
+            7: [2, 3, 5],
+        },
+    }
+    return maps
+
+
+def create_triangular_prism(corners):
+    maps = create_triangular_prism_geometry(corners)
+    return create_solid_from_traditional_face_vertex_maps(maps)

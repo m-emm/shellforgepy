@@ -599,3 +599,8 @@ def matrix_to_coordinate_system_transformation_function(
         return translated_part
 
     return retval
+
+
+def transform_point_with_matrix(p, transform):
+    p_h = np.append(p, 1.0)
+    return (transform @ p_h)[:3]

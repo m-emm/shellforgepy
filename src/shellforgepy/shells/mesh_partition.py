@@ -12,11 +12,18 @@ from shellforgepy.construct.construct_utils import (
     fibonacci_sphere,
     normalize,
     normalize_edge,
+    point_in_polygon_2d,
     rotation_matrix_from_vectors,
     triangle_edges,
 )
 from shellforgepy.construct.polygon_spec import PolygonSpec
-from shellforgepy.geometry.spherical_tools import cartesian_to_spherical_jackson
+from shellforgepy.geometry.spherical_tools import (
+    cartesian_to_spherical_jackson,
+    coordinate_system_transform,
+    coordinate_system_transform_to_matrix,
+    ray_triangle_intersect,
+    transform_point_with_matrix,
+)
 from shellforgepy.shells.connector_hint import ConnectorHint
 from shellforgepy.shells.connector_utils import (
     compute_connector_hints_from_shell_maps,
@@ -2543,8 +2550,9 @@ class MeshPartition:
         polygon_points_2d: List[tuple],
         ray_origin: np.ndarray,
         ray_direction: np.ndarray,
-        target_segment_length: float = 3.0,
-    ) -> List[np.ndarray]:
+        target_segment_length: float = None,
+        x_axis_global_direction: Optional[np.ndarray] = None,
+    ) -> tuple[List[np.ndarray], List[int]]:
         """Project a 2D polygon onto the mesh surface by casting rays from edge points.
 
         Args:
@@ -2552,19 +2560,30 @@ class MeshPartition:
             polygon_points_2d: List of 2D polygon vertices as (x, y) tuples
             ray_origin: Starting point for the central ray
             ray_direction: Direction of the central ray
-            target_segment_length: Target length for subdivided edge segments
+            target_segment_length: Target length for subdivided edge segments. If None, only corners are projected
+            x_axis_global_direction: Optional global direction to align the polygon's 2d x-axis to
 
         Returns:
-            List of 3D points on the mesh surface defining the projected polygon
+            tuple: (List of 3D points on the mesh surface defining the projected polygon,
+                   List of vertex indices of vertices of the mesh that are inside the projected polygon)
 
         Raises:
             ValueError: If no central intersection found or polygon is invalid
         """
-        from shellforgepy.geometry.spherical_tools import ray_triangle_intersect
 
         polygon_points_2d = np.array(polygon_points_2d)
+
         if polygon_points_2d.shape[1] != 2:
             raise ValueError("Polygon points must be 2D (x, y) coordinates")
+
+        if len(polygon_points_2d) >= 3:
+
+            flat_polygon = [np.array([p[0], p[1], 0.0]) for p in polygon_points_2d]
+            flat_polygon_spec = PolygonSpec.from_points_3d(flat_polygon)
+
+            assert (
+                flat_polygon_spec.normal[2] > 0.9
+            ), "Polygon must be wound CCW in XY plane"
 
         ray_direction = normalize(np.array(ray_direction))
         ray_origin = np.array(ray_origin)
@@ -2599,21 +2618,43 @@ class MeshPartition:
         v0, v1, v2 = triangle
         central_normal = normalize(compute_triangle_normal(v0, v1, v2))
 
-        _logger.debug(f"Central hit point: {central_hit}")
-        _logger.debug(f"Central normal: {central_normal}")
+        def point_to_str(p):
+            return f"({p[0]:.2f}, {p[1]:.2f}, {p[2]:.2f})"
+
+        _logger.debug(f"Central hit point: {point_to_str(central_hit)}")
+        _logger.debug(f"Central normal: {point_to_str(central_normal)}")
 
         # Create a local coordinate system at the hit point
         # Use the face normal as the Z axis
         local_z = normalize(central_normal)
 
-        # Choose an arbitrary perpendicular direction for X axis
-        if abs(local_z[2]) < 0.9:  # Not pointing mostly up/down
-            local_x = normalize(np.cross(local_z, np.array([0, 0, 1])))
+        if x_axis_global_direction is not None:
+
+            # make sure it is perpendicular to local_z
+            local_x = np.array(x_axis_global_direction, dtype=np.float64)
+            local_x -= np.dot(x_axis_global_direction, local_z) * local_z
+            local_x = normalize(local_x)
+
+            if abs(np.dot(local_x, local_z)) > 0.95:
+                raise ValueError(
+                    "Provided x_axis_global_direction is too close to the normal direction"
+                )
+
         else:
-            local_x = normalize(np.cross(local_z, np.array([1, 0, 0])))
+
+            # Choose an arbitrary perpendicular direction for X axis
+            if abs(local_z[2]) < 0.9:  # Not pointing mostly up/down
+                local_x = normalize(np.cross(local_z, np.array([0, 0, 1])))
+            else:
+                local_x = normalize(np.cross(local_z, np.array([1, 0, 0])))
 
         # Y axis completes the right-handed system
+        # For a right-handed system: Z = X × Y, so Y = Z × X
         local_y = normalize(np.cross(local_z, local_x))
+
+        _logger.debug(f"Local X axis: {point_to_str(local_x)}")
+        _logger.debug(f"Local Y axis: {point_to_str(local_y)}")
+        _logger.debug(f"Local Z axis: {point_to_str(local_z)}")
 
         # Generate subsampled points along polygon edges
         subsampled_2d_points = []
@@ -2626,18 +2667,22 @@ class MeshPartition:
             # Always add the current vertex
             subsampled_2d_points.append(current_vertex)
 
-            # Calculate edge vector and length
-            edge_vector = next_vertex - current_vertex
-            edge_length = np.linalg.norm(edge_vector)
+            # If target_segment_length is None, only use corners (no subdivision)
+            if target_segment_length is not None:
+                # Calculate edge vector and length
+                edge_vector = next_vertex - current_vertex
+                edge_length = np.linalg.norm(edge_vector)
 
-            # Determine number of subdivisions needed
-            num_subdivisions = max(1, int(np.ceil(edge_length / target_segment_length)))
+                # Determine number of subdivisions needed
+                num_subdivisions = max(
+                    1, int(np.ceil(edge_length / target_segment_length))
+                )
 
-            # Add intermediate points along the edge (excluding the next vertex to avoid duplication)
-            for j in range(1, num_subdivisions):
-                t = j / num_subdivisions
-                intermediate_point = current_vertex + t * edge_vector
-                subsampled_2d_points.append(intermediate_point)
+                # Add intermediate points along the edge (excluding the next vertex to avoid duplication)
+                for j in range(1, num_subdivisions):
+                    t = j / num_subdivisions
+                    intermediate_point = current_vertex + t * edge_vector
+                    subsampled_2d_points.append(intermediate_point)
 
         projected_points = []
 
@@ -2669,7 +2714,206 @@ class MeshPartition:
             if not hit_found:
                 _logger.warning(f"Failed to project 2D point ({x_2d:.1f}, {y_2d:.1f})")
 
-        return projected_points
+        projected_corners = []
+        for corner_2d in polygon_points_2d:
+            x_2d, y_2d = corner_2d
+            corner_3d = central_hit + x_2d * local_x + y_2d * local_y
+            projected_corners.append(corner_3d)
+
+        if len(polygon_points_2d) >= 3:
+            projected_polygon_spec = PolygonSpec(points=projected_corners)
+
+            normal_alignment = np.dot(local_z, projected_polygon_spec.normal)
+            if normal_alignment < 0:
+                raise ValueError(
+                    f"Projected polygon normal is opposite to mesh surface normal at projection point, normal alignment: {normal_alignment:.3f}"
+                )
+
+        # Find vertices inside the projected polygon
+        inside_vertex_ids = []
+
+        if len(polygon_points_2d) >= 3:
+            # Get all vertices in the region
+            region_faces = self.get_faces_of_region(region_id)
+            region_vertex_ids = set()
+            for face_idx in region_faces:
+                face = self.mesh.faces[face_idx]
+                region_vertex_ids.update(face)
+
+            # Create the polygon plane - move it slightly inward along the face normal
+            # to avoid ambiguity with vertices that are exactly on the surface
+            inward_offset = 0.1  # Small offset to move polygon plane inward
+            polygon_plane_point = central_hit - inward_offset * local_z
+            polygon_plane_normal = local_z
+
+            # Create 3D polygon points on the offset plane
+            polygon_3d_points = []
+            for corner_2d in polygon_points_2d:
+                x_2d, y_2d = corner_2d
+                corner_3d = polygon_plane_point + x_2d * local_x + y_2d * local_y
+                polygon_3d_points.append(corner_3d)
+
+            # Create a PolygonSpec for the 3D polygon
+            polygon_spec = PolygonSpec.from_points_3d(polygon_3d_points)
+
+            # Check each vertex in the region
+            for vertex_id in region_vertex_ids:
+                vertex_3d = self.mesh.vertices[vertex_id]
+
+                # Step 1: Project vertex onto the polygon plane
+                # Distance from vertex to plane (positive = in direction of normal)
+                to_vertex = vertex_3d - polygon_plane_point
+                distance_to_plane = np.dot(to_vertex, polygon_plane_normal)
+
+                # Project vertex onto plane
+                projected_vertex = vertex_3d - distance_to_plane * polygon_plane_normal
+
+                # Step 2: Check if projected vertex is inside the 2D polygon
+                # Convert to local 2D coordinates
+                relative_pos = projected_vertex - polygon_plane_point
+                vertex_2d_x = np.dot(relative_pos, local_x)
+                vertex_2d_y = np.dot(relative_pos, local_y)
+                vertex_2d = np.array([vertex_2d_x, vertex_2d_y])
+
+                # Check if point is inside the 2D polygon
+                is_inside_polygon = point_in_polygon_2d(vertex_2d, polygon_points_2d)
+
+                # Step 3: Check if vertex is on the "inside" side of the polygon plane
+                # Since we moved the plane inward, vertices with positive distance
+                # are on the "outside" (toward the ray origin), which we consider "inside"
+                # for the purpose of this algorithm
+                is_on_inside_side = distance_to_plane > 0
+
+                # Vertex is inside if it's both inside the 2D polygon projection
+                # and on the correct side of the plane
+                if is_inside_polygon and is_on_inside_side:
+                    inside_vertex_ids.append(vertex_id)
+
+        return projected_points, inside_vertex_ids
+
+    def create_filler_mesh(
+        self,
+        region_id: int,
+        polygon_points_2d: List[tuple],
+        ray_origin: np.ndarray,
+        ray_direction: np.ndarray,
+        base_thickness: float,
+        base_inset: float = None,
+        x_axis_global_direction: Optional[np.ndarray] = None,
+        target_segment_length: float = 5,
+    ) -> "PartitionableSpheroidTriangleMesh":
+        """Create a filler mesh that fills the space defined by a projected polygon.
+
+        This method creates a 3D mesh that fills the volume between a projected polygon
+        on the mesh surface and a parallel plane at a specified thickness below it.
+        The filler can be inset from the polygon boundary.
+
+        Args:
+            region_id: ID of the region to project onto
+            polygon_points_2d: List of 2D polygon vertices as (x, y) tuples
+            ray_origin: Starting point for the central ray
+            ray_direction: Direction of the central ray
+            base_thickness: Thickness of the filler in the direction of the polygon normal
+            base_inset: Optional inset distance from polygon boundary (default: 0.0)
+            x_axis_global_direction: Optional global direction to align the polygon's 2d x-axis to
+            target_segment_length: Target length for subdivided edge segments
+
+        Returns:
+            PartitionableSpheroidTriangleMesh: The filler mesh
+
+        Raises:
+            ValueError: If projection fails or polygon is invalid
+        """
+        # Project polygon onto mesh and get inside vertices
+        projected_polygon, inside_vertex_ids = self.project_polygon_onto_mesh(
+            region_id=region_id,
+            polygon_points_2d=polygon_points_2d,
+            ray_origin=ray_origin,
+            ray_direction=ray_direction,
+            target_segment_length=target_segment_length,
+            x_axis_global_direction=x_axis_global_direction,
+        )
+
+        # Get polygon corners (without subdivision) for polygon spec
+        projected_polygon_corners, _ = self.project_polygon_onto_mesh(
+            region_id=region_id,
+            polygon_points_2d=polygon_points_2d,
+            ray_origin=ray_origin,
+            ray_direction=ray_direction,
+            target_segment_length=None,  # Only corners
+            x_axis_global_direction=x_axis_global_direction,
+        )
+
+        # Get the coordinates of the inside vertices
+        inside_vertex_coordinates = [self.mesh.vertices[vi] for vi in inside_vertex_ids]
+
+        # Create points for mesh generation: inside vertices + projected polygon
+        points_to_create_mesh_from = inside_vertex_coordinates + projected_polygon
+
+        # Create polygon spec for coordinate transformation
+        polygon_spec = PolygonSpec.from_points_3d(projected_polygon_corners)
+
+        # Set up coordinate system transformation to work in polygon's local space
+        transformation = coordinate_system_transform(
+            origin_a=polygon_spec.center,
+            up_a=polygon_spec.normal,
+            out_a=(1, 0, 0),
+            origin_b=(0, 0, 0),
+            up_b=(0, 0, 1),
+            out_b=(1, 0, 0),
+        )
+
+        transformation_matrix = coordinate_system_transform_to_matrix(transformation)
+        inverse_transformation_matrix = np.linalg.inv(transformation_matrix)
+
+        # Transform polygon corners to local coordinate system
+        transformed_polygon_corners = [
+            transform_point_with_matrix(point, transformation_matrix)
+            for point in projected_polygon_corners
+        ]
+
+        # Apply inset if specified
+        inset = base_inset if base_inset is not None else 0.0
+
+        transformed_polygon_spec = PolygonSpec.from_points_3d(
+            transformed_polygon_corners
+        )
+
+        if inset > 0:
+            shrunk_transformed_polygon = (
+                transformed_polygon_spec.calc_inset_polygon_spec(inset)
+            )
+            shrunk_transformed_polygon_points = shrunk_transformed_polygon.points
+        else:
+            # No inset, use original polygon
+            shrunk_transformed_polygon_points = transformed_polygon_spec.points
+
+        # Create bottom polygon by shifting down in local Z direction
+        shrunk_transformed_polygon_lowered = [
+            (p[0], p[1], p[2] - base_thickness)
+            for p in shrunk_transformed_polygon_points
+        ]
+
+        # Transform bottom polygon back to global coordinate system
+        shrunk_polygon_global_space = [
+            transform_point_with_matrix(point, inverse_transformation_matrix)
+            for point in shrunk_transformed_polygon_lowered
+        ]
+
+        # Add the bottom polygon points to the mesh creation points
+        points_to_create_mesh_from += shrunk_polygon_global_space
+
+        # Import here to avoid circular dependency
+        from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
+            PartitionableSpheroidTriangleMesh,
+        )
+
+        # Create and return the filler mesh
+        filler_mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(
+            points_to_create_mesh_from
+        )
+
+        return filler_mesh
 
     def _validate_points_on_surface(
         self, region_id: int, points: List[np.ndarray], tolerance: float

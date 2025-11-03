@@ -330,7 +330,7 @@ def test_projected_polygon_mesh_alignment():
     ray_direction = np.array([0.0, 0.0, 1.0])
 
     # Use the trusted projection method with fine subdivision
-    projected_points_3d = partition.project_polygon_onto_mesh(
+    projected_points_3d, inside_vertex_ids = partition.project_polygon_onto_mesh(
         region_id=0,
         polygon_points_2d=square_2d,
         ray_origin=ray_origin,
@@ -706,7 +706,7 @@ def test_polygon_perforation_boundary_quality():
     hexagon_2d = [(p[0], p[1]) for p in hexagon]  # Convert to 2D tuples
 
     # EXACT REPLICATION: Project polygon exactly like workshop test
-    projected_polygon = partition.project_polygon_onto_mesh(
+    projected_polygon, inside_vertex_ids = partition.project_polygon_onto_mesh(
         region_id=0,  # Project onto the main region
         polygon_points_2d=hexagon_2d,
         ray_origin=np.array([0.0, 0.0, 0.0]),
@@ -720,7 +720,7 @@ def test_polygon_perforation_boundary_quality():
     hexagon_3d = []
     for pt_2d in hexagon:
         # Project each vertex onto mesh to get proper 3D coordinates
-        single_projected = partition.project_polygon_onto_mesh(
+        single_projected, _ = partition.project_polygon_onto_mesh(
             region_id=0,
             polygon_points_2d=[pt_2d],  # Single point
             ray_origin=np.array([0.0, 0.0, 0.0]),
@@ -728,7 +728,7 @@ def test_polygon_perforation_boundary_quality():
             target_segment_length=1.0,
         )
         if single_projected:
-            hexagon_3d.append(np.array(single_projected[0]))
+            hexagon_3d.append(single_projected[0])  # Already a numpy array
 
     _logger.info(f"Original hexagon has {len(hexagon_3d)} vertices")
 

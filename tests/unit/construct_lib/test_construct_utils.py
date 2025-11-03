@@ -4,6 +4,7 @@ import numpy as np
 from shellforgepy.construct.construct_utils import (
     CylinderSpec,
     compute_area,
+    compute_polygon_normal,
     fit_sphere_to_points,
     intersect_edge_with_cylinder,
     normalize_edge,
@@ -480,3 +481,84 @@ def test_points_in_polygon_2d():
 
     for pt in outside_points:
         assert not point_in_polygon_2d(pt, polygon), f"Point {pt} should be outside"
+
+
+def test_compute_polygon_normal():
+
+    # Define a square in the XY plane
+    square = [
+        np.array([0.0, 0.0, 0.0]),
+        np.array([1.0, 0.0, 0.0]),
+        np.array([1.0, 1.0, 0.0]),
+        np.array([0.0, 1.0, 0.0]),
+    ]
+
+    normal = compute_polygon_normal(square)
+
+    expected_normal = np.array([0.0, 0.0, 1.0])
+
+    assert np.allclose(
+        normal, expected_normal
+    ), f"Expected normal {expected_normal}, got {normal}"
+
+    # reverse the winding
+    square_reversed = list(reversed(square))
+
+    normal_reversed = compute_polygon_normal(square_reversed)
+    expected_normal_reversed = np.array([0.0, 0.0, -1.0])
+
+    assert np.allclose(
+        normal_reversed,
+        expected_normal_reversed,
+    ), f"Expected normal {expected_normal_reversed}, got {normal_reversed}"
+
+
+def test_compute_polygon_normal_non_planar():
+    """Test Newell's method with non-planar polygons."""
+
+    # Create a "warped" square where vertices are slightly out of plane
+    warped_square = [
+        np.array([0.0, 0.0, 0.0]),
+        np.array([1.0, 0.0, 0.1]),  # Slightly elevated
+        np.array([1.0, 1.0, 0.0]),
+        np.array([0.0, 1.0, -0.05]),  # Slightly depressed
+    ]
+
+    normal = compute_polygon_normal(warped_square)
+
+    # Should still be roughly pointing in +Z direction
+    assert normal[2] > 0.9, f"Expected normal mostly in +Z, got {normal}"
+
+    # Should be normalized
+    assert abs(np.linalg.norm(normal) - 1.0) < 1e-10
+
+    # Test with more extreme non-planarity
+    twisted_quad = [
+        np.array([0.0, 0.0, 0.0]),
+        np.array([1.0, 0.0, 0.0]),
+        np.array([1.0, 1.0, 0.5]),  # Significantly elevated
+        np.array([0.0, 1.0, 0.25]),  # Moderately elevated
+    ]
+
+    normal_twisted = compute_polygon_normal(twisted_quad)
+
+    # Should still be normalized
+    assert abs(np.linalg.norm(normal_twisted) - 1.0) < 1e-10
+
+    # Should have positive Z component (counter-clockwise winding when viewed from above)
+    assert normal_twisted[2] > 0, f"Expected positive Z component, got {normal_twisted}"
+
+    # Reverse winding should flip the normal
+    twisted_quad_reversed = list(reversed(twisted_quad))
+    normal_twisted_reversed = compute_polygon_normal(twisted_quad_reversed)
+
+    # Z component should now be negative
+    assert (
+        normal_twisted_reversed[2] < 0
+    ), f"Expected negative Z component after reversal, got {normal_twisted_reversed}"
+
+    # The normals should be roughly opposite
+    dot_product = np.dot(normal_twisted, normal_twisted_reversed)
+    assert (
+        dot_product < -0.5
+    ), f"Expected normals to be roughly opposite, dot product: {dot_product}"

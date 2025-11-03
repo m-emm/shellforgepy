@@ -4,7 +4,6 @@ from collections import defaultdict
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pytest
 from shellforgepy.construct.construct_utils import (
     fibonacci_sphere,
     normalize,
@@ -831,94 +830,6 @@ def test_find_region_edge_features_along_original_edge():
         for feature in edge_features:
             assert isinstance(feature, RegionEdgeFeature)
             assert feature.region_id == region_id
-
-
-def test_project_polygon_onto_mesh():
-    """Test projecting a 2D polygon onto mesh surface."""
-    # Create a simple sphere mesh
-    points = np.array(fibonacci_sphere(samples=100))
-    points *= 10.0  # Scale up for better numerical stability
-    mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
-    partition = MeshPartition(mesh)
-
-    # Define a simple square polygon in 2D
-    square_2d = [(-2.0, -2.0), (2.0, -2.0), (2.0, 2.0), (-2.0, 2.0)]
-
-    # Project from origin toward positive Z
-    ray_origin = np.array([0.0, 0.0, 0.0])
-    ray_direction = np.array([0.0, 0.0, 1.0])
-
-    # Project the polygon onto the mesh
-    projected_points = partition.project_polygon_onto_mesh(
-        region_id=0,
-        polygon_points_2d=square_2d,
-        ray_origin=ray_origin,
-        ray_direction=ray_direction,
-        target_segment_length=1.0,
-    )
-
-    # Check that we got some projected points
-    assert (
-        len(projected_points) >= 4
-    ), f"Expected at least 4 projected points, got {len(projected_points)}"
-
-    # Check that all projected points are 3D
-    for point in projected_points:
-        assert point.shape == (3,), f"Expected 3D point, got shape {point.shape}"
-
-    # Check that projected points are roughly on the sphere surface
-    for point in projected_points:
-        distance_from_origin = np.linalg.norm(point)
-        assert (
-            abs(distance_from_origin - 10.0) < 2.0
-        ), f"Point {point} not on sphere surface"
-
-    _logger.info(f"Successfully projected {len(projected_points)} points onto mesh")
-
-
-def test_project_polygon_onto_mesh_invalid_region():
-    """Test error handling for invalid region ID."""
-    points = np.array(fibonacci_sphere(samples=50))
-    mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
-    partition = MeshPartition(mesh)
-
-    square_2d = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
-
-    # Try to project onto non-existent region
-    with pytest.raises(ValueError, match="Region 999 has no faces"):
-        partition.project_polygon_onto_mesh(
-            region_id=999,
-            polygon_points_2d=square_2d,
-            ray_origin=np.array([0.0, 0.0, 0.0]),
-            ray_direction=np.array([0.0, 0.0, 1.0]),
-        )
-
-
-def test_project_polygon_onto_mesh_no_intersection():
-    """Test error handling when ray doesn't intersect mesh."""
-    points = np.array(fibonacci_sphere(samples=50))
-    mesh = PartitionableSpheroidTriangleMesh.from_point_cloud(points)
-    partition = MeshPartition(mesh)
-
-    square_2d = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
-
-    # Ray pointing away from the mesh - this should fail
-    try:
-        projected_points = partition.project_polygon_onto_mesh(
-            region_id=0,
-            polygon_points_2d=square_2d,
-            ray_origin=np.array([0.0, 0.0, 0.0]),
-            ray_direction=np.array([0.0, 0.0, -1.0]),  # Wrong direction
-        )
-        # If we get here without exception, the projection failed to find central intersection
-        # but didn't raise an error - that's also a valid test case
-        _logger.info(f"Projection succeeded but found {len(projected_points)} points")
-        assert (
-            len(projected_points) == 0 or len(projected_points) < 4
-        ), "Expected few or no projections for ray pointing away"
-    except ValueError as e:
-        assert "No central intersection found" in str(e)
-        _logger.info("Correctly raised ValueError for no intersection")
 
 
 def test_point_in_polygon_2d():

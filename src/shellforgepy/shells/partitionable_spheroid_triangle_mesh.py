@@ -277,6 +277,29 @@ class PartitionableSpheroidTriangleMesh:
 
         return [i for i, v in enumerate(self.vertex_labels) if v == label]
 
+    def find_closest_vertex(self, point):
+        """
+        Finds the index of the vertex closest to the given point.
+        """
+        point = np.array(point, dtype=np.float64)
+        distances = np.linalg.norm(self.vertices - point, axis=1)
+        return np.argmin(distances)
+
+    def get_face_normal(self, face_index):
+        """
+        Returns the normal vector of the given face.
+        """
+        v0, v1, v2 = self.vertices[self.faces[face_index]]
+        tri_normal = np.cross(v1 - v0, v2 - v0)
+        return normalize(tri_normal)
+
+    def get_face_centroid(self, face_index):
+        """
+        Returns the centroid of the given face.
+        """
+        v0, v1, v2 = self.vertices[self.faces[face_index]]
+        return (v0 + v1 + v2) / 3.0
+
     def triangle_area(self, triangle_vertex_indices):
 
         a, b, c = [self.vertices[i] for i in triangle_vertex_indices]

@@ -159,7 +159,7 @@ def test_projected_polygon_partition():
 
     hexagon_2d = [(p[0], p[1]) for p in hexagon]  # Convert to 2D tuples
 
-    projected_polygon = partition.project_polygon_onto_mesh(
+    projected_polygon, inside_vertex_ids = partition.project_polygon_onto_mesh(
         region_id=0,  # Project onto the main region
         polygon_points_2d=hexagon_2d,
         ray_origin=np.array([0.0, 0.0, 0.0]),

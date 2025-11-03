@@ -462,14 +462,30 @@ def intersect_edge_with_polygon(p1, p2, polygon_spec, epsilon=1e-8):
 
 
 def compute_polygon_normal(points):
-    # Compute normal using Newell's method
-    # Use PCA to find the best-fit plane
+    """
+    Compute polygon normal using Newell's method.
+    This method respects the polygon winding order:
+    - Counter-clockwise winding → normal points "up" (positive Z for XY plane)
+    - Clockwise winding → normal points "down" (negative Z for XY plane)
+    """
     points = np.array(points)
-    center = np.mean(points, axis=0)
-    centered_points = np.array(points) - center
-    _, _, vh = np.linalg.svd(centered_points)
+    n = len(points)
 
-    normal = vh[-1, :]
+    if n < 3:
+        raise ValueError("Polygon must have at least 3 points")
+
+    # Newell's method for computing polygon normal
+    # This respects the winding order of the vertices
+    normal = np.zeros(3)
+
+    for i in range(n):
+        v1 = points[i]
+        v2 = points[(i + 1) % n]
+
+        # Accumulate the cross product components
+        normal[0] += (v1[1] - v2[1]) * (v1[2] + v2[2])
+        normal[1] += (v1[2] - v2[2]) * (v1[0] + v2[0])
+        normal[2] += (v1[0] - v2[0]) * (v1[1] + v2[1])
 
     return normalize(normal)
 

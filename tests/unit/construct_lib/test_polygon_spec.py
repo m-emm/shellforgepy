@@ -388,3 +388,300 @@ def test_polygon_spec_documentation_examples():
     # Convert back to 3D
     point_3d_back = polygon.point_from_2d(point_2d)
     np.testing.assert_array_almost_equal(test_point, point_3d_back)
+
+
+def test_calc_inset_polygon_spec_triangle():
+    """Test polygon inset with a simple triangle."""
+
+    # Create an equilateral triangle in XY plane
+    side_length = 2.0
+    height = side_length * math.sqrt(3) / 2
+    triangle = [
+        np.array([0.0, 0.0, 0.0]),
+        np.array([side_length, 0.0, 0.0]),
+        np.array([side_length / 2, height, 0.0]),
+    ]
+
+    ps = PolygonSpec(points=triangle)
+
+    # Inset by small amount
+    inset_distance = 0.2
+    inset_poly = ps.calc_inset_polygon_spec(inset_distance)
+
+    # Check basic properties
+    assert len(inset_poly.points) == 3
+    assert hasattr(inset_poly, "center")
+    assert hasattr(inset_poly, "normal")
+
+    # Normal should be preserved (same orientation or opposite is fine)
+    dot_product = np.dot(ps.normal, inset_poly.normal)
+    assert abs(abs(dot_product) - 1.0) < 1e-10
+
+    # All inset vertices should be inside original triangle
+    for vertex in inset_poly.points:
+        assert ps.contains_point(
+            vertex
+        ), f"Inset vertex {vertex} should be inside original"
+
+    # Inset triangle should be smaller (lower perimeter)
+    original_perim = ps.circumference()
+    inset_perim = inset_poly.circumference()
+    assert inset_perim < original_perim
+
+    # Center should be roughly preserved for symmetric shapes
+    center_diff = np.linalg.norm(ps.center - inset_poly.center)
+    assert center_diff < 0.1  # Should be close for equilateral triangle
+
+
+def test_calc_inset_polygon_spec_square():
+    """Test polygon inset with a square."""
+
+    # Create a square in XY plane
+    square = [
+        np.array([0.0, 0.0, 0.0]),
+        np.array([2.0, 0.0, 0.0]),
+        np.array([2.0, 2.0, 0.0]),
+        np.array([0.0, 2.0, 0.0]),
+    ]
+
+    ps = PolygonSpec(points=square)
+
+    # Inset by 0.3
+    inset_distance = 0.3
+    inset_poly = ps.calc_inset_polygon_spec(inset_distance)
+
+    # Check basic properties
+    assert len(inset_poly.points) == 4
+
+    # All inset vertices should be inside original square
+    for vertex in inset_poly.points:
+        assert ps.contains_point(vertex)
+
+    # For a square, inset should preserve square shape
+    # Check that opposite vertices are equidistant from center
+    inset_center = inset_poly.center
+    distances = [np.linalg.norm(v - inset_center) for v in inset_poly.points]
+
+    # All vertices should be roughly same distance from center (square symmetry)
+    avg_distance = np.mean(distances)
+    for dist in distances:
+        assert abs(dist - avg_distance) < 1e-10
+
+    # Expected inset square should have side length = original - 2*inset
+    # Original square side = 2.0, so inset square side ≈ 2.0 - 2*0.3 = 1.4
+    inset_side_lengths = []
+    for i in range(4):
+        v1 = inset_poly.points[i]
+        v2 = inset_poly.points[(i + 1) % 4]
+        length = np.linalg.norm(v2 - v1)
+        inset_side_lengths.append(length)
+
+    expected_side = 2.0 - 2 * inset_distance
+    for length in inset_side_lengths:
+        assert abs(length - expected_side) < 1e-10
+
+
+def test_calc_inset_polygon_spec_hexagon():
+    """Test polygon inset with a regular hexagon."""
+
+    # Create regular hexagon
+    radius = 3.0
+    hexagon = []
+    for i in range(6):
+        angle = i * 2 * math.pi / 6
+        x = radius * math.cos(angle)
+        y = radius * math.sin(angle)
+        hexagon.append(np.array([x, y, 0.0]))
+
+    ps = PolygonSpec(points=hexagon)
+
+    # Inset by reasonable amount
+    inset_distance = 0.5
+    inset_poly = ps.calc_inset_polygon_spec(inset_distance)
+
+    # Check basic properties
+    assert len(inset_poly.points) == 6
+
+    # All inset vertices should be inside original hexagon
+    for vertex in inset_poly.points:
+        assert ps.contains_point(vertex)
+
+    # For regular hexagon, symmetry should be preserved
+    inset_center = inset_poly.center
+    distances = [np.linalg.norm(v - inset_center) for v in inset_poly.points]
+
+    # All vertices should be same distance from center
+    avg_distance = np.mean(distances)
+    for dist in distances:
+        assert abs(dist - avg_distance) < 1e-6
+
+    # Inset hexagon should be smaller
+    original_perim = ps.circumference()
+    inset_perim = inset_poly.circumference()
+    assert inset_perim < original_perim
+
+
+def test_calc_inset_polygon_spec_tilted_triangle():
+    """Test polygon inset with a triangle in arbitrary 3D orientation."""
+
+    # Create triangle in tilted plane (make it larger to avoid edge issues)
+    triangle = [
+        np.array([1.0, 2.0, 3.0]),
+        np.array([4.0, 1.0, 5.0]),  # Make edges longer
+        np.array([0.5, 5.0, 2.5]),
+    ]
+
+    ps = PolygonSpec(points=triangle)
+
+    # Inset by small amount
+    inset_distance = 0.05  # Reduce inset distance
+    inset_poly = ps.calc_inset_polygon_spec(inset_distance)
+
+    # Check basic properties
+    assert len(inset_poly.points) == 3
+
+    # Normal should be preserved (same orientation or opposite)
+    dot_product = np.dot(ps.normal, inset_poly.normal)
+    assert abs(abs(dot_product) - 1.0) < 1e-10  # Should be parallel (either direction)
+
+    # All inset vertices should be inside original triangle
+    for vertex in inset_poly.points:
+        assert ps.contains_point(vertex)
+
+
+def test_calc_inset_polygon_spec_error_cases():
+    """Test error handling for polygon inset."""
+
+    # Test with negative inset distance
+    triangle = [
+        np.array([0.0, 0.0, 0.0]),
+        np.array([1.0, 0.0, 0.0]),
+        np.array([0.5, 1.0, 0.0]),
+    ]
+    ps = PolygonSpec(points=triangle)
+
+    with pytest.raises(ValueError, match="Inset distance must be positive"):
+        ps.calc_inset_polygon_spec(-0.1)
+
+    with pytest.raises(ValueError, match="Inset distance must be positive"):
+        ps.calc_inset_polygon_spec(0.0)
+
+    # Test with too large inset distance
+    with pytest.raises(ValueError, match="too large"):
+        ps.calc_inset_polygon_spec(10.0)  # Much larger than triangle
+
+    # Test with degenerate polygon (collinear points)
+    degenerate = [
+        np.array([0.0, 0.0, 0.0]),
+        np.array([1.0, 0.0, 0.0]),
+        np.array([2.0, 0.0, 0.0]),  # Collinear
+    ]
+    ps_degenerate = PolygonSpec(points=degenerate)
+
+    with pytest.raises(ValueError, match="Degenerate angle"):
+        ps_degenerate.calc_inset_polygon_spec(0.1)
+
+
+def test_calc_inset_polygon_spec_non_planar():
+    """Test polygon inset with non-planar polygon."""
+
+    # Create a "butterfly" shape - not quite planar
+    non_planar = [
+        np.array([0.0, 0.0, 0.0]),
+        np.array([2.0, 0.0, 0.1]),  # Slightly elevated
+        np.array([2.0, 2.0, 0.0]),
+        np.array([0.0, 2.0, -0.1]),  # Slightly depressed
+    ]
+
+    ps = PolygonSpec(points=non_planar)
+
+    # Should still work by projecting to best-fit plane
+    inset_distance = 0.2
+    inset_poly = ps.calc_inset_polygon_spec(inset_distance)
+
+    # Check basic properties
+    assert len(inset_poly.points) == 4
+
+    # All inset vertices should be inside original polygon (approximately)
+    for vertex in inset_poly.points:
+        assert ps.contains_point(vertex)
+
+
+def test_calc_inset_polygon_spec_preservation_properties():
+    """Test that inset preserves important geometric properties."""
+
+    # Test with pentagon
+    pentagon = [
+        np.array([2.0, 0.0, 0.0]),
+        np.array([0.618, 1.902, 0.0]),
+        np.array([-1.618, 1.176, 0.0]),
+        np.array([-1.618, -1.176, 0.0]),
+        np.array([0.618, -1.902, 0.0]),
+    ]
+
+    ps = PolygonSpec(points=pentagon)
+
+    inset_distance = 0.15
+    inset_poly = ps.calc_inset_polygon_spec(inset_distance)
+
+    # 1. Same number of vertices
+    assert len(inset_poly.points) == len(ps.points)
+
+    # 2. Same normal direction (parallel)
+    dot_product = np.dot(ps.normal, inset_poly.normal)
+    assert abs(dot_product - 1.0) < 1e-10
+
+    # 3. Smaller perimeter
+    assert inset_poly.circumference() < ps.circumference()
+
+    # 4. All vertices inside original
+    for vertex in inset_poly.points:
+        assert ps.contains_point(vertex)
+
+    # 5. Inset by larger amount should give smaller result
+    larger_inset = ps.calc_inset_polygon_spec(0.25)
+    assert larger_inset.circumference() < inset_poly.circumference()
+
+
+def test_calc_inset_multiple_iterations():
+    """Test that multiple inset operations work correctly."""
+
+    # Start with square
+    square = [
+        np.array([0.0, 0.0, 0.0]),
+        np.array([3.0, 0.0, 0.0]),
+        np.array([3.0, 3.0, 0.0]),
+        np.array([0.0, 3.0, 0.0]),
+    ]
+
+    ps = PolygonSpec(points=square)
+
+    # Apply multiple small insets
+    current_poly = ps
+    inset_amount = 0.1
+    num_iterations = 5
+
+    perimeters = [current_poly.circumference()]
+
+    for i in range(num_iterations):
+        current_poly = current_poly.calc_inset_polygon_spec(inset_amount)
+        perimeters.append(current_poly.circumference())
+
+        # Each iteration should produce smaller perimeter
+        assert perimeters[-1] < perimeters[-2]
+
+        # All vertices should still be valid
+        assert len(current_poly.points) == 4
+
+        # Should still be roughly square-shaped (equal side lengths)
+        side_lengths = []
+        for j in range(4):
+            v1 = current_poly.points[j]
+            v2 = current_poly.points[(j + 1) % 4]
+            length = np.linalg.norm(v2 - v1)
+            side_lengths.append(length)
+
+        # All sides should be approximately equal
+        avg_side = np.mean(side_lengths)
+        for length in side_lengths:
+            assert abs(length - avg_side) < 1e-10

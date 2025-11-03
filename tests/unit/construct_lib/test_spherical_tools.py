@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from shellforgepy.construct.construct_utils import rotation_matrix_from_vectors
 from shellforgepy.geometry.spherical_tools import (
     cartesian_to_spherical_jackson,
@@ -588,6 +589,3 @@ def test_matrix_to_coordinate_system_transform():
     np.testing.assert_array_almost_equal(transform["translation"], [1.0, 2.0, 3.0])
     assert np.isclose(transform["rotation_angle"], 0.0)
     assert isinstance(transform["rotation_axis"], tuple)
-
-
-import pytest
