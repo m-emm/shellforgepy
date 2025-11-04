@@ -13,6 +13,7 @@ from shellforgepy.construct.construct_utils import (
     normalize,
     normalize_edge,
     point_in_polygon_2d,
+    point_string,
     rotation_matrix_from_vectors,
     triangle_edges,
 )
@@ -2618,11 +2619,8 @@ class MeshPartition:
         v0, v1, v2 = triangle
         central_normal = normalize(compute_triangle_normal(v0, v1, v2))
 
-        def point_to_str(p):
-            return f"({p[0]:.2f}, {p[1]:.2f}, {p[2]:.2f})"
-
-        _logger.debug(f"Central hit point: {point_to_str(central_hit)}")
-        _logger.debug(f"Central normal: {point_to_str(central_normal)}")
+        _logger.info(f"Central hit point: {point_string(central_hit)}")
+        _logger.info(f"Central normal: {point_string(central_normal)}")
 
         # Create a local coordinate system at the hit point
         # Use the face normal as the Z axis
@@ -2652,9 +2650,9 @@ class MeshPartition:
         # For a right-handed system: Z = X × Y, so Y = Z × X
         local_y = normalize(np.cross(local_z, local_x))
 
-        _logger.debug(f"Local X axis: {point_to_str(local_x)}")
-        _logger.debug(f"Local Y axis: {point_to_str(local_y)}")
-        _logger.debug(f"Local Z axis: {point_to_str(local_z)}")
+        _logger.info(f"Local X axis: {point_string(local_x)}")
+        _logger.info(f"Local Y axis: {point_string(local_y)}")
+        _logger.info(f"Local Z axis: {point_string(local_z)}")
 
         # Generate subsampled points along polygon edges
         subsampled_2d_points = []
@@ -2695,7 +2693,7 @@ class MeshPartition:
 
             # Cast ray from this 3D point toward the mesh (opposite to normal direction)
             ray_start = (
-                point_3d - 20 * local_z
+                point_3d - 100 * local_z
             )  # Start ray some distance away from surface
             ray_dir = local_z  # Ray toward the surface
 
@@ -2712,7 +2710,9 @@ class MeshPartition:
                     break
 
             if not hit_found:
-                _logger.warning(f"Failed to project 2D point ({x_2d:.1f}, {y_2d:.1f})")
+                _logger.warning(
+                    f"Failed to project 2D point ({x_2d:.1f}, {y_2d:.1f}), ray_start = {point_string(ray_start)}"
+                )
 
         projected_corners = []
         for corner_2d in polygon_points_2d:

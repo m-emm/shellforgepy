@@ -1,3 +1,4 @@
+import logging
 import math
 from typing import Optional
 
@@ -15,6 +16,8 @@ from shellforgepy.geometry.spherical_tools import coordinate_system_transform
 from shellforgepy.geometry.treapezoidal_snake_geometry import (
     create_trapezoidal_snake_geometry,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 def create_hex_prism(diameter, thickness, origin=(0, 0, 0)):
@@ -648,3 +651,19 @@ def create_triangular_prism_geometry(corners):
 def create_triangular_prism(corners):
     maps = create_triangular_prism_geometry(corners)
     return create_solid_from_traditional_face_vertex_maps(maps)
+
+
+def materialize_bounding_box(part):
+    bb = get_bounding_box(part)
+    corners = [
+        (bb[0][0], bb[0][1], bb[0][2]),
+        (bb[1][0], bb[0][1], bb[0][2]),
+        (bb[1][0], bb[1][1], bb[0][2]),
+        (bb[0][0], bb[1][1], bb[0][2]),
+        (bb[0][0], bb[0][1], bb[1][2]),
+        (bb[1][0], bb[0][1], bb[1][2]),
+        (bb[1][0], bb[1][1], bb[1][2]),
+        (bb[0][0], bb[1][1], bb[1][2]),
+    ]
+
+    return create_distorted_cube(corners)

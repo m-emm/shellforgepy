@@ -1,6 +1,5 @@
 import logging
 
-
 import numpy as np
 import pytest
 from shellforgepy.construct.construct_utils import fibonacci_sphere, normalize

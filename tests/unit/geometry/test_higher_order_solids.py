@@ -9,8 +9,9 @@ from shellforgepy.geometry.higher_order_solids import (
     create_screw_thread,
     directed_box_at,
     directed_cylinder_at,
+    materialize_bounding_box,
 )
-from shellforgepy.simple import get_bounding_box, get_vertex_coordinates
+from shellforgepy.simple import create_box, get_bounding_box, get_vertex_coordinates
 
 
 def test_create_hex_prism():
@@ -487,3 +488,12 @@ def test_directed_box_at_vs_directed_cylinder_positioning():
 
     assert np.isclose(bb_box[0][1], bb_cyl[0][1], atol=1e-6)  # same Y minimum
     assert np.isclose(bb_box[1][1], bb_cyl[1][1], atol=1e-6)  # same Y maximum
+
+
+def test_cube_topology():
+
+    test_box = create_box(10, 20, 30)
+
+    bbox = materialize_bounding_box(test_box)
+
+    assert np.allclose(get_bounding_box(bbox), get_bounding_box(test_box))

@@ -760,3 +760,8 @@ def fit_sphere_center_along_plane_normal(points: np.ndarray):
     best_radius = np.mean(dists)
 
     return best_center, best_radius
+
+
+def point_string(point):
+    coords = ",".join(f"{c:.1f}" for c in point)
+    return f"({coords})"

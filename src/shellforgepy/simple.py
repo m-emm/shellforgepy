@@ -74,6 +74,7 @@ from .construct.construct_utils import (
     compute_triangle_normal,
     fibonacci_sphere,
     normalize,
+    point_string,
 )
 from .construct.leader_followers_cutters_part import (
     LeaderFollowersCuttersPart,
@@ -140,6 +141,7 @@ __all__ = [
     "calc_distance_to_path",
     "chain_translations",
     "compute_transforms_from_hint",
+    "compute_triangle_normal",
     "ConnectorHint",
     "convert_to_traditional_face_vertex_maps",
     "coordinate_system_transform_to_matrix",
@@ -171,6 +173,8 @@ __all__ = [
     "create_text_object",
     "create_trapezoid",
     "create_trapezoidal_snake_geometry",
+    "create_triangular_prism_geometry",
+    "create_triangular_prism",
     "directed_box_at",
     "directed_cylinder_at",
     "export_solid_to_stl",
@@ -187,33 +191,31 @@ __all__ = [
     "LeaderFollowersCuttersPart",
     "list_supported_sizes",
     "m_screws_table",
-    "MScrew",
     "matrix_to_coordinate_system_transform",
     "matrix_to_coordinate_system_transformation_function",
     "merge_meshes",
     "MeshPartition",
     "mirror",
+    "MScrew",
     "NamedPart",
     "normalize",
+    "orient_for_flatness_riemannian",
+    "orient_for_flatness",
     "PartCollector",
     "PartInfo",
     "PartitionableSpheroidTriangleMesh",
     "PartList",
+    "point_string",
+    "ray_triangle_intersect",
     "reset_to_original_orientation",
     "rotate",
     "slice_part",
     "stack_alignment_of",
+    "transform_point_with_matrix",
     "TransformedRegionView",
     "translate",
     "write_shell_maps_to_stl",
     "write_stl_binary",
-    "orient_for_flatness",
-    "orient_for_flatness_riemannian",
-    "ray_triangle_intersect",
-    "compute_triangle_normal",
-    "transform_point_with_matrix",
-    "create_triangular_prism_geometry",
-    "create_triangular_prism",
 ]
 
 
@@ -237,10 +239,8 @@ def _setup_logging():
     ):
         import logging
 
-        logging.basicConfig(
-            level=logging.INFO,
-            format=LOGGING_FORMAT,
-        )
+        level = os.environ.get("SHELLFORGEPY_LOG_LEVEL", "INFO")
+        logging.basicConfig(level=level, format=LOGGING_FORMAT, force=True)
 
         # send all logs to stdout, not stderr
         logging.getLogger().handlers[0].stream = sys.stdout
