@@ -229,6 +229,12 @@ class LeaderFollowersCuttersPart:
         """
         return self.follower_indices_by_name.get(name, None)
 
+    def get_follower_part_by_name(self, name):
+        index = self.get_follower_index_by_name(name)
+        if index is not None:
+            return self.followers[index]
+        raise KeyError(f"Follower with name '{name}' not found")
+
     def get_cutter_index_by_name(self, name):
         """Get the index of a named cutter.
 

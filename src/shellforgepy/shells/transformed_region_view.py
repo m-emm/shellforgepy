@@ -1081,6 +1081,20 @@ class TransformedRegionView:
 
         return transformed_features
 
+    def compute_weighted_average_normal(self):
+        all_face_normals = self.get_all_face_normals()
+        all_face_areas = self.get_all_face_areas()
+
+        weighted_average_normal = np.zeros(3, dtype=np.float64)
+
+        for face_index in range(len(all_face_normals)):
+            normal = all_face_normals[face_index]
+            area = all_face_areas[face_index]
+            weighted_average_normal += normal * area
+
+        weighted_average_normal = normalize(weighted_average_normal)
+        return weighted_average_normal
+
 
 def rotation_matrix_about_axis(axis, angle):
     axis = axis / np.linalg.norm(axis)
