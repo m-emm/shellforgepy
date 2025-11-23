@@ -26,6 +26,7 @@ translate_part_native = selected_adapter.translate_part_native
 rotate_part_native = selected_adapter.rotate_part_native
 mirror_part_native = selected_adapter.mirror_part_native
 apply_fillet_to_edges = selected_adapter.apply_fillet_to_edges
+filter_edges_by_function = selected_adapter.filter_edges_by_function
 apply_fillet_by_alignment = selected_adapter.apply_fillet_by_alignment
 get_adapter_id = selected_adapter.get_adapter_id
 mirror_part = selected_adapter.mirror_part
@@ -51,6 +52,7 @@ __all__ = [
     "cut_parts",
     "export_solid_to_stl",
     "fuse_parts",
+    "filter_edges_by_function",
     "get_adapter_id",
     "get_bounding_box_center",
     "get_bounding_box_size",

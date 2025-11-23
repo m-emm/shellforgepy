@@ -106,6 +106,29 @@ def are_normals_similar(n1: np.ndarray, n2: np.ndarray, tol: float = 1e-3) -> bo
     return np.dot(n1, n2) > 1.0 - tol
 
 
+def fibonacci_sphere_sperical_points_with_anisotropy(
+    samples=100, ns_bias=1.0, ew_bias=1.0
+):
+    points = []
+    golden_angle = math.pi * (3.0 - math.sqrt(5.0))
+
+    for i in range(samples):
+        # NORTH–SOUTH density bias
+        t = i / (samples - 1)
+        y = 1 - 2 * t
+        y = np.sign(y) * (abs(y) ** ns_bias)
+        phi = math.acos(np.clip(y, -1, 1))
+
+        # EAST–WEST density bias
+        theta = ew_bias * golden_angle * i
+
+        x = math.sin(phi) * math.cos(theta)
+        z = math.sin(phi) * math.sin(theta)
+        points.append(np.array([x, y, z]))
+
+    return points
+
+
 def fibonacci_sphere_spherical_coordinates(samples=100):
     """
     Generates spherical coordinates (theta, phi) for points evenly distributed on a sphere

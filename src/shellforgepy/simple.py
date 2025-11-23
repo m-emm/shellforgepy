@@ -25,6 +25,7 @@ from shellforgepy.adapters._adapter import (
     create_solid_from_traditional_face_vertex_maps,
     create_sphere,
     create_text_object,
+    filter_edges_by_function,
     get_adapter_id,
     get_bounding_box,
     get_bounding_box_center,
@@ -86,6 +87,7 @@ from .geometry.face_point_cloud import face_point_cloud
 from .geometry.higher_order_solids import (
     create_distorted_cube,
     create_hex_prism,
+    create_pyramid_stump,
     create_right_triangle,
     create_ring,
     create_rounded_slab,
@@ -101,6 +103,12 @@ from .geometry.modifications import (
     orient_for_flatness_riemannian,
     slice_part,
 )
+from .geometry.sheet_metal import (
+    create_sheet_metal_bend,
+    create_sheet_metal_bracket,
+    create_sheet_metal_hem,
+    create_sheet_metal_wall,
+)
 from .geometry.spherical_tools import (
     coordinate_system_transform,
     coordinate_system_transform_to_matrix,
@@ -110,7 +118,10 @@ from .geometry.spherical_tools import (
     ray_triangle_intersect,
     transform_point_with_matrix,
 )
-from .geometry.treapezoidal_snake_geometry import create_trapezoidal_snake_geometry
+from .geometry.treapezoidal_snake_geometry import (
+    create_bezier_snake_geometry,
+    create_trapezoidal_snake_geometry,
+)
 from .produce.arrange_and_export import (
     arrange_and_export,
     arrange_and_export_parts,
@@ -129,6 +140,7 @@ from .shells.partitionable_spheroid_triangle_mesh import (
 
 # Define what gets exported with "from simple import *"
 __all__ = [
+    "create_sheet_metal_bracket",
     "align_translation",
     "align",
     "alignment_signs",
@@ -147,6 +159,7 @@ __all__ = [
     "coordinate_system_transform_to_matrix",
     "coordinate_system_transform",
     "coordinate_system_transformation_function",
+    "create_bezier_snake_geometry",
     "create_bolt_thread",
     "create_box",
     "create_cone",
@@ -167,6 +180,9 @@ __all__ = [
     "create_rounded_slab",
     "create_screw_connector_normal",
     "create_screw_thread",
+    "create_sheet_metal_bend",
+    "create_sheet_metal_hem",
+    "create_sheet_metal_wall",
     "create_solid_from_traditional_face_vertex_maps",
     "create_sphere",
     "create_tetrahedron_geometry",
@@ -179,6 +195,7 @@ __all__ = [
     "directed_cylinder_at",
     "export_solid_to_stl",
     "face_point_cloud",
+    "filter_edges_by_function",
     "fibonacci_sphere",
     "get_adapter_id",
     "get_bounding_box_center",
@@ -216,6 +233,7 @@ __all__ = [
     "translate",
     "write_shell_maps_to_stl",
     "write_stl_binary",
+    "create_pyramid_stump",
 ]
 
 

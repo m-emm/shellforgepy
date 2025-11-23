@@ -29,6 +29,9 @@ from shellforgepy.adapters._adapter_bridge import cut_parts as adapter_cut_parts
 from shellforgepy.adapters._adapter_bridge import (
     export_solid_to_stl as adapter_export_solid_to_stl,
 )
+from shellforgepy.adapters._adapter_bridge import (
+    filter_edges_by_function as adapter_filter_edges_by_function,
+)
 from shellforgepy.adapters._adapter_bridge import fuse_parts as adapter_fuse_parts
 from shellforgepy.adapters._adapter_bridge import (
     get_adapter_id as adapter_get_adapter_id,
@@ -410,6 +413,19 @@ def apply_fillet_to_edges(solid, fillet_radius, edges):
         Filleted solid
     """
     return adapter_apply_fillet_to_edges(solid, fillet_radius, edges)
+
+
+def filter_edges_by_function(solid, filter_function):
+    """Filter edges of a solid based on a user-defined function.
+
+    Args:
+        solid: CadQuery solid
+        filter_function: Function that takes an edge and returns True if it should be included
+
+    Returns:
+        List of edges that match the filter criteria
+    """
+    return adapter_filter_edges_by_function(solid, filter_function)
 
 
 def create_cone(

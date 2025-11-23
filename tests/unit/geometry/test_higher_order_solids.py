@@ -2,7 +2,9 @@ import numpy as np
 import pytest
 from shellforgepy.adapters._adapter import get_volume
 from shellforgepy.geometry.higher_order_solids import (
+    create_distorted_cube,
     create_hex_prism,
+    create_pyramid_stump,
     create_right_triangle,
     create_ring,
     create_rounded_slab,
@@ -497,3 +499,55 @@ def test_cube_topology():
     bbox = materialize_bounding_box(test_box)
 
     assert np.allclose(get_bounding_box(bbox), get_bounding_box(test_box))
+
+
+def test_create_distorted_cube_geometry_and_validation():
+    # Simple axis-aligned box description should produce matching bounding box and volume
+    corners = [
+        (0, 0, 0),
+        (1, 0, 0),
+        (1, 2, 0),
+        (0, 2, 0),
+        (0, 0, 3),
+        (1, 0, 3),
+        (1, 2, 3),
+        (0, 2, 3),
+    ]
+    solid = create_distorted_cube(corners)
+    bb = get_bounding_box(solid)
+
+    assert np.allclose(bb[0], (0.0, 0.0, 0.0), atol=1e-8)
+    assert np.allclose(bb[1], (1.0, 2.0, 3.0), atol=1e-8)
+    assert np.isclose(get_volume(solid), 6.0, atol=1e-8)
+
+    # Invalid vertex count should raise
+    with pytest.raises(ValueError):
+        create_distorted_cube(corners[:7])
+
+
+def test_create_pyramid_stump_shape_and_volume():
+    bottom_width, top_width = 10.0, 4.0
+    bottom_depth, top_depth = 8.0, 2.0
+    height = 6.0
+
+    stump = create_pyramid_stump(
+        bottom_width=bottom_width,
+        top_width=top_width,
+        bottom_depth=bottom_depth,
+        top_depth=top_depth,
+        height=height,
+    )
+
+    bb_min, bb_max = get_bounding_box(stump)
+    assert np.allclose(bb_min, (-bottom_width / 2, -bottom_depth / 2, 0.0), atol=1e-8)
+    assert np.allclose(bb_max, (bottom_width / 2, bottom_depth / 2, height), atol=1e-8)
+
+    # Volume should match the analytic integral of linearly tapering width/depth
+    base_area = bottom_width * bottom_depth
+    a = top_width - bottom_width
+    c = top_depth - bottom_depth
+    expected_cross_section_integral = (
+        base_area + (bottom_width * c + bottom_depth * a) / 2 + (a * c) / 3
+    )
+    expected_volume = height * expected_cross_section_integral
+    assert np.isclose(get_volume(stump), expected_volume, rtol=1e-6, atol=1e-6)

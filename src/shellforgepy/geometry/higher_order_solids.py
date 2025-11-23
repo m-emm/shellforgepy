@@ -12,6 +12,9 @@ from shellforgepy.adapters._adapter import (
     get_bounding_box,
 )
 from shellforgepy.construct.alignment_operations import mirror, rotate, translate
+from shellforgepy.construct.construct_utils import normalize
+from shellforgepy.geometry.mesh_builders import create_cube_geometry
+from shellforgepy.geometry.mesh_utils import convert_to_traditional_face_vertex_maps
 from shellforgepy.geometry.spherical_tools import coordinate_system_transform
 from shellforgepy.geometry.treapezoidal_snake_geometry import (
     create_trapezoidal_snake_geometry,
@@ -95,64 +98,72 @@ def create_right_triangle(
 
     extrusion_vec = None
 
+    # Handle the different parameter combinations
     if b_normal is not None and a_normal is not None:
-        a_vec = np.asarray(a_normal, dtype=float)
-        b_vec = np.asarray(b_normal, dtype=float)
+        # Both normals specified - compute extrusion direction automatically
+        a_vec = normalize(a_normal)
+        b_vec = normalize(b_normal)
 
-        if np.linalg.norm(a_vec) < 1e-8 or np.linalg.norm(b_vec) < 1e-8:
-            raise ValueError("Normals must be non-zero vectors")
-
-        a_vec = a_vec / np.linalg.norm(a_vec)
-        b_vec = b_vec / np.linalg.norm(b_vec)
-
-        a_normal = tuple(a_vec.tolist())
-        b_normal = tuple(b_vec.tolist())
-
+        # Compute extrusion direction as cross product (right-hand rule)
+        # The extrusion direction should be perpendicular to both normals
         extrusion_vec = np.cross(a_vec, b_vec)
-        if np.linalg.norm(extrusion_vec) < 1e-8:
+        extrusion_norm = np.linalg.norm(extrusion_vec)
+
+        # Verify the vectors are not parallel
+        if extrusion_norm < 1e-6:
             raise ValueError("a_normal and b_normal cannot be parallel")
 
-        extrusion_direction = tuple(extrusion_vec.tolist())
+        extrusion_vec = extrusion_vec / extrusion_norm
+        extrusion_direction = tuple(extrusion_vec)
 
     elif extrusion_direction is not None and a_normal is not None:
-        extrusion_vec = np.asarray(extrusion_direction, dtype=float)
-        a_vec = np.asarray(a_normal, dtype=float)
+        # Extrusion direction and a_normal specified - compute b_normal
+        extrusion_vec = normalize(extrusion_direction)
+        a_vec = normalize(a_normal)
 
-        if np.linalg.norm(extrusion_vec) < 1e-8 or np.linalg.norm(a_vec) < 1e-8:
-            raise ValueError("extrusion_direction and a_normal must be non-zero")
-
-        extrusion_vec = extrusion_vec / np.linalg.norm(extrusion_vec)
-        a_vec = a_vec / np.linalg.norm(a_vec)
-
+        # Compute b_normal as cross product
         b_vec = np.cross(extrusion_vec, a_vec)
-        if np.linalg.norm(b_vec) < 1e-8:
+        b_normal = tuple(b_vec)
+
+        # Verify the vectors are not parallel
+        if np.linalg.norm(b_vec) < 1e-6:
             raise ValueError("extrusion_direction and a_normal cannot be parallel")
 
-        b_normal = tuple(b_vec.tolist())
-        extrusion_direction = tuple(extrusion_vec.tolist())
-        a_normal = tuple(a_vec.tolist())
-
     elif extrusion_direction is not None:
-        extrusion_vec = np.asarray(extrusion_direction, dtype=float)
-        if np.linalg.norm(extrusion_vec) < 1e-8:
-            raise ValueError("extrusion_direction must be a non-zero vector")
-        extrusion_direction = tuple(extrusion_vec.tolist())
+        extrusion_vec = normalize(extrusion_direction)
 
+    if a_normal is not None and extrusion_direction is None and extrusion_vec is None:
+        # a_normal without an extrusion direction is insufficient to orient the part
+        a_vec = normalize(a_normal)
+        a_normal = tuple(a_vec)
+    elif a_normal is not None:
+        a_normal = tuple(normalize(a_normal))
+
+    if extrusion_vec is not None:
+        extrusion_direction = tuple(extrusion_vec)
+    # Apply rotation if orientation vectors are specified
     if extrusion_direction is not None or a_normal is not None:
-        default_origin = (0.0, 0.0, 0.0)
-        default_up = (0.0, 0.0, 1.0)
-        default_out = (0.0, -1.0, 0.0)
+        # Default coordinate system for the triangle
+        # Triangle vertices: (0,0,0), (b,0,0), (0,a,0)
+        # - up (extrusion direction): (0, 0, 1) - along z-axis
+        # - out (a-side normal): (0, 1, 0) - along y-axis (a-side goes from (0,0) to (0,a))
+        default_origin = [0, 0, 0]
+        default_up = [0, 0, 1]  # extrusion direction
+        default_out = [0, -1, 0]  # a-side normal (a-side is along y-axis)
 
+        # Target coordinate system
+        target_origin = [0, 0, 0]  # keep at origin
         target_up = (
-            extrusion_direction if extrusion_direction is not None else default_up
+            list(extrusion_direction) if extrusion_direction is not None else default_up
         )
-        target_out = tuple(a_normal) if a_normal is not None else default_out
+        target_out = list(a_normal) if a_normal is not None else default_out
 
+        # Compute the transformation
         transform = coordinate_system_transform(
             default_origin,
             default_up,
             default_out,
-            default_origin,
+            target_origin,
             target_up,
             target_out,
         )
@@ -667,3 +678,29 @@ def materialize_bounding_box(part):
     ]
 
     return create_distorted_cube(corners)
+
+
+def create_pyramid_stump(bottom_width, top_width, bottom_depth, top_depth, height):
+    # vertices from the “spherical cube” are ±0.5 in all coords with this radius
+    vertices, faces = create_cube_geometry(math.sqrt(3) / 2)
+
+    new_vertices = []
+    for x, y, z in vertices:
+        # Map z ∈ {-0.5, +0.5} → t ∈ {0, 1}
+        t = z + 0.5  # since range is exactly 1.0
+
+        # Interpolate half-sizes
+        sx = (1 - t) * (bottom_width / 2.0) + t * (top_width / 2.0)
+        sy = (1 - t) * (bottom_depth / 2.0) + t * (top_depth / 2.0)
+
+        # Use sign(x), sign(y) to choose corner; z goes 0..height
+        nx = np.sign(x) * sx
+        ny = np.sign(y) * sy
+        nz = t * height
+
+        new_vertices.append([nx, ny, nz])
+
+    solid = create_solid_from_traditional_face_vertex_maps(
+        convert_to_traditional_face_vertex_maps(np.asarray(new_vertices), faces)
+    )
+    return solid

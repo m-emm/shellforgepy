@@ -1,4 +1,5 @@
 import numpy as np
+from shellforgepy.construct.construct_utils import normalize
 from shellforgepy.geometry.mesh_utils import (
     propagate_consistent_winding,
     validate_and_fix_mesh_segment,
@@ -7,15 +8,6 @@ from shellforgepy.geometry.spherical_tools import (
     coordinate_system_transform,
     coordinate_system_transform_to_matrix,
 )
-
-
-def normalize(v):
-    """Normalize a vector. Local copy to avoid circular imports."""
-    vec = np.asarray(v, dtype=float)
-    norm = np.linalg.norm(vec)
-    if norm == 0:
-        return vec
-    return vec / norm
 
 
 def create_snake_vertices(cross_section, base_points, normals):
@@ -155,6 +147,25 @@ def transform_cross_section_to_3d(cross_section, base_point, normal, direction=N
     return np.array(points_3d)
 
 
+def _is_degenerate_segment(start_vertices, end_vertices, tolerance=1e-10):
+    """
+    Check if a segment is degenerate (start and end cross-sections are essentially identical).
+
+    Args:
+        start_vertices (np.ndarray): (4, 3) array of start cross-section vertices
+        end_vertices (np.ndarray): (4, 3) array of end cross-section vertices
+        tolerance (float): Tolerance for considering vertices identical
+
+    Returns:
+        bool: True if the segment is degenerate
+    """
+    for i in range(4):
+        distance = np.linalg.norm(end_vertices[i] - start_vertices[i])
+        if distance > tolerance:
+            return False
+    return True
+
+
 def create_trapezoidal_snake_geometry(
     cross_section, base_points, normals, close_loop=False
 ):
@@ -200,6 +211,10 @@ def create_trapezoidal_snake_geometry(
         # Get vertices for start and end of this segment
         start_vertices = all_vertex_sets[i]  # (4, 3) array
         end_vertices = all_vertex_sets[i + 1]  # (4, 3) array
+
+        # Skip degenerate segments where start and end are essentially identical
+        if _is_degenerate_segment(start_vertices, end_vertices):
+            continue
 
         # Create vertex map (8 vertices: 4 at start + 4 at end)
         vertices = {}
@@ -250,55 +265,213 @@ def create_trapezoidal_snake_geometry(
         last_vertices = all_vertex_sets[-1]  # Last cross-section (4, 3) array
         first_vertices = all_vertex_sets[0]  # First cross-section (4, 3) array
 
-        # Detect and fix any twisted vertex correspondence (e.g., in Möbius strips)
-        corrected_last, corrected_first, twist_info = validate_and_fix_mesh_segment(
-            last_vertices, first_vertices, tolerance=1e-6
-        )
+        # Skip closing segment if it would be degenerate
+        if not _is_degenerate_segment(last_vertices, first_vertices):
+            # Detect and fix any twisted vertex correspondence (e.g., in Möbius strips)
+            corrected_last, corrected_first, twist_info = validate_and_fix_mesh_segment(
+                last_vertices, first_vertices, tolerance=1e-6
+            )
 
-        # Create vertex map for closing segment (8 vertices: 4 at end + 4 at start)
-        vertices = {}
-        for j in range(4):
-            vertices[j] = tuple(corrected_last[j])  # Last cross-section (indices 0-3)
-            vertices[j + 4] = tuple(
-                corrected_first[j]
-            )  # First cross-section (indices 4-7)
+            # Create vertex map for closing segment (8 vertices: 4 at end + 4 at start)
+            vertices = {}
+            for j in range(4):
+                vertices[j] = tuple(
+                    corrected_last[j]
+                )  # Last cross-section (indices 0-3)
+                vertices[j + 4] = tuple(
+                    corrected_first[j]
+                )  # First cross-section (indices 4-7)
 
-        # Create initial face map using standard winding
-        faces = {
-            # Bottom face (last cross-section) - normal pointing backward
-            0: [0, 2, 1],
-            1: [0, 3, 2],
-            # Top face (first cross-section) - normal pointing forward
-            2: [4, 5, 6],
-            3: [4, 6, 7],
-            # Side faces connecting the cross-sections
-            # Side 0-1
-            4: [0, 1, 5],
-            5: [0, 5, 4],
-            # Side 1-2
-            6: [1, 2, 6],
-            7: [1, 6, 5],
-            # Side 2-3
-            8: [2, 3, 7],
-            9: [2, 7, 6],
-            # Side 3-0
-            10: [3, 0, 4],
-            11: [3, 4, 7],
-        }
+            # Create initial face map using standard winding
+            faces = {
+                # Bottom face (last cross-section) - normal pointing backward
+                0: [0, 2, 1],
+                1: [0, 3, 2],
+                # Top face (first cross-section) - normal pointing forward
+                2: [4, 5, 6],
+                3: [4, 6, 7],
+                # Side faces connecting the cross-sections
+                # Side 0-1
+                4: [0, 1, 5],
+                5: [0, 5, 4],
+                # Side 1-2
+                6: [1, 2, 6],
+                7: [1, 6, 5],
+                # Side 2-3
+                8: [2, 3, 7],
+                9: [2, 7, 6],
+                # Side 3-0
+                10: [3, 0, 4],
+                11: [3, 4, 7],
+            }
 
-        # Create triangles list for winding correction
-        triangles = [list(face) for face in faces.values()]
+            # Create triangles list for winding correction
+            triangles = [list(face) for face in faces.values()]
 
-        # Use propagate_consistent_winding to handle potential twist
-        # This will ensure proper closure even for Möbius strips
-        corrected_triangles = propagate_consistent_winding(triangles)
+            # Use propagate_consistent_winding to handle potential twist
+            # This will ensure proper closure even for Möbius strips
+            corrected_triangles = propagate_consistent_winding(triangles)
 
-        # Update faces with corrected winding
-        corrected_faces = {}
-        for i, triangle in enumerate(corrected_triangles):
-            corrected_faces[i] = triangle
+            # Update faces with corrected winding
+            corrected_faces = {}
+            for i, triangle in enumerate(corrected_triangles):
+                corrected_faces[i] = triangle
 
-        closing_mesh = {"vertexes": vertices, "faces": corrected_faces}
-        meshes.append(closing_mesh)
+            closing_mesh = {"vertexes": vertices, "faces": corrected_faces}
+            meshes.append(closing_mesh)
 
     return meshes
+
+
+# ------------------------------------------------------------
+# 1. Cubic Bezier evaluation (3D)
+# ------------------------------------------------------------
+def _bez_eval_3d(b, t):
+    b0, b1, b2, b3 = [np.asarray(p).reshape(1, 3) for p in b]
+    t = np.asarray(t).reshape(-1, 1)
+    mt = 1 - t
+    return b0 * (mt**3) + 3 * b1 * (mt**2) * t + 3 * b2 * mt * (t**2) + b3 * (t**3)
+
+
+# ------------------------------------------------------------
+# 2. Build poly-Bezier chain in 3D (Illustrator-style)
+# ------------------------------------------------------------
+def _build_bezier_chain_3d(points, tau=0.5):
+    """
+    points = [
+        {"p": (x,y,z), "in": (dx,dy,dz), "out": (dx,dy,dz)},
+        ...
+    ]
+    """
+    P = np.array([p["p"] for p in points], dtype=float)
+    n = len(P)
+
+    # Catmull-Rom central tangents for auto handles
+    M = np.zeros_like(P)
+    for i in range(n):
+        if i == 0:
+            t = P[1] - P[0]
+        elif i == n - 1:
+            t = P[i] - P[i - 1]
+        else:
+            t = 0.5 * (P[i + 1] - P[i - 1])
+        M[i] = tau * t
+
+    out = M.copy()
+    in_ = -M.copy()
+
+    # overrides
+    for i, p in enumerate(points):
+        if "out" in p:
+            out[i] = np.asarray(p["out"], float)
+        if "in" in p:
+            in_[i] = np.asarray(p["in"], float)
+
+    # segments
+    segments = []
+    for i in range(n - 1):
+        b0 = P[i]
+        b1 = P[i] + out[i]
+        b2 = P[i + 1] + in_[i + 1]
+        b3 = P[i + 1]
+        segments.append((b0, b1, b2, b3))
+    return segments
+
+
+# ------------------------------------------------------------
+# 3. Sample poly-Bezier curve
+# ------------------------------------------------------------
+def _sample_bezier_chain_3d(segments, samples_per_segment=40):
+    pts = []
+    for seg in segments:
+        t = np.linspace(0, 1, samples_per_segment)
+        pts.append(_bez_eval_3d(seg, t))
+    return np.concatenate(pts, axis=0)
+
+
+# ------------------------------------------------------------
+# 4. Bishop frame normals (rotation-minimizing)
+# ------------------------------------------------------------
+def normalize(v):
+    n = np.linalg.norm(v)
+    return v / n if n > 1e-12 else v
+
+
+def compute_bishop_normals(base_points, initial_normal=(0, 0, 1)):
+    P = np.asarray(base_points, float)
+    n = len(P)
+    T = np.zeros_like(P)
+
+    # Tangents
+    T[:-1] = P[1:] - P[:-1]
+    T[-1] = T[-2]
+    T = np.array([normalize(v) for v in T])
+
+    normals = np.zeros_like(P)
+
+    # Initial
+    init_n = np.asarray(initial_normal, float)
+    init_n = init_n - np.dot(init_n, T[0]) * T[0]
+    if np.linalg.norm(init_n) < 1e-12:
+        init_n = np.array([1, 0, 0]) - np.dot([1, 0, 0], T[0]) * T[0]
+    normals[0] = normalize(init_n)
+
+    # Transport
+    for i in range(n - 1):
+        t_i = T[i]
+        t_j = T[i + 1]
+
+        dot_tt = np.clip(np.dot(t_i, t_j), -1.0, 1.0)
+        if dot_tt > 1.0 - 1e-9:
+            normals[i + 1] = normals[i]
+            continue
+
+        axis = np.cross(t_i, t_j)
+        normA = np.linalg.norm(axis)
+        if normA < 1e-12:
+            normals[i + 1] = normals[i]
+            continue
+        axis /= normA
+        angle = np.arccos(dot_tt)
+
+        n_i = normals[i]
+        normals[i + 1] = (
+            n_i * np.cos(angle)
+            + np.cross(axis, n_i) * np.sin(angle)
+            + axis * np.dot(axis, n_i) * (1 - np.cos(angle))
+        )
+        normals[i + 1] = normalize(normals[i + 1])
+
+    return normals
+
+
+# ------------------------------------------------------------
+# 5. Unified interface: create_bezier_snake_geometry
+# ------------------------------------------------------------
+def create_bezier_snake_geometry(
+    points,
+    cross_section,
+    samples_per_segment=40,
+    tau=0.5,
+    initial_normal=(0, 0, 1),
+    close_loop=False,
+):
+    """
+    points = [{"p": (x,y,z), "in":..., "out":...}, ...]
+    cross_section = 4x2 array
+    """
+
+    # Build & sample curve
+    segments = _build_bezier_chain_3d(points, tau=tau)
+    base_pts = _sample_bezier_chain_3d(segments, samples_per_segment)
+
+    # Compute normals
+    normals = compute_bishop_normals(base_pts, initial_normal=initial_normal)
+
+    # Call trapezoidal snake generator
+    return create_trapezoidal_snake_geometry(
+        cross_section=cross_section,
+        base_points=base_pts,
+        normals=normals,
+        close_loop=close_loop,
+    )

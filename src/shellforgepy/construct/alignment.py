@@ -68,8 +68,28 @@ ALIGNMENT_STACK_ALIGNMENT = {
     Alignment.STACK_BACK: Alignment.STACK_BACK,
 }
 
+OPPOSITE_ALIGNMENTS = {
+    Alignment.LEFT: Alignment.RIGHT,
+    Alignment.RIGHT: Alignment.LEFT,
+    Alignment.TOP: Alignment.BOTTOM,
+    Alignment.BOTTOM: Alignment.TOP,
+    Alignment.FRONT: Alignment.BACK,
+    Alignment.BACK: Alignment.FRONT,
+    Alignment.CENTER: Alignment.CENTER,
+    Alignment.STACK_LEFT: Alignment.STACK_RIGHT,
+    Alignment.STACK_RIGHT: Alignment.STACK_LEFT,
+    Alignment.STACK_TOP: Alignment.STACK_BOTTOM,
+    Alignment.STACK_BOTTOM: Alignment.STACK_TOP,
+    Alignment.STACK_FRONT: Alignment.STACK_BACK,
+    Alignment.STACK_BACK: Alignment.STACK_FRONT,
+}
+
 for k, v in ALIGNMENT_AXIS.items():
     setattr(k, "axis", v)
 
 for k, v in ALIGNMENT_STACK_ALIGNMENT.items():
     setattr(k, "stack_alignment", v)
+
+
+for k, v in OPPOSITE_ALIGNMENTS.items():
+    setattr(k, "opposite", v)

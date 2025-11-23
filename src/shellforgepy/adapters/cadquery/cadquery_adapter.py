@@ -409,6 +409,28 @@ def create_solid_from_traditional_face_vertex_maps(
     shell = cq.Shell.makeShell(cq_faces)
     if shell is None or shell.isNull():
         raise ValueError("Failed to build shell from faces")
+
+    # Check if makeShell returned a compound instead of a proper shell
+    # This happens when faces are degenerate or can't be properly sewn together
+    if (
+        hasattr(shell.wrapped, "ShapeType") and shell.wrapped.ShapeType() != 2
+    ):  # 2 = TopAbs_SHELL
+        # Try to extract shells from the compound
+        if hasattr(shell, "Shells"):
+            shells = list(shell.Shells())
+            if len(shells) == 1:
+                shell = shells[0]
+            elif len(shells) > 1:
+                raise ValueError(
+                    "makeShell returned a compound with multiple shells - cannot convert to single solid"
+                )
+            else:
+                raise ValueError("makeShell returned a compound with no shells")
+        else:
+            raise ValueError(
+                "makeShell returned a compound instead of shell - possibly due to degenerate faces"
+            )
+
     shell_closed: bool
     if hasattr(shell, "isClosed"):
         shell_closed = shell.isClosed()  # type: ignore[call-arg]

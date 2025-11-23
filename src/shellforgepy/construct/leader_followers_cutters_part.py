@@ -233,7 +233,9 @@ class LeaderFollowersCuttersPart:
         index = self.get_follower_index_by_name(name)
         if index is not None:
             return self.followers[index]
-        raise KeyError(f"Follower with name '{name}' not found")
+        raise KeyError(
+            f"Follower with name '{name}' not found. Available names: {list(self.follower_indices_by_name.keys())}"
+        )
 
     def get_cutter_index_by_name(self, name):
         """Get the index of a named cutter.
@@ -261,7 +263,24 @@ class LeaderFollowersCuttersPart:
         index = self.get_non_production_index_by_name(name)
         if index is not None:
             return self.non_production_parts[index]
-        raise KeyError(f"Non-production part with name '{name}' not found")
+        raise KeyError(
+            f"Non-production part with name '{name}' not found. Available names: {list(self.non_production_indices_by_name.keys())}"
+        )
+
+    def add_named_non_production_part(self, part, name):
+        """Add a non-production part with a specified name.
+
+        Args:
+            part: The non-production part to add
+            name: The name to associate with the non-production part
+
+        Raises:
+            ValueError: If the name already exists
+        """
+        if name in self.non_production_indices_by_name:
+            raise ValueError(f"Non-production part name '{name}' already exists.")
+        self.non_production_parts.append(part)
+        self.non_production_indices_by_name[name] = len(self.non_production_parts) - 1
 
     def get_non_production_parts_fused(self):
         """Get all non-production parts fused into a single shape.
