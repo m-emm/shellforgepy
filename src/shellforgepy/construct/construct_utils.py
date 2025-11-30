@@ -788,3 +788,41 @@ def fit_sphere_center_along_plane_normal(points: np.ndarray):
 def point_string(point):
     coords = ",".join(f"{c:.1f}" for c in point)
     return f"({coords})"
+
+
+def point_sequence_interpolator_in_arc_length(points):
+    """
+    Given a sequence of points, returns a function that interpolates
+    along the points based on arc length parameterization.
+
+    The returned function takes a single float parameter t in [0, total_length]
+    and returns the interpolated point along the sequence.
+    """
+    points = np.array(points)
+    segment_lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    cumulative_lengths = np.concatenate(([0], np.cumsum(segment_lengths)))
+    total_length = cumulative_lengths[-1]
+
+    def interpolator(t: float) -> np.ndarray:
+        if t < 0:
+            raise ValueError("t must be non-negative")
+        elif t > total_length:
+            raise ValueError(
+                f"t {t} exceeds total length of the point sequence {total_length}"
+            )
+
+        if t <= 0:
+            return points[0]
+        if t >= total_length:
+            return points[-1]
+
+        segment_index = np.searchsorted(cumulative_lengths, t) - 1
+        t0 = cumulative_lengths[segment_index]
+        t1 = cumulative_lengths[segment_index + 1]
+        p0 = points[segment_index]
+        p1 = points[segment_index + 1]
+
+        segment_t = (t - t0) / (t1 - t0)
+        return (1 - segment_t) * p0 + segment_t * p1
+
+    return interpolator, total_length

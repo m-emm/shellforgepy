@@ -75,6 +75,7 @@ from .construct.construct_utils import (
     compute_triangle_normal,
     fibonacci_sphere,
     normalize,
+    point_sequence_interpolator_in_arc_length,
     point_string,
 )
 from .construct.leader_followers_cutters_part import (
@@ -140,7 +141,6 @@ from .shells.partitionable_spheroid_triangle_mesh import (
 
 # Define what gets exported with "from simple import *"
 __all__ = [
-    "create_sheet_metal_bracket",
     "align_translation",
     "align",
     "alignment_signs",
@@ -175,12 +175,14 @@ __all__ = [
     "create_hex_prism",
     "create_icosahedron_geometry",
     "create_nut",
+    "create_pyramid_stump",
     "create_right_triangle",
     "create_ring",
     "create_rounded_slab",
     "create_screw_connector_normal",
     "create_screw_thread",
     "create_sheet_metal_bend",
+    "create_sheet_metal_bracket",
     "create_sheet_metal_hem",
     "create_sheet_metal_wall",
     "create_solid_from_traditional_face_vertex_maps",
@@ -195,8 +197,8 @@ __all__ = [
     "directed_cylinder_at",
     "export_solid_to_stl",
     "face_point_cloud",
-    "filter_edges_by_function",
     "fibonacci_sphere",
+    "filter_edges_by_function",
     "get_adapter_id",
     "get_bounding_box_center",
     "get_bounding_box_size",
@@ -222,6 +224,7 @@ __all__ = [
     "PartInfo",
     "PartitionableSpheroidTriangleMesh",
     "PartList",
+    "point_sequence_interpolator_in_arc_length",
     "point_string",
     "ray_triangle_intersect",
     "reset_to_original_orientation",
@@ -233,7 +236,6 @@ __all__ = [
     "translate",
     "write_shell_maps_to_stl",
     "write_stl_binary",
-    "create_pyramid_stump",
 ]
 
 

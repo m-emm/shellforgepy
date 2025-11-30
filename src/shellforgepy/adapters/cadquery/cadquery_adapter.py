@@ -882,26 +882,22 @@ def filter_edges_by_function(solid, edge_filter_func):
         List of edges that meet the criteria
     """
     edges = []
-    try:
-        # Get bounding box
-        bbox = get_bounding_box(solid)
+    # Get bounding box
+    bbox = get_bounding_box(solid)
 
-        for edge in solid.Edges():
-            vertices = edge.Vertices()
-            if len(vertices) >= 2:
-                v0 = vertices[0]
-                v1 = vertices[1]
+    for edge in solid.Edges():
+        vertices = edge.Vertices()
+        if len(vertices) >= 2:
+            v0 = vertices[0]
+            v1 = vertices[1]
 
-                # Convert vertices to tuples
-                v0_point = (v0.X, v0.Y, v0.Z)
-                v1_point = (v1.X, v1.Y, v1.Z)
+            # Convert vertices to tuples
+            v0_point = (v0.X, v0.Y, v0.Z)
+            v1_point = (v1.X, v1.Y, v1.Z)
 
-                # Call user's filter function
-                if edge_filter_func(bbox, v0_point, v1_point):
-                    edges.append(edge)
-
-    except Exception as e:
-        _logger.warning(f"Error filtering edges by function: {e}")
+            # Call user's filter function
+            if edge_filter_func(bbox, v0_point, v1_point):
+                edges.append(edge)
 
     return edges
 
@@ -920,15 +916,11 @@ def apply_fillet_to_edges(solid, fillet_radius, edges):
     if not edges:
         return solid
 
-    try:
-        # Convert to CadQuery workplane and apply fillet
-        wp = cq.Workplane().add(solid)
-        # Use the edges directly for filleting
-        result = solid.fillet(fillet_radius, edges)
-        return result
-    except Exception as e:
-        _logger.warning(f"Error applying fillet: {e}")
-        return solid
+    # # Convert to CadQuery workplane and apply fillet
+    # wp = cq.Workplane().add(solid)
+    # Use the edges directly for filleting
+    result = solid.fillet(fillet_radius, edges)
+    return result
 
 
 def apply_fillet_by_alignment(

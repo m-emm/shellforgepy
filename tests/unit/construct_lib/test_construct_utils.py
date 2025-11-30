@@ -1,6 +1,7 @@
 import math
 
 import numpy as np
+import pytest
 from shellforgepy.construct.construct_utils import (
     CylinderSpec,
     compute_area,
@@ -9,6 +10,7 @@ from shellforgepy.construct.construct_utils import (
     intersect_edge_with_cylinder,
     normalize_edge,
     point_in_polygon_2d,
+    point_sequence_interpolator_in_arc_length,
     select_uniform_cylindrical_vertices,
     split_triangle_topologically,
     triangle_edges,
@@ -562,3 +564,29 @@ def test_compute_polygon_normal_non_planar():
     assert (
         dot_product < -0.5
     ), f"Expected normals to be roughly opposite, dot product: {dot_product}"
+
+
+def test_point_seqquence_interpolator_in_arc_length():
+
+    points = [(0, 0), (1, 0), (2, 0)]
+
+    interpolator, total_length = point_sequence_interpolator_in_arc_length(points)
+
+    assert math.isclose(total_length, 2.0)
+
+    assert np.allclose(interpolator(0.0), (0, 0))
+    assert np.allclose(interpolator(2.0), (2, 0))
+    assert np.allclose(interpolator(0.5), (0.5, 0))
+
+    points = [(0, 0), (1, 1), (2, 2)]
+    interpolator, total_length = point_sequence_interpolator_in_arc_length(points)
+
+    assert math.isclose(total_length, 2 * math.sqrt(2))
+
+    assert np.allclose(interpolator(0.0), (0, 0))
+    assert np.allclose(interpolator(math.sqrt(2)), (1, 1))
+    assert np.allclose(interpolator(2 * math.sqrt(2)), (2, 2))
+    assert np.allclose(interpolator(math.sqrt(2) / 2), (0.5, 0.5))
+
+    pytest.raises(ValueError, interpolator, -1.0)
+    pytest.raises(ValueError, interpolator, 3.0 * math.sqrt(2))

@@ -10,7 +10,7 @@ from shellforgepy.geometry.spherical_tools import (
 )
 
 
-def create_snake_vertices(cross_section, base_points, normals):
+def create_snake_vertices(cross_section, base_points, normals, base_scales=None):
     """
     Create vertices for a snake geometry by transforming 2D cross-section to 3D
     at each base point using proper coordinate system transformation.
@@ -19,6 +19,8 @@ def create_snake_vertices(cross_section, base_points, normals):
         cross_section (np.ndarray): (4, 2) array of 2D trapezoid points
         base_points (np.ndarray): (N, 3) array of 3D base points
         normals (np.ndarray): (N, 3) array of normal vectors at each base point
+        base_scales (np.ndarray | list | None): Optional per-point scale factors
+            applied to the cross-section before transformation.
 
     Returns:
         list: List of vertex arrays, one per segment. Each is (8, 3) for 8 vertices.
@@ -28,6 +30,9 @@ def create_snake_vertices(cross_section, base_points, normals):
 
     if len(base_points) != len(normals):
         raise ValueError("Number of base points must match number of normals")
+
+    if base_scales is not None and len(base_scales) != len(base_points):
+        raise ValueError("Number of base scales must match number of base points")
 
     if len(base_points) < 2:
         raise ValueError("Need at least 2 base points to create segments")
@@ -61,8 +66,13 @@ def create_snake_vertices(cross_section, base_points, normals):
         )
         matrix = coordinate_system_transform_to_matrix(transform)
 
+        scale_factor = (
+            base_scales[i] if base_scales is not None else 1.0
+        )  # Per-point scale for the cross-section
+        scaled_cross_section = cross_section * scale_factor
+
         cross_section_3d = np.concatenate(
-            [cross_section, np.zeros((4, 1))], axis=1
+            [scaled_cross_section, np.zeros((4, 1))], axis=1
         )  # Add z=0
         cross_section_homo = np.concatenate(
             [cross_section_3d, np.ones((4, 1))], axis=1
@@ -167,7 +177,7 @@ def _is_degenerate_segment(start_vertices, end_vertices, tolerance=1e-10):
 
 
 def create_trapezoidal_snake_geometry(
-    cross_section, base_points, normals, close_loop=False
+    cross_section, base_points, normals, close_loop=False, base_scales=None
 ):
     """
     Create a 3D mesh of a trapezoidal snake-like structure by extruding a given cross-sectional shape
@@ -188,6 +198,9 @@ def create_trapezoidal_snake_geometry(
                           This is essential for creating closed loops like Möbius strips or circular paths.
                           Uses propagate_consistent_winding to handle potential vertex correspondence issues
                           from twisting (e.g., 180° rotation in Möbius strips).
+        base_scales (np.ndarray | list | None): Optional per-point scale factors
+            applied to the cross-section before transformation. If None, all
+            sections use scale 1.0.
 
     Returns:
         list of dicts: Each dict contains:
@@ -199,9 +212,12 @@ def create_trapezoidal_snake_geometry(
         For geometries like Möbius strips where the cross-sections may be rotated relative to each other,
         the propagate_consistent_winding function automatically handles vertex correspondence to ensure
         proper mesh topology without gaps or overlaps.
+        Any provided base_scales are respected for the closing segment as well.
     """
     # First, generate all vertices for each base point
-    all_vertex_sets = create_snake_vertices(cross_section, base_points, normals)
+    all_vertex_sets = create_snake_vertices(
+        cross_section, base_points, normals, base_scales=base_scales
+    )
 
     # Create segments by pairing consecutive vertex sets
     num_segments = len(base_points) - 1
@@ -381,16 +397,66 @@ def _build_bezier_chain_3d(points, tau=0.5):
 # ------------------------------------------------------------
 # 3. Sample poly-Bezier curve
 # ------------------------------------------------------------
-def _sample_bezier_chain_3d(segments, samples_per_segment=40):
+def _sample_bezier_chain_3d(segments, samples_per_segment=40, return_segments=False):
     pts = []
+    segment_samples = []
     for seg in segments:
         t = np.linspace(0, 1, samples_per_segment)
-        pts.append(_bez_eval_3d(seg, t))
-    return np.concatenate(pts, axis=0)
+        seg_pts = _bez_eval_3d(seg, t)
+        pts.append(seg_pts)
+        if return_segments:
+            segment_samples.append(seg_pts)
+    concatenated = np.concatenate(pts, axis=0)
+    if return_segments:
+        return concatenated, segment_samples
+    return concatenated
 
 
 # ------------------------------------------------------------
-# 4. Bishop frame normals (rotation-minimizing)
+# 4. Scale interpolation along the sampled curve
+# ------------------------------------------------------------
+def _interpolate_scales_along_segment(seg_points, start_scale, end_scale):
+    """Linearly interpolate scale along a segment using arc-length parameterization."""
+    seg_points = np.asarray(seg_points, float)
+    if len(seg_points) == 0:
+        return np.array([], dtype=float)
+    if len(seg_points) == 1:
+        return np.array([start_scale], dtype=float)
+
+    diffs = np.diff(seg_points, axis=0)
+    seg_lengths = np.linalg.norm(diffs, axis=1)
+    cumulative = np.concatenate([[0.0], np.cumsum(seg_lengths)])
+    total_length = cumulative[-1]
+
+    if total_length < 1e-12:
+        progress = np.zeros_like(cumulative)
+    else:
+        progress = cumulative / total_length
+
+    return start_scale + (end_scale - start_scale) * progress
+
+
+def _interpolate_scales_along_chain(segment_samples, control_scales):
+    """Generate per-sample scales for the full chain, matching sampled points."""
+    expected_points = len(segment_samples) + 1
+    if len(control_scales) != expected_points:
+        raise ValueError(
+            f"Expected {expected_points} control scales, got {len(control_scales)}"
+        )
+
+    per_segment_scales = []
+    for idx, seg_pts in enumerate(segment_samples):
+        start_scale = control_scales[idx]
+        end_scale = control_scales[idx + 1]
+        per_segment_scales.append(
+            _interpolate_scales_along_segment(seg_pts, start_scale, end_scale)
+        )
+
+    return np.concatenate(per_segment_scales, axis=0)
+
+
+# ------------------------------------------------------------
+# 5. Bishop frame normals (rotation-minimizing)
 # ------------------------------------------------------------
 def normalize(v):
     n = np.linalg.norm(v)
@@ -445,9 +511,6 @@ def compute_bishop_normals(base_points, initial_normal=(0, 0, 1)):
     return normals
 
 
-# ------------------------------------------------------------
-# 5. Unified interface: create_bezier_snake_geometry
-# ------------------------------------------------------------
 def create_bezier_snake_geometry(
     points,
     cross_section,
@@ -457,13 +520,80 @@ def create_bezier_snake_geometry(
     close_loop=False,
 ):
     """
-    points = [{"p": (x,y,z), "in":..., "out":...}, ...]
-    cross_section = 4x2 array
+    Generate a trapezoidal "snake" mesh that follows a poly-Bezier path.
+
+    Builds an Illustrator-style cubic Bezier chain from the provided control
+    points, samples it into base points, computes rotation-minimizing (Bishop)
+    normals, and feeds everything into `create_trapezoidal_snake_geometry` to
+    produce a list of mesh segments.
+
+    Args:
+        points (list[dict]): Control points in order along the path, each with a
+            required `p` (x, y, z) coordinate and optional `in`/`out` handle
+            vectors. `in` and `out` are world-space offsets from `p` (not
+            absolute positions) that set the incoming and outgoing tangents for
+            cubic Beziers; set them to (0, 0, 0) for a sharp corner. Missing
+            handles are auto-generated using Catmull-Rom tangents scaled by
+            `tau`. An optional `scale` factor (default 1.0) scales the
+            cross-section at that control point; scales are interpolated in arc
+            length between points.
+        cross_section (np.ndarray): (4, 2) trapezoid in the local XY plane that
+            will be swept along the Bezier chain.
+        samples_per_segment (int): Number of samples per Bezier segment used to
+            build the path that the cross-section is extruded along.
+        tau (float): Tension factor for the auto-generated Bezier handles.
+            Higher values produce tighter curves.
+        initial_normal (tuple): Starting normal for the Bishop frame that keeps
+            the cross-section's orientation stable along the path. Use a vector
+            that is not collinear with the first segment direction.
+        close_loop (bool): When True, connects the final sampled cross-section
+            back to the first one and fixes winding so the mesh closes cleanly.
+
+    Returns:
+        list[dict]: Mesh segment dictionaries exactly as returned by
+            `create_trapezoidal_snake_geometry`, ready for conversion into solids.
+
+    Examples:
+        # Simple smooth chain (handles auto-generated)
+        cross = np.array([[-2, 0], [2, 0], [1.5, 1.5], [-1.5, 1.5]], dtype=float)
+        pts = [{"p": (0, 0, 0)}, {"p": (20, 0, 10)}, {"p": (40, 10, 0)}]
+        meshes = create_bezier_snake_geometry(pts, cross_section=cross, samples_per_segment=30)
+
+        # Force a vertical lift before turning right: start tangent points straight up
+        pts = [
+            {"p": (0, 0, 0), "out": (0, 0, 20)},          # exit upward 20 units
+            {"p": (40, 0, 20)},                           # first bend anchor
+            {"p": (80, 40, 20)},                          # continues right
+        ]
+        meshes = create_bezier_snake_geometry(pts, cross_section=cross)
+
+        # Land horizontally at the end even when coming from above:
+        pts = [
+            {"p": (0, 0, 0)},
+            {"p": (40, 0, 40)},                           # high approach
+            {"p": (80, 0, 0), "in": (-20, 0, 0)},         # arrive with flat (XY) tangent
+        ]
+        meshes = create_bezier_snake_geometry(pts, cross_section=cross)
+
+        # Scale cross-section along the path (1x -> 2x):
+        pts = [
+            {"p": (0, 0, 0), "scale": 1.0},
+            {"p": (60, 0, 0), "scale": 2.0},
+        ]
+        meshes = create_bezier_snake_geometry(
+            pts, cross_section=cross, samples_per_segment=20
+        )
     """
 
     # Build & sample curve
     segments = _build_bezier_chain_3d(points, tau=tau)
-    base_pts = _sample_bezier_chain_3d(segments, samples_per_segment)
+    control_scales = np.array([p.get("scale", 1.0) for p in points], dtype=float)
+    base_pts, segment_samples = _sample_bezier_chain_3d(
+        segments, samples_per_segment, return_segments=True
+    )
+    base_scales = _interpolate_scales_along_chain(
+        segment_samples, control_scales=control_scales
+    )
 
     # Compute normals
     normals = compute_bishop_normals(base_pts, initial_normal=initial_normal)
@@ -474,4 +604,5 @@ def create_bezier_snake_geometry(
         base_points=base_pts,
         normals=normals,
         close_loop=close_loop,
+        base_scales=base_scales,
     )

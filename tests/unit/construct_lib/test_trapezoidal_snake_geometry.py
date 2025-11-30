@@ -6,6 +6,7 @@ import pytest
 from shellforgepy.construct.construct_utils import normalize
 from shellforgepy.geometry.mesh_utils import write_stl_binary
 from shellforgepy.geometry.treapezoidal_snake_geometry import (
+    _interpolate_scales_along_segment,
     compute_bishop_normals,
     create_bezier_snake_geometry,
     create_local_coordinate_system,
@@ -1442,6 +1443,52 @@ def test_bezier_explicit_handles():
             assert (
                 distance < tolerance
             ), f"Segment connectivity broken at interface {i}-{i+1}"
+
+
+def test_bezier_scale_applies_to_geometry():
+    """Cross-section should scale between points using per-control-point scale factors."""
+    cross_section = np.array(
+        [
+            [-1.0, -1.0],
+            [1.0, -1.0],
+            [1.0, 1.0],
+            [-1.0, 1.0],
+        ]
+    )
+
+    points = [
+        {"p": (0.0, 0.0, 0.0), "scale": 1.0},
+        {"p": (10.0, 0.0, 0.0), "scale": 2.0},
+    ]
+
+    meshes = create_bezier_snake_geometry(
+        points=points, cross_section=cross_section, samples_per_segment=2
+    )
+
+    assert len(meshes) == 1
+    mesh = meshes[0]
+
+    start_vertices = np.array([mesh["vertexes"][i] for i in range(4)])
+    end_vertices = np.array([mesh["vertexes"][i + 4] for i in range(4)])
+
+    # Edge lengths scale by the requested factor (2x)
+    start_edge = np.linalg.norm(start_vertices[1] - start_vertices[0])
+    end_edge = np.linalg.norm(end_vertices[1] - end_vertices[0])
+    assert end_edge == pytest.approx(start_edge * 2.0, rel=1e-6)
+
+    start_height = np.linalg.norm(start_vertices[3] - start_vertices[0])
+    end_height = np.linalg.norm(end_vertices[3] - end_vertices[0])
+    assert end_height == pytest.approx(start_height * 2.0, rel=1e-6)
+
+
+def test_bezier_scale_interpolates_in_arc_length():
+    """Scale interpolation should be arc-length-based along each segment."""
+    seg_points = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 3.0]])
+    scales = _interpolate_scales_along_segment(seg_points, 1.0, 3.0)
+
+    # Distances: 1, then 2 -> cumulative 0, 1, 3 => progress 0, 1/3, 1
+    expected = np.array([1.0, 1.0 + (3.0 - 1.0) / 3.0, 3.0])
+    np.testing.assert_allclose(scales, expected, rtol=1e-12, atol=1e-12)
 
 
 def test_bezier_tau_parameter():
