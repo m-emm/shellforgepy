@@ -6,6 +6,7 @@ import numpy as np
 from shellforgepy.adapters._adapter import (
     copy_part,
     create_box,
+    create_cone,
     create_cylinder,
     create_extruded_polygon,
     create_solid_from_traditional_face_vertex_maps,
@@ -56,6 +57,30 @@ def create_trapezoid(
     p3 = (top_length / 2 + top_shift, height)
     p4 = (-top_length / 2 + top_shift, height)
     points = [p1, p2, p3, p4]
+    return create_extruded_polygon(points, thickness=thickness)
+
+
+def create_isoceles_triangle(side_length, tip_angle, thickness):
+    """Create an isoceles triangular prism extruded along +Z.
+
+    The base is centered on the X axis at Y=0, and the tip lies on the positive
+    Y axis at X=0.
+    """
+    if side_length <= 0 or thickness <= 0:
+        raise ValueError("side_length and thickness must be positive")
+    if tip_angle <= 0 or tip_angle >= 180:
+        raise ValueError("tip_angle must be between 0 and 180 degrees")
+
+    half_angle_rad = math.radians(tip_angle / 2.0)
+    base_length = 2.0 * side_length * math.sin(half_angle_rad)
+    height = side_length * math.cos(half_angle_rad)
+
+    points = [
+        (-base_length / 2.0, 0.0),
+        (base_length / 2.0, 0.0),
+        (0.0, height),
+    ]
+
     return create_extruded_polygon(points, thickness=thickness)
 
 
@@ -244,6 +269,54 @@ def directed_cylinder_at(
         # If the direction is already aligned with Z, just translate
         cylinder = translate(base_point[0], base_point[1], base_point[2])(cylinder)
         return cylinder
+
+
+def directed_cone_at(
+    base_point,
+    direction,
+    radius1,
+    radius2,
+    height,
+):
+    """Create a cone oriented along ``direction`` starting at ``base_point``."""
+
+    cone = create_cone(radius1=radius1, radius2=radius2, height=height)
+
+    direction = np.array(direction, dtype=np.float64)
+    if np.linalg.norm(direction) < 1e-8:
+        raise ValueError("Direction vector cannot be zero")
+    direction /= np.linalg.norm(direction)
+
+    if not np.allclose(direction, [0, 0, 1]):
+
+        out_1 = np.array([0, 0, 1], dtype=np.float64)
+        if np.allclose(direction, out_1):
+            out_1 = np.array([1, 0, 0], dtype=np.float64)
+
+        if np.abs(np.dot(direction, out_1)) > 0.99:
+            out_1 = np.array([1, 0, 0], dtype=np.float64)
+
+        transformation = coordinate_system_transform(
+            (0, 0, 0), (0, 0, 1), (1, 0, 0), base_point, direction, out_1
+        )
+
+        rotation = rotate(
+            np.degrees(transformation["rotation_angle"]),
+            axis=transformation["rotation_axis"],
+        )
+        the_translation = translate(
+            transformation["translation"][0],
+            transformation["translation"][1],
+            transformation["translation"][2],
+        )
+
+        cone = rotation(cone)
+        cone = the_translation(cone)
+
+        return cone
+    else:
+        cone = translate(base_point[0], base_point[1], base_point[2])(cone)
+        return cone
 
 
 def directed_box_at(

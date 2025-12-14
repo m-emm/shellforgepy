@@ -277,10 +277,30 @@ class LeaderFollowersCuttersPart:
         Raises:
             ValueError: If the name already exists
         """
+        if not isinstance(name, str):
+            raise TypeError("Non-production part name must be a string.")
         if name in self.non_production_indices_by_name:
             raise ValueError(f"Non-production part name '{name}' already exists.")
         self.non_production_parts.append(part)
         self.non_production_indices_by_name[name] = len(self.non_production_parts) - 1
+
+    def add_named_follower(self, follower, name):
+        """Add a follower part with a specified name.
+
+        Args:
+            follower: The follower part to add
+            name: The name to associate with the follower
+
+        Raises:
+            ValueError: If the name already exists
+        """
+        if not isinstance(name, str):
+            raise TypeError("Follower name must be a string.")
+        if name in self.follower_indices_by_name:
+            raise ValueError(f"Follower name '{name}' already exists.")
+
+        self.followers.append(follower)
+        self.follower_indices_by_name[name] = len(self.followers) - 1
 
     def get_non_production_parts_fused(self):
         """Get all non-production parts fused into a single shape.
@@ -308,6 +328,146 @@ class LeaderFollowersCuttersPart:
         ]:
             collector.fuse(part)
         return collector.part if collector.part is not None else collector
+
+    def merge_except_leader(self, other):
+        """
+        Merge in followers, cutter, and non-production parts from another composite, but not the leader.
+        Keep the names and additional data from the other composite.
+        """
+
+        retval = LeaderFollowersCuttersPart(self.leader)
+        # first add the named parts from self
+        follower_indices_with_name = set()
+        for name, idx in self.follower_indices_by_name.items():
+            retval.add_named_follower(self.followers[idx], name)
+            follower_indices_with_name.add(idx)
+
+        # now add the unnamed followers from self
+        for idx, follower in enumerate(self.followers):
+            if idx not in follower_indices_with_name:
+                retval.followers.append(_clone_part(follower))
+
+        cutter_indices_with_name = set()
+        for name, idx in self.cutter_indices_by_name.items():
+            retval.add_named_cutter(self.cutters[idx], name)
+            cutter_indices_with_name.add(idx)
+        # now add the unnamed cutters from self
+        for idx, cutter in enumerate(self.cutters):
+            if idx not in cutter_indices_with_name:
+                retval.cutters.append(_clone_part(cutter))
+
+        non_production_indices_with_name = set()
+        for name, idx in self.non_production_indices_by_name.items():
+            retval.add_named_non_production_part(self.non_production_parts[idx], name)
+            non_production_indices_with_name.add(idx)
+        # now add the unnamed non-production parts from self
+        for idx, non_production_part in enumerate(self.non_production_parts):
+            if idx not in non_production_indices_with_name:
+                retval.non_production_parts.append(_clone_part(non_production_part))
+
+        # now add the named parts from other
+        other_follower_indices_with_name = set()
+        for name, idx in other.follower_indices_by_name.items():
+            retval.add_named_follower(other.followers[idx], name)
+            other_follower_indices_with_name.add(idx)
+
+        # now add the unnamed followers from other
+        for idx, follower in enumerate(other.followers):
+            if idx not in other_follower_indices_with_name:
+                retval.followers.append(_clone_part(follower))
+
+        other_cutter_indices_with_name = set()
+        for name, idx in other.cutter_indices_by_name.items():
+            retval.add_named_cutter(other.cutters[idx], name)
+            other_cutter_indices_with_name.add(idx)
+        # now add the unnamed cutters from other
+        for idx, cutter in enumerate(other.cutters):
+            if idx not in other_cutter_indices_with_name:
+                retval.cutters.append(_clone_part(cutter))
+        other_non_production_indices_with_name = set()
+        for name, idx in other.non_production_indices_by_name.items():
+            retval.add_named_non_production_part(other.non_production_parts[idx], name)
+            other_non_production_indices_with_name.add(idx)
+        # now add the unnamed non-production parts from other
+        for idx, non_production_part in enumerate(other.non_production_parts):
+            if idx not in other_non_production_indices_with_name:
+                retval.non_production_parts.append(_clone_part(non_production_part))
+
+        return retval
+
+    def add_named_cutter(self, cutter, name):
+        """Add a cutter part with a specified name.
+
+        Args:
+            cutter: The cutter part to add
+            name: The name to associate with the cutter
+
+        Raises:
+            ValueError: If the name already exists
+        """
+        if not isinstance(name, str):
+            raise TypeError("Cutter name must be a string.")
+        if name in self.cutter_indices_by_name:
+            raise ValueError(f"Cutter name '{name}' already exists.")
+        self.cutters.append(cutter)
+        self.cutter_indices_by_name[name] = len(self.cutters) - 1
+
+    def rename_follower(self, old_name, new_name):
+        """Rename a follower part.
+
+        Args:
+            old_name: Current name of the follower
+            new_name: New name to assign to the follower
+
+        Raises:
+            KeyError: If old_name does not exist
+            ValueError: If new_name already exists
+        """
+        if old_name not in self.follower_indices_by_name:
+            raise KeyError(f"Follower name '{old_name}' does not exist.")
+        if new_name in self.follower_indices_by_name:
+            raise ValueError(f"Follower name '{new_name}' already exists.")
+
+        index = self.follower_indices_by_name.pop(old_name)
+        self.follower_indices_by_name[new_name] = index
+
+    def rename_cutter(self, old_name, new_name):
+        """Rename a cutter part.
+
+        Args:
+            old_name: Current name of the cutter
+            new_name: New name to assign to the cutter
+
+        Raises:
+            KeyError: If old_name does not exist
+            ValueError: If new_name already exists
+        """
+        if old_name not in self.cutter_indices_by_name:
+            raise KeyError(f"Cutter name '{old_name}' does not exist.")
+        if new_name in self.cutter_indices_by_name:
+            raise ValueError(f"Cutter name '{new_name}' already exists.")
+
+        index = self.cutter_indices_by_name.pop(old_name)
+        self.cutter_indices_by_name[new_name] = index
+
+    def rename_non_production_part(self, old_name, new_name):
+        """Rename a non-production part.
+
+        Args:
+            old_name: Current name of the non-production part
+            new_name: New name to assign to the non-production part
+
+        Raises:
+            KeyError: If old_name does not exist
+            ValueError: If new_name already exists
+        """
+        if old_name not in self.non_production_indices_by_name:
+            raise KeyError(f"Non-production part name '{old_name}' does not exist.")
+        if new_name in self.non_production_indices_by_name:
+            raise ValueError(f"Non-production part name '{new_name}' already exists.")
+
+        index = self.non_production_indices_by_name.pop(old_name)
+        self.non_production_indices_by_name[new_name] = index
 
     def copy(self):
         """Create a deep copy of this composite part.

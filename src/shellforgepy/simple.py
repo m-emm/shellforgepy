@@ -88,6 +88,7 @@ from .geometry.face_point_cloud import face_point_cloud
 from .geometry.higher_order_solids import (
     create_distorted_cube,
     create_hex_prism,
+    create_isoceles_triangle,
     create_pyramid_stump,
     create_right_triangle,
     create_ring,
@@ -97,6 +98,7 @@ from .geometry.higher_order_solids import (
     create_triangular_prism,
     create_triangular_prism_geometry,
     directed_box_at,
+    directed_cone_at,
     directed_cylinder_at,
 )
 from .geometry.modifications import (
@@ -174,6 +176,7 @@ __all__ = [
     "create_filleted_box",
     "create_hex_prism",
     "create_icosahedron_geometry",
+    "create_isoceles_triangle",
     "create_nut",
     "create_pyramid_stump",
     "create_right_triangle",
@@ -195,6 +198,7 @@ __all__ = [
     "create_triangular_prism",
     "directed_box_at",
     "directed_cylinder_at",
+    "directed_cone_at",
     "export_solid_to_stl",
     "face_point_cloud",
     "fibonacci_sphere",

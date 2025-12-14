@@ -1,15 +1,19 @@
+import math
+
 import numpy as np
 import pytest
 from shellforgepy.adapters._adapter import get_volume
 from shellforgepy.geometry.higher_order_solids import (
     create_distorted_cube,
     create_hex_prism,
+    create_isoceles_triangle,
     create_pyramid_stump,
     create_right_triangle,
     create_ring,
     create_rounded_slab,
     create_screw_thread,
     directed_box_at,
+    directed_cone_at,
     directed_cylinder_at,
     materialize_bounding_box,
 )
@@ -20,6 +24,38 @@ def test_create_hex_prism():
     prism = create_hex_prism(diameter=10, thickness=5, origin=(0, 0, 0))
     assert prism is not None
     # Further assertions can be added based on the expected properties of the prism
+
+
+def test_create_isoceles_triangle_geometry_and_volume():
+    side_length = 10.0
+    tip_angle = 60.0
+    thickness = 4.0
+
+    triangle = create_isoceles_triangle(side_length, tip_angle, thickness)
+    base_length = 2 * side_length * math.sin(math.radians(tip_angle / 2.0))
+    height = side_length * math.cos(math.radians(tip_angle / 2.0))
+
+    bb_min, bb_max = get_bounding_box(triangle)
+    assert np.isclose(bb_min[0], -base_length / 2.0, atol=1e-6)
+    assert np.isclose(bb_max[0], base_length / 2.0, atol=1e-6)
+    assert np.isclose(bb_min[1], 0.0, atol=1e-6)
+    assert np.isclose(bb_max[1], height, atol=1e-6)
+    assert np.isclose(bb_min[2], 0.0, atol=1e-6)
+    assert np.isclose(bb_max[2], thickness, atol=1e-6)
+
+    expected_volume = 0.5 * base_length * height * thickness
+    assert np.isclose(get_volume(triangle), expected_volume, rtol=1e-6)
+
+
+def test_create_isoceles_triangle_invalid_inputs():
+    with pytest.raises(ValueError):
+        create_isoceles_triangle(0, 30, 1)
+    with pytest.raises(ValueError):
+        create_isoceles_triangle(5, 0, 1)
+    with pytest.raises(ValueError):
+        create_isoceles_triangle(5, 200, 1)
+    with pytest.raises(ValueError):
+        create_isoceles_triangle(5, 30, -1)
 
 
 def test_create_right_triangle_default_orientation():
@@ -237,6 +273,66 @@ def test_directed_cylinder():
     )
     expected_volume = np.pi * 3**2 * 8
     assert np.allclose(get_volume(cyl_diag), expected_volume, rtol=1e-5)
+
+
+def test_directed_cone_at():
+    """Test directed cone creation."""
+
+    base_radius = 5
+    top_radius = 2
+    height = 10
+    expected_volume = (
+        math.pi
+        * height
+        * (base_radius**2 + base_radius * top_radius + top_radius**2)
+        / 3
+    )
+
+    cone_z = directed_cone_at(
+        base_point=(0, 0, 0),
+        direction=(0, 0, 1),
+        radius1=base_radius,
+        radius2=top_radius,
+        height=height,
+    )
+    assert np.allclose(get_volume(cone_z), expected_volume, rtol=1e-5)
+    bb_z = get_bounding_box(cone_z)
+    assert np.isclose(bb_z[0][2], 0, atol=1e-6)
+    assert np.isclose(bb_z[1][2], height, atol=1e-6)
+
+    cone_x = directed_cone_at(
+        base_point=(0, 0, 0),
+        direction=(1, 0, 0),
+        radius1=base_radius,
+        radius2=top_radius,
+        height=height,
+    )
+    assert np.allclose(get_volume(cone_x), expected_volume, rtol=1e-5)
+    bb_x = get_bounding_box(cone_x)
+    assert np.isclose(bb_x[0][0], 0, atol=1e-6)
+    assert np.isclose(bb_x[1][0], height, atol=1e-6)
+
+    direction = (1, 1, 1)
+    cone_diag = directed_cone_at(
+        base_point=(2, 3, 4),
+        direction=direction,
+        radius1=3,
+        radius2=0,
+        height=9,
+    )
+    expected_volume_diag = math.pi * 9 * (3**2) / 3
+    assert np.allclose(get_volume(cone_diag), expected_volume_diag, rtol=1e-5)
+
+
+def test_directed_cone_at_errors():
+    with pytest.raises(ValueError, match="Direction vector cannot be zero"):
+        directed_cone_at(
+            base_point=(0, 0, 0),
+            direction=(0, 0, 0),
+            radius1=1,
+            radius2=0,
+            height=5,
+        )
 
 
 def test_create_ring():

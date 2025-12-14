@@ -99,6 +99,70 @@ def test_leader_followers_fuse_and_non_production():
     assert combined.leader is not None
 
 
+def test_merge_except_leader_merges_all_except_primary():
+    base_leader = create_box(1, 1, 1)
+    follower_named = NamedPart(
+        "self_follower",
+        translate(2, 0, 0)(create_box(0.5, 0.5, 0.5)),
+    )
+    follower_unnamed = translate(3, 0, 0)(create_box(0.4, 0.4, 0.4))
+    cutter_named = NamedPart("self_cutter", create_box(0.2, 0.2, 0.2))
+    cutter_unnamed = create_box(0.1, 0.1, 0.1)
+    aux_named = NamedPart("self_aux", create_box(0.05, 0.05, 0.05))
+    aux_unnamed = create_box(0.06, 0.06, 0.06)
+
+    main_group = LeaderFollowersCuttersPart(
+        base_leader,
+        followers=[follower_unnamed],
+        cutters=[cutter_unnamed],
+        non_production_parts=[aux_unnamed],
+    )
+    main_group.add_named_follower(follower_named, "self_follower_named")
+    main_group.add_named_cutter(cutter_named, "self_cutter_named")
+    main_group.add_named_non_production_part(aux_named, "self_aux_named")
+
+    other_leader = translate(10, 0, 0)(create_box(1, 1, 1))
+    other_follower_unnamed = translate(13, 0, 0)(create_box(0.25, 0.25, 0.25))
+    other_follower_named = translate(12, 0, 0)(create_box(0.3, 0.3, 0.3))
+    other_cutter_unnamed = translate(10, 0, 0)(create_box(0.12, 0.12, 0.12))
+    other_cutter_named = translate(10, 0, 0)(create_box(0.15, 0.15, 0.15))
+    other_aux_unnamed = translate(10, 0, 0)(create_box(0.08, 0.08, 0.08))
+    other_aux_named = translate(10, 0, 0)(create_box(0.07, 0.07, 0.07))
+
+    other_group = LeaderFollowersCuttersPart(
+        other_leader,
+        followers=[other_follower_unnamed],
+        cutters=[other_cutter_unnamed],
+        non_production_parts=[other_aux_unnamed],
+    )
+    other_group.add_named_follower(other_follower_named, "other_follower_named")
+    other_group.add_named_cutter(other_cutter_named, "other_cutter_named")
+    other_group.add_named_non_production_part(other_aux_named, "other_aux_named")
+
+    merged = main_group.merge_except_leader(other_group)
+
+    # Leader should remain the original one and unchanged
+    assert merged.leader is base_leader
+    assert get_volume(merged.leader) == pytest.approx(get_volume(base_leader))
+
+    # All parts except leaders should be merged, keeping names from both groups
+    assert len(merged.followers) == 4
+    assert len(merged.cutters) == 4
+    assert len(merged.non_production_parts) == 4
+
+    assert merged.get_follower_index_by_name("self_follower_named") == 0
+    assert merged.get_follower_index_by_name("other_follower_named") == 2
+    assert merged.get_cutter_index_by_name("self_cutter_named") == 0
+    assert merged.get_cutter_index_by_name("other_cutter_named") == 2
+    assert merged.get_non_production_index_by_name("self_aux_named") == 0
+    assert merged.get_non_production_index_by_name("other_aux_named") == 2
+
+    # Unnamed parts should be cloned rather than reusing the original objects
+    assert merged.followers[1] is not follower_unnamed
+    assert merged.cutters[1] is not cutter_unnamed
+    assert merged.non_production_parts[1] is not aux_unnamed
+
+
 def test_leader_followers_cut_with_group_merges_metadata():
     leader = create_box(2, 2, 2)
     follower_a = NamedPart(
@@ -905,6 +969,25 @@ def test_cutter_names_basic_functionality():
 
     # Check that cutter_indices_by_name is properly populated
     assert group.cutter_indices_by_name == {"drill": 0, "slot": 1}
+
+
+def test_add_named_cutter_validates_and_tracks_index():
+    leader = create_box(1, 1, 1)
+    cutter_primary = create_box(0.2, 0.2, 0.2)
+    cutter_duplicate = create_box(0.3, 0.3, 0.3)
+
+    group = LeaderFollowersCuttersPart(leader)
+    group.add_named_cutter(cutter_primary, "pilot_hole")
+
+    assert group.cutters[0] is cutter_primary
+    assert group.get_cutter_index_by_name("pilot_hole") == 0
+    assert group.cutter_indices_by_name == {"pilot_hole": 0}
+
+    with pytest.raises(ValueError):
+        group.add_named_cutter(cutter_duplicate, "pilot_hole")
+
+    with pytest.raises(TypeError):
+        group.add_named_cutter(create_box(0.1, 0.1, 0.1), 123)
 
 
 def test_non_production_names_basic_functionality():

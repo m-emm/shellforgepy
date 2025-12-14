@@ -9,6 +9,7 @@ from .higher_order_solids import (
     create_ring,
     create_screw_thread,
     create_trapezoid,
+    directed_cone_at,
     directed_cylinder_at,
 )
 from .m_screws import (
@@ -30,6 +31,7 @@ __all__ = [
     "create_ring",
     "create_screw_thread",
     "create_trapezoid",
+    "directed_cone_at",
     "directed_cylinder_at",
     # M-screws
     "create_bolt_thread",
