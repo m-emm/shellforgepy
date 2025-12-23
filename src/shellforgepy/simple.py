@@ -92,6 +92,7 @@ from .geometry.higher_order_solids import (
     create_pyramid_stump,
     create_right_triangle,
     create_ring,
+    create_ring_segment_between_points,
     create_rounded_slab,
     create_screw_thread,
     create_trapezoid,
@@ -240,6 +241,7 @@ __all__ = [
     "translate",
     "write_shell_maps_to_stl",
     "write_stl_binary",
+    "create_ring_segment_between_points",
 ]
 
 

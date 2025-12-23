@@ -16,7 +16,10 @@ from shellforgepy.construct.alignment_operations import mirror, rotate, translat
 from shellforgepy.construct.construct_utils import normalize
 from shellforgepy.geometry.mesh_builders import create_cube_geometry
 from shellforgepy.geometry.mesh_utils import convert_to_traditional_face_vertex_maps
-from shellforgepy.geometry.spherical_tools import coordinate_system_transform
+from shellforgepy.geometry.spherical_tools import (
+    coordinate_system_transform,
+    coordinate_system_transformation_function,
+)
 from shellforgepy.geometry.treapezoidal_snake_geometry import (
     create_trapezoidal_snake_geometry,
 )
@@ -441,7 +444,7 @@ def create_ring(
         angle: Optional angle in degrees for partial ring
 
     Returns:
-        CadQuery solid representing the ring
+        solid representing the ring
     """
     if outer_radius <= inner_radius:
         raise ValueError("Outer radius must be greater than inner radius")
@@ -454,6 +457,68 @@ def create_ring(
 
     # Cut inner from outer to create ring
     return outer_cyl.cut(inner_cyl)
+
+
+def create_ring_segment_between_points(
+    p1, p2, third_point_on_plane, inner_radius, outer_radius, height
+):
+    """Create a ring segment between two points, where the ring plane is defined by the normal.
+
+    Args:
+        p1: First point on the ring segment (3-tuple)
+        p2: Second point on the ring segment (3-tuple)
+        third_point_on_plane: A third point on the desired ring plane
+        inner_radius: Inner radius of the ring segment
+        outer_radius: Outer radius of the ring segment
+        height: Height of the ring segment
+    Returns:
+        Solid representing the ring segment
+    """
+
+    p1 = np.array(p1, dtype=np.float64)
+    p2 = np.array(p2, dtype=np.float64)
+    third_point_on_plane = np.array(third_point_on_plane, dtype=np.float64)
+    plane_normal = np.cross(p2 - p1, third_point_on_plane - p1)
+
+    plane_normal = normalize(plane_normal)
+
+    edge_direction = normalize(p2 - p1)
+    edge_centroid = (p1 + p2) / 2.0
+
+    radius_ray_direction = normalize(np.cross(plane_normal, edge_direction))
+
+    edge_length = np.linalg.norm(p2 - p1)
+    middle_radius = (inner_radius + outer_radius) / 2.0
+
+    distance_to_center = math.sqrt(middle_radius**2 - (edge_length / 2.0) ** 2)
+    center_point = edge_centroid + radius_ray_direction * (distance_to_center)
+
+    angle = math.degrees(
+        math.acos(np.dot(normalize(p1 - center_point), normalize(p2 - center_point)))
+    )
+
+    ring_segment = create_ring(
+        outer_radius=outer_radius,
+        inner_radius=inner_radius,
+        height=height,
+        angle=angle,
+    )
+    ring_segment = translate(0, 0, -height / 2)(ring_segment)
+
+    cstf = coordinate_system_transformation_function(
+        origin_a=(0, 0, 0),
+        up_a=(0, 0, 1),
+        out_a=(1, 0, 0),
+        origin_b=center_point,
+        up_b=plane_normal,
+        out_b=p1 - center_point,
+        degree_rotation_function_generator=rotate,
+        translation_function_generator=translate,
+    )
+
+    ring_segment = cstf(ring_segment)
+
+    return ring_segment
 
 
 def create_screw_thread(
