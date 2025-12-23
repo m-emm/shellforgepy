@@ -478,17 +478,25 @@ def create_ring_segment_between_points(
     p1 = np.array(p1, dtype=np.float64)
     p2 = np.array(p2, dtype=np.float64)
     third_point_on_plane = np.array(third_point_on_plane, dtype=np.float64)
-    plane_normal = np.cross(p2 - p1, third_point_on_plane - p1)
+    edge = p2 - p1
+    edge_length = np.linalg.norm(edge)
+    if edge_length <= 0:
+        raise ValueError("p1 and p2 must be distinct points")
+
+    plane_normal = np.cross(edge, third_point_on_plane - p1)
+    if np.linalg.norm(plane_normal) <= 1e-8:
+        raise ValueError("p1, p2, and third_point_on_plane must not be colinear")
 
     plane_normal = normalize(plane_normal)
 
-    edge_direction = normalize(p2 - p1)
+    edge_direction = normalize(edge)
     edge_centroid = (p1 + p2) / 2.0
 
     radius_ray_direction = normalize(np.cross(plane_normal, edge_direction))
 
-    edge_length = np.linalg.norm(p2 - p1)
     middle_radius = (inner_radius + outer_radius) / 2.0
+    if middle_radius < edge_length / 2.0:
+        raise ValueError("Points are too far apart for the provided radii")
 
     distance_to_center = math.sqrt(middle_radius**2 - (edge_length / 2.0) ** 2)
     center_point = edge_centroid + radius_ray_direction * (distance_to_center)
@@ -842,3 +850,20 @@ def create_pyramid_stump(bottom_width, top_width, bottom_depth, top_depth, heigh
         convert_to_traditional_face_vertex_maps(np.asarray(new_vertices), faces)
     )
     return solid
+
+
+def create_conical_ring(inner_radius, thickness, height, angle_deg):
+    angle_inset = math.tan(math.radians(angle_deg)) * height
+
+    outer_cone = create_cone(
+        inner_radius + thickness,
+        inner_radius + thickness - angle_inset,
+        height,
+    )
+    inner_cone = create_cone(
+        inner_radius,
+        inner_radius - angle_inset,
+        height + 2,
+    )
+    ring = outer_cone.cut(inner_cone)
+    return ring

@@ -86,6 +86,7 @@ from .construct.named_part import NamedPart
 from .construct.part_collector import PartCollector
 from .geometry.face_point_cloud import face_point_cloud
 from .geometry.higher_order_solids import (
+    create_conical_ring,
     create_distorted_cube,
     create_hex_prism,
     create_isoceles_triangle,
@@ -242,6 +243,7 @@ __all__ = [
     "write_shell_maps_to_stl",
     "write_stl_binary",
     "create_ring_segment_between_points",
+    "create_conical_ring",
 ]
 
 

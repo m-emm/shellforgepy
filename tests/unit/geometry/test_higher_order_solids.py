@@ -3,6 +3,7 @@ import math
 import numpy as np
 import pytest
 from shellforgepy.adapters._adapter import get_volume
+from shellforgepy.construct.construct_utils import normalize
 from shellforgepy.geometry.higher_order_solids import (
     create_distorted_cube,
     create_hex_prism,
@@ -10,6 +11,7 @@ from shellforgepy.geometry.higher_order_solids import (
     create_pyramid_stump,
     create_right_triangle,
     create_ring,
+    create_ring_segment_between_points,
     create_rounded_slab,
     create_screw_thread,
     directed_box_at,
@@ -18,6 +20,41 @@ from shellforgepy.geometry.higher_order_solids import (
     materialize_bounding_box,
 )
 from shellforgepy.simple import create_box, get_bounding_box, get_vertex_coordinates
+
+
+def _min_angle_delta(angles, target):
+    if len(angles) == 0:
+        return float("inf")
+    deltas = (angles - target + 180.0) % 360.0 - 180.0
+    return float(np.min(np.abs(deltas)))
+
+
+def _vertex_angles_radii_heights(vertices, center, plane_normal, start_direction):
+    center = np.asarray(center, dtype=float)
+    normal = normalize(plane_normal)
+    x_axis = normalize(start_direction)
+    y_axis = normalize(np.cross(normal, x_axis))
+
+    angles = []
+    radii = []
+    heights = []
+
+    for vertex in vertices:
+        vec = np.asarray(vertex, dtype=float) - center
+        heights.append(np.dot(vec, normal))
+        vec_proj = vec - np.dot(vec, normal) * normal
+        radius = np.linalg.norm(vec_proj)
+        if radius <= 1e-8:
+            continue
+        radii.append(radius)
+        angle = math.degrees(
+            math.atan2(np.dot(vec_proj, y_axis), np.dot(vec_proj, x_axis))
+        )
+        if angle < 0:
+            angle += 360.0
+        angles.append(angle)
+
+    return np.array(angles), np.array(radii), np.array(heights)
 
 
 def test_create_hex_prism():
@@ -366,6 +403,106 @@ def test_create_ring():
         assert False, "Should have raised ValueError"
     except ValueError:
         pass
+
+
+def test_create_ring_segment_between_points_xy_plane_alignment():
+    inner_radius = 5.0
+    outer_radius = 7.0
+    height = 4.0
+    middle_radius = (inner_radius + outer_radius) / 2.0
+
+    p1 = (middle_radius, 0.0, 0.0)
+    p2 = (0.0, middle_radius, 0.0)
+    third_point_on_plane = (0.0, 0.0, 0.0)
+
+    ring_segment = create_ring_segment_between_points(
+        p1, p2, third_point_on_plane, inner_radius, outer_radius, height
+    )
+
+    vertices = get_vertex_coordinates(ring_segment)
+    angles, radii, heights = _vertex_angles_radii_heights(
+        vertices,
+        center=(0.0, 0.0, 0.0),
+        plane_normal=(0.0, 0.0, 1.0),
+        start_direction=np.array(p1),
+    )
+
+    expected_angle = 90.0
+    assert _min_angle_delta(angles, 0.0) < 0.5
+    assert _min_angle_delta(angles, expected_angle) < 0.5
+
+    assert np.min(np.abs(radii - inner_radius)) < 1e-5
+    assert np.min(np.abs(radii - outer_radius)) < 1e-5
+
+    assert np.min(np.abs(heights - height / 2.0)) < 1e-6
+    assert np.min(np.abs(heights + height / 2.0)) < 1e-6
+
+
+def test_create_ring_segment_between_points_tilted_plane_alignment():
+    inner_radius = 6.0
+    outer_radius = 8.0
+    height = 3.0
+    middle_radius = (inner_radius + outer_radius) / 2.0
+    theta_deg = 60.0
+
+    center = np.array((10.0, -5.0, 3.0))
+    plane_normal = normalize((1.0, 1.0, 2.0))
+    x_axis = normalize((1.0, -1.0, 0.0))
+    y_axis = normalize(np.cross(plane_normal, x_axis))
+
+    p1 = center + x_axis * middle_radius
+    p2 = (
+        center
+        + (
+            x_axis * math.cos(math.radians(theta_deg))
+            + y_axis * math.sin(math.radians(theta_deg))
+        )
+        * middle_radius
+    )
+    third_point_on_plane = center + y_axis * middle_radius
+
+    ring_segment = create_ring_segment_between_points(
+        p1, p2, third_point_on_plane, inner_radius, outer_radius, height
+    )
+
+    vertices = get_vertex_coordinates(ring_segment)
+    angles, radii, heights = _vertex_angles_radii_heights(
+        vertices,
+        center=center,
+        plane_normal=plane_normal,
+        start_direction=p1 - center,
+    )
+
+    assert _min_angle_delta(angles, 0.0) < 0.5
+    assert _min_angle_delta(angles, theta_deg) < 0.5
+    assert np.min(np.abs(radii - inner_radius)) < 1e-5
+    assert np.min(np.abs(radii - outer_radius)) < 1e-5
+    assert np.min(np.abs(heights - height / 2.0)) < 1e-6
+    assert np.min(np.abs(heights + height / 2.0)) < 1e-6
+
+
+def test_create_ring_segment_between_points_rejects_degenerate_inputs():
+    with pytest.raises(ValueError):
+        create_ring_segment_between_points(
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            inner_radius=3.0,
+            outer_radius=4.0,
+            height=2.0,
+        )
+
+
+def test_create_ring_segment_between_points_rejects_impossible_radius():
+    with pytest.raises(ValueError):
+        create_ring_segment_between_points(
+            (0.0, 0.0, 0.0),
+            (10.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            inner_radius=2.0,
+            outer_radius=4.0,
+            height=2.0,
+        )
 
 
 def test_create_rounded_slab_respects_rounding_flags():
