@@ -1,5 +1,5 @@
 import logging
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import cadquery as cq
 import numpy as np
@@ -592,6 +592,107 @@ def export_solid_to_stl(
         tolerance=tolerance,
         angularTolerance=angular_tolerance,
     )
+
+
+def export_solid_to_step(
+    solid,
+    destination: str,
+) -> None:
+    """Export a CadQuery solid or workplane to a STEP file.
+
+    Args:
+        solid: CadQuery solid or workplane to export.
+        destination: Path to write the STEP file to.
+    """
+
+    cq.exporters.export(
+        solid,
+        destination,
+        exportType="STEP",
+    )
+
+
+def export_structured_step(
+    structure: Dict[str, List[Tuple[str | None, object]]],
+    path: str,
+):
+    """
+    Export a structured STEP assembly using CadQuery.
+
+    Args:
+        structure:
+            {
+                "GROUP_NAME": [(name, solid), ...]
+            }
+        path:
+            Output STEP file path.
+    """
+
+    root = cq.Assembly(name="ROOT")
+
+    for group_name, entries in structure.items():
+        if not entries:
+            continue
+
+        group_asm = cq.Assembly(name=group_name)
+
+        for idx, (name, solid) in enumerate(entries):
+            part_name = name or f"{group_name}_{idx}"
+
+            group_asm.add(
+                solid,
+                name=part_name,
+            )
+
+        root.add(group_asm, name=group_name)
+
+    root.save(path, exportType="STEP")
+
+
+def import_solid_from_step(
+    source: str,
+):
+    """Import a CadQuery solid or workplane from a STEP file.
+
+    Args:
+        source: Path to read the STEP file from.
+    """
+
+    imported = cq.importers.importStep(source)
+    return imported
+
+
+def deserialize_structured_step(path: str) -> Dict[str, List[Tuple[str, object]]]:
+    """
+    Deserialize a structured STEP file.
+
+    Returns:
+        {
+            "GROUP_NAME": [(name, solid), ...]
+        }
+    """
+
+    assembly = cq.importers.importStep(path)
+
+    result: Dict[str, List[Tuple[str, object]]] = {}
+
+    # Structured STEP (assembly)
+    if isinstance(assembly, cq.Assembly):
+        for group in assembly.children:
+            group_name = group.name
+            parts = []
+
+            for child in group.children:
+                part_name = child.name
+                solid = child.obj
+                parts.append((part_name, solid))
+
+            result[group_name] = parts
+
+        return result
+
+    # Fallback: flat STEP (no structure)
+    return {"ROOT": [(None, assembly)]}
 
 
 def copy_part(part):

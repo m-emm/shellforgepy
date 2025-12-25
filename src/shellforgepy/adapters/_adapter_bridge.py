@@ -20,6 +20,10 @@ get_bounding_box = selected_adapter.get_bounding_box
 translate_part = selected_adapter.translate_part
 rotate_part = selected_adapter.rotate_part
 export_solid_to_stl = selected_adapter.export_solid_to_stl
+export_solid_to_step = selected_adapter.export_solid_to_step
+export_structured_step = selected_adapter.export_structured_step
+import_solid_from_step = selected_adapter.import_solid_from_step
+deserialize_structured_step = selected_adapter.deserialize_structured_step
 copy_part = selected_adapter.copy_part
 create_filleted_box = selected_adapter.create_filleted_box
 translate_part_native = selected_adapter.translate_part_native
@@ -50,7 +54,10 @@ __all__ = [
     "create_sphere",
     "create_text_object",
     "cut_parts",
+    "deserialize_structured_step",
     "export_solid_to_stl",
+    "export_solid_to_step",
+    "export_structured_step",
     "fuse_parts",
     "filter_edges_by_function",
     "get_adapter_id",
@@ -61,6 +68,7 @@ __all__ = [
     "get_vertex_coordinates",
     "get_vertices",
     "get_volume",
+    "import_solid_from_step",
     "mirror_part",
     "mirror_part_native",
     "rotate_part_native",

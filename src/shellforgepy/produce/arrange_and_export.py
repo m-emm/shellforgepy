@@ -8,6 +8,9 @@ import os
 from pathlib import Path
 
 from shellforgepy.adapters._adapter import (
+    export_solid_to_step as adapter_export_solid_to_step,
+)
+from shellforgepy.adapters._adapter import (
     export_solid_to_stl as adapter_export_solid_to_stl,
 )
 from shellforgepy.adapters._adapter import get_bounding_box
@@ -25,13 +28,25 @@ def export_solid_to_stl(
     tolerance=0.1,
     angular_tolerance=0.1,
 ):
-    """Export a CAD solid to an STL file using the appropriate"""
+    """Export a CAD solid to an STL file using the appropriate adapter."""
 
     adapter_export_solid_to_stl(
         solid,
         str(destination),
         tolerance=tolerance,
         angular_tolerance=angular_tolerance,
+    )
+
+
+def export_solid_to_step(
+    solid,
+    destination,
+):
+    """Export a CAD solid to a STEP file using the appropriate adapter."""
+
+    adapter_export_solid_to_step(
+        solid,
+        str(destination),
     )
 
 
@@ -202,8 +217,13 @@ def arrange_and_export_parts(
     process_data=None,
     max_build_height=None,
     verbose=False,
+    export_step=False,
 ):
-    """Arrange named parts with production support, export individual STLs, and a fused assembly."""
+    """Arrange named parts with production support, export individual STLs, and a fused assembly.
+
+    Args:
+        export_step: If True, also export STEP files alongside STL files.
+    """
 
     env_export_dir = os.environ.get("SHELLFORGEPY_EXPORT_DIR")
     manifest_path_env = os.environ.get("SHELLFORGEPY_WORKFLOW_MANIFEST")
@@ -288,6 +308,12 @@ def arrange_and_export_parts(
         export_solid_to_stl(arranged_shape, part_filename)
         print(f"Exported {name} to {part_filename}")
 
+        if export_step:
+            step_filename = export_dir / f"{base_name}_{_safe_name(name)}.step"
+            print(f"Exporting {name} to {step_filename}")
+            export_solid_to_step(arranged_shape, step_filename)
+            print(f"Exported {name} to {step_filename}")
+
         if manifest_data is not None:
             manifest_parts = manifest_data.setdefault("part_files", [])
             if isinstance(manifest_parts, list):
@@ -299,6 +325,11 @@ def arrange_and_export_parts(
     assembly_path = export_dir / f"{base_name}.stl"
     export_solid_to_stl(fused_shape, assembly_path)
     print(f"Exported whole part to {assembly_path}")
+
+    if export_step:
+        assembly_step_path = export_dir / f"{base_name}.step"
+        export_solid_to_step(fused_shape, assembly_step_path)
+        print(f"Exported whole part to {assembly_step_path}")
 
     if manifest_data is not None:
         manifest_data["assembly_path"] = str(assembly_path.resolve())
@@ -333,8 +364,13 @@ def arrange_and_export(
     process_data=None,
     max_build_height=None,
     verbose=False,
+    export_step=False,
 ):
-    """Arrange and export a single part with production support."""
+    """Arrange and export a single part with production support.
+
+    Args:
+        export_step: If True, also export STEP files alongside STL files.
+    """
 
     if script_file is None:
         # get the call stack
@@ -360,4 +396,5 @@ def arrange_and_export(
         process_data=process_data,
         max_build_height=max_build_height,
         verbose=verbose,
+        export_step=export_step,
     )

@@ -25,6 +25,8 @@ from shellforgepy.adapters._adapter import (
     create_solid_from_traditional_face_vertex_maps,
     create_sphere,
     create_text_object,
+    deserialize_structured_step,
+    export_structured_step,
     filter_edges_by_function,
     get_adapter_id,
     get_bounding_box,
@@ -32,6 +34,7 @@ from shellforgepy.adapters._adapter import (
     get_bounding_box_size,
     get_vertex_coordinates,
     get_volume,
+    import_solid_from_step,
 )
 from shellforgepy.geometry.m_screws import (
     MScrew,
@@ -130,6 +133,7 @@ from .geometry.treapezoidal_snake_geometry import (
 from .produce.arrange_and_export import (
     arrange_and_export,
     arrange_and_export_parts,
+    export_solid_to_step,
     export_solid_to_stl,
 )
 from .produce.production_parts_model import PartInfo, PartList
@@ -198,10 +202,13 @@ __all__ = [
     "create_trapezoidal_snake_geometry",
     "create_triangular_prism_geometry",
     "create_triangular_prism",
+    "deserialize_structured_step",
     "directed_box_at",
     "directed_cylinder_at",
     "directed_cone_at",
     "export_solid_to_stl",
+    "export_solid_to_step",
+    "export_structured_step",
     "face_point_cloud",
     "fibonacci_sphere",
     "filter_edges_by_function",
@@ -213,6 +220,7 @@ __all__ = [
     "get_screw_info",
     "get_vertex_coordinates",
     "get_volume",
+    "import_solid_from_step",
     "LeaderFollowersCuttersPart",
     "list_supported_sizes",
     "m_screws_table",

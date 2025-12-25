@@ -539,6 +539,88 @@ def export_solid_to_stl(
     solid.exportStl(destination)
 
 
+def export_solid_to_step(
+    solid,
+    destination: str,
+) -> None:
+    """Export a FreeCAD solid to a STEP file.
+
+    Args:
+        solid: FreeCAD Part.Shape to export.
+        destination: Path to write the STEP file to.
+    """
+    import os
+
+    if os.path.exists(destination):
+        os.remove(destination)
+    solid.exportStep(destination)
+
+
+def export_structured_step(
+    structure,
+    path: str,
+) -> None:
+    """Export a structured STEP assembly using FreeCAD.
+
+    Args:
+        structure: Mapping of group name -> list of (name, FreeCAD solid).
+        path: Output STEP file path.
+    """
+    import os
+
+    if Part is None:
+        raise RuntimeError("FreeCAD Part module is not available")
+
+    solids = []
+    for group_entries in structure.values():
+        for _, solid in group_entries:
+            solids.append(solid)
+
+    if not solids:
+        raise ValueError("No solids provided for structured STEP export")
+
+    if len(solids) == 1:
+        export_solid_to_step(solids[0], path)
+        return
+
+    compound = Part.makeCompound(solids)
+    if os.path.exists(path):
+        os.remove(path)
+    compound.exportStep(path)
+
+
+def import_solid_from_step(
+    source: str,
+):
+    """Import a FreeCAD solid or assembly from a STEP file.
+
+    Args:
+        source: Path to read the STEP file from.
+    """
+    if Part is None:
+        raise RuntimeError("FreeCAD Part module is not available")
+
+    shape = Part.Shape()
+    shape.read(source)
+    return shape
+
+
+def deserialize_structured_step(path: str):
+    """Load a STEP file and return grouped solids.
+
+    FreeCAD does not preserve assembly group names when importing STEP, so all
+    solids are returned under a single "ROOT" group.
+
+    Args:
+        path: Path to the STEP file.
+    """
+    shape = import_solid_from_step(path)
+    solids = list(shape.Solids())
+    if not solids:
+        solids = [shape]
+    return {"ROOT": [(None, solid) for solid in solids]}
+
+
 def copy_part(part):
     """Create a copy of a FreeCAD part."""
     # There are NO FRAMEWORK SPECIFIC CALLS allowed here! Use adapter functions only!

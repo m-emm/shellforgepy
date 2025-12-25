@@ -27,7 +27,16 @@ from shellforgepy.adapters._adapter_bridge import (
 )
 from shellforgepy.adapters._adapter_bridge import cut_parts as adapter_cut_parts
 from shellforgepy.adapters._adapter_bridge import (
+    deserialize_structured_step as adapter_deserialize_structured_step,
+)
+from shellforgepy.adapters._adapter_bridge import (
+    export_solid_to_step as adapter_export_solid_to_step,
+)
+from shellforgepy.adapters._adapter_bridge import (
     export_solid_to_stl as adapter_export_solid_to_stl,
+)
+from shellforgepy.adapters._adapter_bridge import (
+    export_structured_step as adapter_export_structured_step,
 )
 from shellforgepy.adapters._adapter_bridge import (
     filter_edges_by_function as adapter_filter_edges_by_function,
@@ -53,6 +62,9 @@ from shellforgepy.adapters._adapter_bridge import (
 )
 from shellforgepy.adapters._adapter_bridge import get_vertices as adapter_get_vertices
 from shellforgepy.adapters._adapter_bridge import get_volume as adapter_get_volume
+from shellforgepy.adapters._adapter_bridge import (
+    import_solid_from_step as adapter_import_solid_from_step,
+)
 from shellforgepy.adapters._adapter_bridge import mirror_part as adapter_mirror_part
 from shellforgepy.adapters._adapter_bridge import (
     mirror_part_native as adapter_mirror_part_native,
@@ -352,6 +364,55 @@ def export_solid_to_stl(
         tolerance=tolerance,
         angular_tolerance=angular_tolerance,
     )
+
+
+def export_solid_to_step(
+    solid,
+    destination: str,
+) -> None:
+    """Export a solid to a STEP file.
+
+    Args:
+        solid: Solid to export.
+        destination: Path to write the STEP file to.
+    """
+    return adapter_export_solid_to_step(
+        solid,
+        destination,
+    )
+
+
+def export_structured_step(
+    structure,
+    path: str,
+) -> None:
+    """Export a structured STEP assembly.
+
+    Args:
+        structure: Mapping of group name -> list of solids.
+        path: Output STEP file path.
+    """
+    return adapter_export_structured_step(structure, path)
+
+
+def deserialize_structured_step(path: str):
+    """Load a structured STEP file and return grouped solids.
+
+    Args:
+        path: Path to the STEP file.
+    """
+    return adapter_deserialize_structured_step(path)
+
+
+def import_solid_from_step(
+    source: str,
+):
+    """Import a solid or assembly from a STEP file.
+
+    Args:
+        source: Path to read the STEP file from.
+    """
+    return adapter_import_solid_from_step(source)
 
 
 def apply_fillet_by_alignment(
