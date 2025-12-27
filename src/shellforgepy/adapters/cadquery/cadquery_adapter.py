@@ -625,8 +625,10 @@ def export_structured_step(
                 "GROUP_NAME": [(name, solid), ...]
             }
         path:
-            Output STEP file path.
+            Output STEP file path (str or Path-like object).
     """
+    # Convert Path to str if needed (CadQuery's Write() requires str)
+    path = str(path)
 
     root = cq.Assembly(name="ROOT")
 
@@ -652,14 +654,17 @@ def export_structured_step(
 def import_solid_from_step(
     source: str,
 ):
-    """Import a CadQuery solid or workplane from a STEP file.
+    """Import a CadQuery solid from a STEP file.
 
     Args:
         source: Path to read the STEP file from.
-    """
 
+    Returns:
+        Normalized solid (not a Workplane)
+    """
+    source = str(source)  # Handle Path objects
     imported = cq.importers.importStep(source)
-    return imported
+    return normalize_to_solid(imported)
 
 
 def deserialize_structured_step(path: str) -> Dict[str, List[Tuple[str, object]]]:
@@ -671,6 +676,8 @@ def deserialize_structured_step(path: str) -> Dict[str, List[Tuple[str, object]]
             "GROUP_NAME": [(name, solid), ...]
         }
     """
+    # Convert Path to str if needed
+    path = str(path)
 
     assembly = cq.importers.importStep(path)
 
@@ -684,15 +691,19 @@ def deserialize_structured_step(path: str) -> Dict[str, List[Tuple[str, object]]
 
             for child in group.children:
                 part_name = child.name
-                solid = child.obj
+                # Normalize to solid to ensure consistent type
+                solid = normalize_to_solid(child.obj)
                 parts.append((part_name, solid))
 
             result[group_name] = parts
 
         return result
 
-    # Fallback: flat STEP (no structure)
-    return {"ROOT": [(None, assembly)]}
+    # Fallback: flat STEP (no structure) - extract individual solids
+    solids = extract_solids(assembly)
+    if solids:
+        return {"ROOT": [(None, solid) for solid in solids]}
+    return {"ROOT": [(None, normalize_to_solid(assembly))]}
 
 
 def copy_part(part):

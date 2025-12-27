@@ -69,14 +69,13 @@ def test_deserialize_structured_step_groups_and_volumes():
 
         loaded = cadquery_adapter.deserialize_structured_step(step_path)
         if "ROOT" in loaded:
-            assert len(loaded["ROOT"]) == 1
-            root_parts = []
-            for _, part in loaded["ROOT"]:
-                root_parts.extend(cadquery_adapter.extract_solids(part))
-            assert len(root_parts) == 2
+            # CadQuery doesn't preserve STEP assembly structure on import.
+            # We now extract individual solids from the imported compound.
+            # With 2 input solids, we expect 2 entries in ROOT.
+            assert len(loaded["ROOT"]) == 2
             volumes = [
                 cadquery_adapter.normalize_to_solid(part).Volume()
-                for part in root_parts
+                for _, part in loaded["ROOT"]
             ]
             volumes.sort()
             assert volumes[0] == pytest.approx(5 * 8 * 6, rel=1e-4)

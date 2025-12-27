@@ -91,11 +91,11 @@ parameters_n = {
         "nose_back_y_offset_bottom": 5.0,
         "nose_top_protrusion": 1.5,
         "eye_outer_point_distance": 45,
-        "eye_distance": 28,
+        "eye_distance": 22,
         "eye_outer_point_protrusion": 0,
         "eye_depth": -6,
         "eye_size": 4.8,
-        "eye_y": 17,
+        "eye_y": 15,
         "chin_width": 19,
         "chin_base_width": 15,
         "chin_center_y_offset": 2.9,
@@ -391,14 +391,15 @@ def build_face_cap_grid_with_deltas(parameters_to_use, outer_deltar=0):
     return xy_points, delta_r, labels
 
 
-def face_point_cloud(face_key):
+def face_point_cloud(face_key, parameters_to_use=None):
 
-    if face_key not in ["n", "m"]:
-        raise ValueError("face_key must be 'n' or 'm'")
-    if face_key == "n":
-        parameters_to_use = parameters_n
-    elif face_key == "m":
-        parameters_to_use = parameters_m
+    if parameters_to_use is None:
+        if face_key not in ["n", "m"]:
+            raise ValueError("face_key must be 'n' or 'm'")
+        if face_key == "n":
+            parameters_to_use = parameters_n
+        elif face_key == "m":
+            parameters_to_use = parameters_m
 
     xy_plane_points, delta_r, labels = build_face_cap_grid_with_deltas(
         parameters_to_use=parameters_to_use, outer_deltar=0.1
