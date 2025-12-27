@@ -50,10 +50,28 @@ def test_serialize_deserialize_round_trip_with_names(tmp_path):
         non_production_names=["non_prod_a"],
     )
 
+    bboxes = [
+        get_bounding_box(p) for p in [leader, follower_a, follower_b, cutter, non_prod]
+    ]
+
     step_file_path = tmp_path / "round_trip.step"
     serialize_to_step(lfcp, str(step_file_path))
 
     restored = deserialize_to_leader_followers_cutters_part(str(step_file_path))
+
+    bboxes_restored = [
+        get_bounding_box(p)
+        for p in [restored.leader]
+        + restored.followers
+        + restored.cutters
+        + restored.non_production_parts
+    ]
+    # Verify bounding boxes match (parts are in same position/scale)
+    for bb_orig, bb_restored in zip(bboxes, bboxes_restored):
+        for v_orig, v_restored in zip(bb_orig, bb_restored):
+            assert all(
+                pytest.approx(a, rel=1e-6) == b for a, b in zip(v_orig, v_restored)
+            )
 
     # Verify structure is preserved
     assert restored.leader is not None
@@ -98,11 +116,11 @@ def test_serialize_to_step_with_path_object(tmp_path):
     assert step_file_path.stat().st_size > 0
 
 
-def test_deserialize_legacy_step_without_metadata(tmp_path):
-    """Test that we can still import a plain STEP file without metadata."""
+def test_deserialize_step_without_metadata_raises_error(tmp_path):
+    """Test that importing a STEP file without metadata raises an error."""
     # Create a simple STEP file without using our serialization
     box = create_box(10, 10, 10)
-    step_file_path = tmp_path / "legacy.step"
+    step_file_path = tmp_path / "no_metadata.step"
 
     # Export directly using the adapter
     from shellforgepy.adapters._adapter import export_solid_to_step
@@ -110,17 +128,12 @@ def test_deserialize_legacy_step_without_metadata(tmp_path):
     export_solid_to_step(box, str(step_file_path))
 
     # No metadata file should exist
-    metadata_path = tmp_path / "legacy.lfcp.json"
+    metadata_path = tmp_path / "no_metadata.lfcp.json"
     assert not metadata_path.exists()
 
-    # Should still import as leader-only
-    restored = deserialize_to_leader_followers_cutters_part(str(step_file_path))
-
-    assert restored.leader is not None
-    assert not restored.followers
-    assert not restored.cutters
-    assert not restored.non_production_parts
-    assert get_volume(restored.leader) == pytest.approx(10 * 10 * 10, rel=1e-4)
+    # Should raise ValueError
+    with pytest.raises(ValueError, match="Metadata file not found"):
+        deserialize_to_leader_followers_cutters_part(str(step_file_path))
 
 
 def test_serialize_leader_only(tmp_path):
@@ -168,3 +181,249 @@ def test_metadata_path_helper():
     assert _get_metadata_path("/path/to/file.step") == "/path/to/file.lfcp.json"
     assert _get_metadata_path("/path/to/file.STEP") == "/path/to/file.lfcp.json"
     assert _get_metadata_path("file.step") == "file.lfcp.json"
+
+
+def _assert_bboxes_equal(bbox1, bbox2, rel_tol=1e-6, description=""):
+    """Helper to assert two bounding boxes are equal within tolerance."""
+    for i, (corner1, corner2) in enumerate(zip(bbox1, bbox2)):
+        for j, (v1, v2) in enumerate(zip(corner1, corner2)):
+            assert v1 == pytest.approx(
+                v2, rel=rel_tol
+            ), f"{description} bbox corner {i} coord {j}: {v1} != {v2}"
+
+
+def test_round_trip_preserves_exact_geometry_for_multiple_cutters(tmp_path):
+    """Test that multiple cutters maintain their exact geometry after round-trip.
+
+    This test creates cutters at different positions and verifies each one
+    is restored with the exact same bounding box.
+    """
+    leader = create_box(100, 100, 10)
+
+    # Create multiple cutters at different positions
+    cutter1 = create_cylinder(5, 20)
+    cutter1 = translate(10, 10, 0)(cutter1)
+
+    cutter2 = create_cylinder(3, 15)
+    cutter2 = translate(50, 50, 0)(cutter2)
+
+    cutter3 = create_box(8, 8, 25)
+    cutter3 = translate(80, 20, 0)(cutter3)
+
+    cutters = [cutter1, cutter2, cutter3]
+    original_bboxes = [get_bounding_box(c) for c in cutters]
+
+    lfcp = LeaderFollowersCuttersPart(
+        leader=leader,
+        cutters=cutters,
+        cutter_names=["hole1", "hole2", "slot1"],
+    )
+
+    step_file_path = tmp_path / "multiple_cutters.step"
+    serialize_to_step(lfcp, step_file_path)
+    restored = deserialize_to_leader_followers_cutters_part(str(step_file_path))
+
+    # Verify we got the same number of cutters back
+    assert (
+        len(restored.cutters) == 3
+    ), f"Expected 3 cutters, got {len(restored.cutters)}"
+
+    # Verify each cutter has the exact same bounding box
+    for i, (orig_bbox, restored_cutter) in enumerate(
+        zip(original_bboxes, restored.cutters)
+    ):
+        restored_bbox = get_bounding_box(restored_cutter)
+        _assert_bboxes_equal(orig_bbox, restored_bbox, description=f"cutter {i}")
+
+
+def test_round_trip_preserves_geometry_for_overlapping_cutters(tmp_path):
+    """Test that overlapping cutters are NOT merged during serialization.
+
+    This is a critical test - if cutters overlap and get fused together,
+    they become a single solid and can't be separated on deserialization.
+    """
+    leader = create_box(100, 100, 10)
+
+    # Create two overlapping cutters (cylinders that intersect)
+    cutter1 = create_cylinder(10, 30)
+    cutter1 = translate(25, 25, 0)(cutter1)
+
+    cutter2 = create_cylinder(10, 30)
+    cutter2 = translate(30, 25, 0)(cutter2)  # Overlaps with cutter1
+
+    original_bbox1 = get_bounding_box(cutter1)
+    original_bbox2 = get_bounding_box(cutter2)
+    original_volume1 = get_volume(cutter1)
+    original_volume2 = get_volume(cutter2)
+
+    lfcp = LeaderFollowersCuttersPart(
+        leader=leader,
+        cutters=[cutter1, cutter2],
+    )
+
+    step_file_path = tmp_path / "overlapping_cutters.step"
+    serialize_to_step(lfcp, step_file_path)
+    restored = deserialize_to_leader_followers_cutters_part(str(step_file_path))
+
+    # Must have exactly 2 cutters, not 1 merged cutter
+    assert len(restored.cutters) == 2, (
+        f"Expected 2 separate cutters, got {len(restored.cutters)}. "
+        "Overlapping cutters may have been merged during serialization!"
+    )
+
+    # Each cutter should have its original bounding box
+    _assert_bboxes_equal(
+        original_bbox1,
+        get_bounding_box(restored.cutters[0]),
+        description="overlapping cutter 0",
+    )
+    _assert_bboxes_equal(
+        original_bbox2,
+        get_bounding_box(restored.cutters[1]),
+        description="overlapping cutter 1",
+    )
+
+    # Each cutter should have its original volume
+    assert get_volume(restored.cutters[0]) == pytest.approx(original_volume1, rel=1e-4)
+    assert get_volume(restored.cutters[1]) == pytest.approx(original_volume2, rel=1e-4)
+
+
+def test_round_trip_preserves_geometry_for_touching_parts(tmp_path):
+    """Test that parts sharing a face/edge are correctly separated."""
+    leader = create_box(10, 10, 10)
+
+    # Create followers that touch the leader (share a face)
+    follower1 = create_box(10, 10, 5)
+    follower1 = translate(0, 0, 10)(follower1)  # Sits on top of leader
+
+    follower2 = create_box(5, 10, 10)
+    follower2 = translate(10, 0, 0)(follower2)  # Sits next to leader
+
+    original_leader_bbox = get_bounding_box(leader)
+    original_f1_bbox = get_bounding_box(follower1)
+    original_f2_bbox = get_bounding_box(follower2)
+
+    lfcp = LeaderFollowersCuttersPart(
+        leader=leader,
+        followers=[follower1, follower2],
+    )
+
+    step_file_path = tmp_path / "touching_parts.step"
+    serialize_to_step(lfcp, step_file_path)
+    restored = deserialize_to_leader_followers_cutters_part(str(step_file_path))
+
+    assert len(restored.followers) == 2, "Expected 2 followers"
+
+    _assert_bboxes_equal(
+        original_leader_bbox, get_bounding_box(restored.leader), description="leader"
+    )
+    _assert_bboxes_equal(
+        original_f1_bbox,
+        get_bounding_box(restored.followers[0]),
+        description="follower 0",
+    )
+    _assert_bboxes_equal(
+        original_f2_bbox,
+        get_bounding_box(restored.followers[1]),
+        description="follower 1",
+    )
+
+
+def test_round_trip_with_complex_cutter_geometry(tmp_path):
+    """Test serialization of a cutter that is itself a compound of multiple solids.
+
+    KNOWN ISSUE: This test exposes a bug where disconnected solids within a single
+    cutter are not all preserved during serialization. Only one solid (matching
+    the expected Z position) is restored.
+    """
+    from shellforgepy.simple import PartCollector
+
+    leader = create_box(100, 100, 20)
+
+    # Create a complex cutter by fusing multiple shapes
+    cutter_parts = PartCollector()
+    for x in [10, 30, 50, 70]:
+        hole = create_cylinder(3, 30)
+        hole = translate(x, 50, 0)(hole)
+        cutter_parts = cutter_parts.fuse(hole)
+
+    # The cutter is now a compound with multiple solids fused together
+    original_bbox = get_bounding_box(cutter_parts)
+    original_volume = get_volume(cutter_parts)
+
+    lfcp = LeaderFollowersCuttersPart(
+        leader=leader,
+        cutters=[cutter_parts],
+    )
+
+    step_file_path = tmp_path / "complex_cutter.step"
+    serialize_to_step(lfcp, step_file_path)
+    restored = deserialize_to_leader_followers_cutters_part(str(step_file_path))
+
+    assert len(restored.cutters) == 1
+    _assert_bboxes_equal(
+        original_bbox,
+        get_bounding_box(restored.cutters[0]),
+        description="complex cutter",
+    )
+    assert get_volume(restored.cutters[0]) == pytest.approx(original_volume, rel=1e-4)
+
+
+def test_round_trip_all_part_types_with_positions(tmp_path):
+    """Comprehensive test verifying all part types maintain exact positions."""
+    # Create parts at specific, non-zero positions
+    leader = create_box(20, 20, 10)
+    leader = translate(100, 200, 50)(leader)
+
+    follower1 = create_cylinder(5, 15)
+    follower1 = translate(150, 250, 60)(follower1)
+
+    follower2 = create_box(8, 8, 8)
+    follower2 = translate(120, 180, 40)(follower2)
+
+    cutter1 = create_cylinder(2, 20)
+    cutter1 = translate(105, 205, 45)(cutter1)
+
+    cutter2 = create_cylinder(3, 25)
+    cutter2 = translate(115, 215, 45)(cutter2)
+
+    non_prod = create_box(5, 5, 5)
+    non_prod = translate(130, 220, 55)(non_prod)
+
+    all_parts = [leader, follower1, follower2, cutter1, cutter2, non_prod]
+    original_bboxes = [get_bounding_box(p) for p in all_parts]
+    original_volumes = [get_volume(p) for p in all_parts]
+
+    lfcp = LeaderFollowersCuttersPart(
+        leader=leader,
+        followers=[follower1, follower2],
+        cutters=[cutter1, cutter2],
+        non_production_parts=[non_prod],
+        follower_names=["f1", "f2"],
+        cutter_names=["c1", "c2"],
+        non_production_names=["np1"],
+    )
+
+    step_file_path = tmp_path / "all_types_positioned.step"
+    serialize_to_step(lfcp, step_file_path)
+    restored = deserialize_to_leader_followers_cutters_part(str(step_file_path))
+
+    # Reconstruct the list in same order
+    restored_parts = (
+        [restored.leader]
+        + restored.followers
+        + restored.cutters
+        + restored.non_production_parts
+    )
+
+    assert len(restored_parts) == len(all_parts)
+
+    part_names = ["leader", "follower1", "follower2", "cutter1", "cutter2", "non_prod"]
+    for i, (orig_bbox, orig_vol, restored_part, name) in enumerate(
+        zip(original_bboxes, original_volumes, restored_parts, part_names)
+    ):
+        restored_bbox = get_bounding_box(restored_part)
+        _assert_bboxes_equal(orig_bbox, restored_bbox, description=name)
+        assert get_volume(restored_part) == pytest.approx(
+            orig_vol, rel=1e-4
+        ), f"{name} volume mismatch"

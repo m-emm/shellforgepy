@@ -54,7 +54,9 @@ def normalize_to_solid(obj) -> cq.Solid | cq.Shape:
         _logger.debug(f"normalize_to_solid: processing object of type {type(obj)}")
     solids = extract_solids(obj)
     if not solids:
-        raise ValueError("No solids found in object. (Is it only faces/shells?)")
+        raise ValueError(
+            f"No solids found in object. (Is it only faces/shells?) solids={solids} type(obj)={type(obj)}"
+        )
 
     if len(solids) == 1:
         return solids[0]
@@ -707,7 +709,17 @@ def deserialize_structured_step(path: str) -> Dict[str, List[Tuple[str, object]]
 
 
 def copy_part(part):
-    """Create a copy of a CadQuery part."""
+    """Create a copy of a CadQuery part.
+
+    Handles empty Compounds gracefully by returning an empty Compound copy.
+    """
+    # Check for empty Compound before normalizing
+    if isinstance(part, cq.Compound):
+        solids = list(part.Solids())
+        if not solids:
+            # Return a copy of the empty Compound
+            return cq.Compound.makeCompound([])
+
     part = normalize_to_solid(part)  # get rid of assemblies, etc
 
     return part.copy()

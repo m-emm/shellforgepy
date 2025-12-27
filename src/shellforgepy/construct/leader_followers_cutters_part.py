@@ -158,6 +158,7 @@ class LeaderFollowersCuttersPart:
             AssertionError: If name list lengths don't match corresponding part counts
             AssertionError: If additional_data is not a dictionary
         """
+
         self.leader = leader
         # Store raw parts directly for convenience during construction
         self.followers = _ensure_list(followers)
