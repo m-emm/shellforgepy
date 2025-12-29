@@ -625,10 +625,15 @@ def run_workflow(args: argparse.Namespace) -> int:
     # Open Orca GUI if requested
     if args.open and slice_requested:
         if project_path.exists():
-            _logger.info("Opening OrcaSlicer GUI with project file: %s", project_path)
+            open_cmd = [str(orca_exec_path), str(project_path)]
+            _logger.info(
+                "Opening OrcaSlicer GUI with project file: %s with %s",
+                project_path,
+                open_cmd,
+            )
             try:
                 # Start OrcaSlicer in the background
-                open_cmd = [str(orca_exec_path), str(project_path)]
+
                 subprocess.Popen(
                     open_cmd,
                     stdout=subprocess.DEVNULL,

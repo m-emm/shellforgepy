@@ -6,23 +6,60 @@ Each part is added to the assembly with a structured name encoding its
 group (LEADER, FOLLOWERS, CUTTERS, NON_PRODUCTION) and index.
 
 A JSON sidecar file stores additional metadata like user-defined names
-that cannot be encoded in the STEP file's object names.
+and additional_data dict that cannot be encoded in the STEP file's object names.
 """
 
+import functools
 import json
 import logging
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cadquery as cq
+import numpy as np
 from shellforgepy.construct.leader_followers_cutters_part import (
     LeaderFollowersCuttersPart,
 )
+from shellforgepy.construct.part_parameters import PartParameters
 
 _logger = logging.getLogger(__name__)
 
 # Metadata version - increment when format changes
-_METADATA_VERSION = 2
+_METADATA_VERSION = 3
+_STEP_CACHE_ENV_VAR = "SHELLFORGEPY_STEP_CACHE_DIR"
+_STEP_CACHE_PLAIN_PART_KEY = "_step_cache_plain_part"
+
+
+def _convert_for_json(obj: Any) -> Any:
+    """
+    Recursively convert objects to JSON-serializable types.
+
+    Handles numpy arrays, numpy scalars, and nested dicts/lists.
+    """
+    if isinstance(obj, np.ndarray):
+        return {"__numpy_array__": True, "data": obj.tolist(), "dtype": str(obj.dtype)}
+    if isinstance(obj, (np.integer, np.floating)):
+        return obj.item()
+    if isinstance(obj, dict):
+        return {k: _convert_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_convert_for_json(v) for v in obj]
+    return obj
+
+
+def _convert_from_json(obj: Any) -> Any:
+    """
+    Recursively convert JSON-deserialized objects back to original types.
+
+    Restores numpy arrays from their serialized form.
+    """
+    if isinstance(obj, dict):
+        if obj.get("__numpy_array__"):
+            return np.array(obj["data"], dtype=obj.get("dtype", None))
+        return {k: _convert_from_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_convert_from_json(v) for v in obj]
+    return obj
 
 
 def _unwrap(part):
@@ -107,8 +144,12 @@ def serialize_to_step(
     # Create assembly
     assy = cq.Assembly(name="LeaderFollowersCuttersPart")
 
-    # Build metadata for user-defined names
+    # Build metadata for user-defined names and additional_data
     metadata = {"version": _METADATA_VERSION, "groups": {}}
+
+    # Serialize additional_data if present
+    if part.additional_data:
+        metadata["additional_data"] = _convert_for_json(part.additional_data)
 
     def add_group_to_assembly(group_name: str, parts: List, name_map: Dict[str, int]):
         """Add all parts from a group to the assembly."""
@@ -227,12 +268,17 @@ def deserialize_to_leader_followers_cutters_part(
 
     version = metadata.get("version", 1)
 
-    # Require version 2+ format
+    # Require version 2+ format (v2 = assembly-based, v3 = assembly + additional_data)
     if version < 2:
         raise ValueError(
             f"STEP file {path} uses legacy v1 format which is no longer supported. "
             "Please regenerate the STEP file with the current version."
         )
+
+    # Extract additional_data if present (v3+)
+    additional_data = None
+    if "additional_data" in metadata:
+        additional_data = _convert_from_json(metadata["additional_data"])
 
     # Load assembly from STEP
     assy = cq.Assembly.load(path)
@@ -291,4 +337,49 @@ def deserialize_to_leader_followers_cutters_part(
         follower_names=follower_names,
         cutter_names=cutter_names,
         non_production_names=non_production_names,
+        additional_data=additional_data,
     )
+
+
+def step_cached(func):
+    """
+    Cache parts to STEP files based on PartParameters.
+
+    When SHELLFORGEPY_STEP_CACHE_DIR is set, a STEP file named by the parameter
+    hash will be used for cache hits. On misses, the function is called and the
+    result serialized to the cache.
+    """
+
+    @functools.wraps(func)
+    def wrapper(parameters: PartParameters, *args, **kwargs):
+        if not isinstance(parameters, PartParameters):
+            raise TypeError("step_cached requires a PartParameters argument.")
+
+        cache_dir = os.environ.get(_STEP_CACHE_ENV_VAR)
+        if not cache_dir:
+            return func(parameters, *args, **kwargs)
+
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_key = parameters.parameters_hash()
+        step_path = os.path.join(cache_dir, f"{cache_key}.step")
+
+        if os.path.exists(step_path):
+            _logger.info("Using cached STEP file: %s", step_path)
+            restored = deserialize_to_leader_followers_cutters_part(step_path)
+            additional_data = getattr(restored, "additional_data", None)
+            if additional_data and additional_data.get(_STEP_CACHE_PLAIN_PART_KEY):
+                return restored.leader
+            return restored
+
+        part = func(parameters, *args, **kwargs)
+        if isinstance(part, LeaderFollowersCuttersPart):
+            serialize_to_step(part, step_path)
+        else:
+            cached = LeaderFollowersCuttersPart(
+                leader=part,
+                additional_data={_STEP_CACHE_PLAIN_PART_KEY: True},
+            )
+            serialize_to_step(cached, step_path)
+        return part
+
+    return wrapper

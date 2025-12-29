@@ -5,10 +5,12 @@ pytest.importorskip("cadquery")
 from shellforgepy.construct.leader_followers_cutters_part import (
     LeaderFollowersCuttersPart,
 )
+from shellforgepy.construct.part_parameters import PartParameters
 from shellforgepy.construct.step_serialization import (
     _get_metadata_path,
     deserialize_to_leader_followers_cutters_part,
     serialize_to_step,
+    step_cached,
 )
 from shellforgepy.simple import *
 
@@ -30,6 +32,31 @@ def test_serialize_to_step(tmp_path):
     # Check that metadata file was created
     metadata_path = tmp_path / "test_part.lfcp.json"
     assert metadata_path.is_file()
+
+
+def test_step_cached_uses_step_cache(tmp_path, monkeypatch):
+    params = PartParameters({"length": 10.0})
+    cache_dir = tmp_path / "cache"
+    monkeypatch.setenv("SHELLFORGEPY_STEP_CACHE_DIR", str(cache_dir))
+
+    calls = {"func": 0}
+
+    @step_cached
+    def create_part(parameters):
+        calls["func"] += 1
+        return create_box(parameters.length, 10, 5)
+
+    part_first = create_part(params)
+    assert calls["func"] == 1
+    assert get_volume(part_first) == pytest.approx(10 * 10 * 5, rel=1e-6)
+
+    step_path = cache_dir / f"{params.parameters_hash()}.step"
+    assert step_path.is_file()
+    assert (cache_dir / f"{params.parameters_hash()}.lfcp.json").is_file()
+
+    part_second = create_part(params)
+    assert calls["func"] == 1
+    assert get_volume(part_second) == pytest.approx(10 * 10 * 5, rel=1e-6)
 
 
 def test_serialize_deserialize_round_trip_with_names(tmp_path):
@@ -427,3 +454,132 @@ def test_round_trip_all_part_types_with_positions(tmp_path):
         assert get_volume(restored_part) == pytest.approx(
             orig_vol, rel=1e-4
         ), f"{name} volume mismatch"
+
+
+def test_serialize_deserialize_additional_data_with_numpy_arrays(tmp_path):
+    """Test that additional_data including numpy arrays survives round-trip.
+
+    This tests the pattern from hair2.py where transformation data is stored:
+    - applied_transformation (dict with numpy arrays)
+    - hair_position (tuple/array)
+    - hair_normal (numpy array)
+    - hair_index (int)
+    - label_text (str)
+    - hair_2d_position (numpy array)
+    """
+    import numpy as np
+
+    leader = create_box(10, 10, 10)
+
+    # Create additional_data similar to hair2.py pattern
+    additional_data = {
+        "applied_transformation": {
+            "rotation_angle": np.float64(0.7853981633974483),  # pi/4
+            "rotation_axis": np.array([0.0, 0.0, 1.0], dtype=np.float64),
+            "translation": np.array([10.5, 20.3, 5.0], dtype=np.float64),
+        },
+        "hair_position": np.array([15.2, 25.4, 8.0], dtype=np.float64),
+        "hair_normal": np.array([0.0, 0.0, 1.0], dtype=np.float64),
+        "hair_index": 42,
+        "label_text": "test_hair_99",
+        "hair_2d_position": np.array([12.5, 18.3], dtype=np.float64),
+        "nested_list": [[1, 2, 3], [4, 5, 6]],
+        "nested_arrays": [np.array([1.0, 2.0]), np.array([3.0, 4.0])],
+    }
+
+    lfcp = LeaderFollowersCuttersPart(
+        leader=leader,
+        additional_data=additional_data,
+    )
+
+    step_file_path = tmp_path / "with_additional_data.step"
+    serialize_to_step(lfcp, step_file_path)
+    restored = deserialize_to_leader_followers_cutters_part(str(step_file_path))
+
+    # Verify additional_data was restored
+    assert restored.additional_data is not None
+    assert len(restored.additional_data) == len(additional_data)
+
+    # Check scalar values
+    assert restored.additional_data["hair_index"] == 42
+    assert restored.additional_data["label_text"] == "test_hair_99"
+
+    # Check numpy arrays are restored
+    assert isinstance(restored.additional_data["hair_position"], np.ndarray)
+    assert np.allclose(
+        restored.additional_data["hair_position"], additional_data["hair_position"]
+    )
+
+    assert isinstance(restored.additional_data["hair_normal"], np.ndarray)
+    assert np.allclose(
+        restored.additional_data["hair_normal"], additional_data["hair_normal"]
+    )
+
+    assert isinstance(restored.additional_data["hair_2d_position"], np.ndarray)
+    assert np.allclose(
+        restored.additional_data["hair_2d_position"],
+        additional_data["hair_2d_position"],
+    )
+
+    # Check nested dict with numpy arrays
+    trans = restored.additional_data["applied_transformation"]
+    assert isinstance(trans["rotation_axis"], np.ndarray)
+    assert np.allclose(
+        trans["rotation_axis"],
+        additional_data["applied_transformation"]["rotation_axis"],
+    )
+    assert isinstance(trans["translation"], np.ndarray)
+    assert np.allclose(
+        trans["translation"],
+        additional_data["applied_transformation"]["translation"],
+    )
+    # Check numpy scalar was converted to Python float
+    assert trans["rotation_angle"] == pytest.approx(0.7853981633974483, rel=1e-10)
+
+    # Check nested lists with arrays
+    assert len(restored.additional_data["nested_arrays"]) == 2
+    assert np.allclose(restored.additional_data["nested_arrays"][0], [1.0, 2.0])
+    assert np.allclose(restored.additional_data["nested_arrays"][1], [3.0, 4.0])
+
+
+def test_serialize_deserialize_empty_additional_data(tmp_path):
+    """Test that empty additional_data is handled correctly."""
+    leader = create_box(10, 10, 10)
+
+    lfcp = LeaderFollowersCuttersPart(leader=leader)
+    assert lfcp.additional_data == {}  # Default is empty dict
+
+    step_file_path = tmp_path / "empty_additional_data.step"
+    serialize_to_step(lfcp, step_file_path)
+    restored = deserialize_to_leader_followers_cutters_part(str(step_file_path))
+
+    # Should have empty additional_data after round-trip
+    assert restored.additional_data == {} or restored.additional_data is None
+
+
+def test_version_2_metadata_still_works(tmp_path):
+    """Test that v2 metadata (without additional_data) still deserializes correctly."""
+    import json
+
+    leader = create_box(10, 10, 10)
+    lfcp = LeaderFollowersCuttersPart(leader=leader)
+
+    step_file_path = tmp_path / "v2_compat.step"
+    serialize_to_step(lfcp, step_file_path)
+
+    # Manually downgrade metadata to v2 (without additional_data key)
+    metadata_path = tmp_path / "v2_compat.lfcp.json"
+    with open(metadata_path, "r") as f:
+        metadata = json.load(f)
+
+    metadata["version"] = 2
+    if "additional_data" in metadata:
+        del metadata["additional_data"]
+
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f)
+
+    # Should still deserialize correctly
+    restored = deserialize_to_leader_followers_cutters_part(str(step_file_path))
+    assert restored.leader is not None
+    assert restored.additional_data is None or restored.additional_data == {}

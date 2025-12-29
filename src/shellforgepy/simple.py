@@ -87,6 +87,7 @@ from .construct.leader_followers_cutters_part import (
 )
 from .construct.named_part import NamedPart
 from .construct.part_collector import PartCollector
+from .construct.part_parameters import PartParameters
 from .geometry.face_point_cloud import face_point_cloud
 from .geometry.higher_order_solids import (
     create_conical_ring,
@@ -252,6 +253,7 @@ __all__ = [
     "write_stl_binary",
     "create_ring_segment_between_points",
     "create_conical_ring",
+    "PartParameters",
 ]
 
 
