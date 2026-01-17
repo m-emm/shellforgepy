@@ -24,6 +24,7 @@ from shellforgepy.adapters._adapter import (
     get_bounding_box,
     mirror_part_native,
     rotate_part_native,
+    scale_part_native,
     translate_part_native,
 )
 from shellforgepy.adapters.freecad.freecad_adapter import get_vertex_points
@@ -776,6 +777,36 @@ class LeaderFollowersCuttersPart:
         self.cutters = [cutter.rotate(*args) for cutter in self.cutters]
         self.non_production_parts = [
             part.rotate(*args) for part in self.non_production_parts
+        ]
+        return self
+
+    def scale(self, factor, center=(0.0, 0.0, 0.0)):
+        """Scale all parts in this composite around the same center.
+
+        This is an in-place operation that scales the leader and all associated
+        parts together, maintaining their relative positions.
+
+        CAD-backend agnostic: Uses scale_part_native() for the leader and
+        applies the same scaling to all subparts, preserving NamedPart wrappers.
+
+        Args:
+            factor: Uniform scale factor or (x, y, z) tuple
+            center: Center point for scaling as (x, y, z) tuple
+
+        Returns:
+            Self (for method chaining)
+        """
+
+        def scale_component(component):
+            if isinstance(component, NamedPart):
+                return component.scale(factor, center=center)
+            return scale_part_native(component, factor, center=center)
+
+        self.leader = scale_part_native(self.leader, factor, center=center)
+        self.followers = [scale_component(follower) for follower in self.followers]
+        self.cutters = [scale_component(cutter) for cutter in self.cutters]
+        self.non_production_parts = [
+            scale_component(part) for part in self.non_production_parts
         ]
         return self
 

@@ -15,6 +15,7 @@ from shellforgepy.simple import (
     get_vertex_coordinates,
     mirror,
     rotate,
+    scale,
     translate,
 )
 
@@ -52,6 +53,26 @@ def test_rotate():
     assert np.allclose(len_x, 20)
     assert np.allclose(len_y, 10)
     assert np.allclose(len_z, 30)
+
+
+def test_scale_around_center():
+
+    part = create_box(10, 20, 30)
+    part_center = get_bounding_box_center(part)
+
+    scaled_part = scale(2, center=part_center)(part)
+
+    scaled_center = get_bounding_box_center(scaled_part)
+    assert np.allclose(scaled_center, part_center)
+
+    bounding_box = get_bounding_box(scaled_part)
+    len_x = bounding_box[1][0] - bounding_box[0][0]
+    len_y = bounding_box[1][1] - bounding_box[0][1]
+    len_z = bounding_box[1][2] - bounding_box[0][2]
+
+    assert np.allclose(len_x, 20)
+    assert np.allclose(len_y, 40)
+    assert np.allclose(len_z, 60)
 
 
 def test_rotate_different_parameter_orders():
@@ -98,6 +119,24 @@ def test_functional_consistency_with_named_parts():
     assert np.allclose(native_center, named_center)
 
 
+def test_scale_consistency_with_named_parts():
+    """Test that scale works consistently with NamedPart objects."""
+    from shellforgepy.construct.named_part import NamedPart
+
+    part = create_box(10, 20, 30)
+    named_part = NamedPart("test", part)
+    center = get_bounding_box_center(part)
+
+    native_scaled = scale(1.5, center=center)(part)
+    named_scaled = scale(1.5, center=center)(named_part)
+
+    assert isinstance(named_scaled, NamedPart)
+
+    native_center = get_bounding_box_center(native_scaled)
+    named_center = get_bounding_box_center(named_scaled.part)
+    assert np.allclose(native_center, named_center)
+
+
 def test_functional_consistency_with_leader_followers():
     """Test that functional transformations work consistently with LeaderFollowersCuttersPart."""
     from shellforgepy.construct.leader_followers_cutters_part import (
@@ -140,6 +179,31 @@ def test_functional_consistency_with_leader_followers():
             original_follower_center[2],
         ),
     )
+
+
+def test_scale_consistency_with_leader_followers():
+    """Test that scale works consistently with LeaderFollowersCuttersPart."""
+    from shellforgepy.construct.leader_followers_cutters_part import (
+        LeaderFollowersCuttersPart,
+    )
+    from shellforgepy.construct.named_part import NamedPart
+
+    leader = create_box(4, 6, 8)
+    follower = NamedPart("follower", create_box(1, 1, 1))
+    group = LeaderFollowersCuttersPart(leader, followers=[follower])
+    center = get_bounding_box_center(leader)
+
+    scaled_group = scale(2, center=center)(group)
+
+    assert isinstance(scaled_group, LeaderFollowersCuttersPart)
+
+    scaled_leader_bb = get_bounding_box(scaled_group.leader)
+    scaled_len = (
+        scaled_leader_bb[1][0] - scaled_leader_bb[0][0],
+        scaled_leader_bb[1][1] - scaled_leader_bb[0][1],
+        scaled_leader_bb[1][2] - scaled_leader_bb[0][2],
+    )
+    assert np.allclose(scaled_len, (8, 12, 16))
 
 
 def test_chained_transformations_consistency():

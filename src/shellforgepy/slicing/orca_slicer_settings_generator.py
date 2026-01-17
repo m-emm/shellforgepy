@@ -43,6 +43,7 @@ def generate_settings(
         raise FileNotFoundError(f"Directory {master_settings_dir} does not exist.")
 
     filament_found = False
+    settings_files_used = []
     for config_file in master_settings_dir.glob("*.yaml"):
         with config_file.open("r", encoding="utf-8") as file_handle:
             master_data = yaml.safe_load(file_handle)
@@ -60,9 +61,11 @@ def generate_settings(
                 continue
             filament_found = True
 
+        settings_files_used.append(config_file.absolute().as_posix())
         if master_data["type"] == "machine":
             print_host = master_data.get("print_host")
             if print_host is not None:
+
                 with (output_dir / "print_host.txt").open(
                     "w", encoding="utf-8"
                 ) as file_handle:
@@ -71,6 +74,7 @@ def generate_settings(
 
         for key, value in process_data["process_overrides"].items():
             if key in master_data:
+
                 _logger.info(f"Overriding {key} with {value}")
                 master_data[key] = str(value)
 
@@ -97,6 +101,10 @@ def generate_settings(
 
     if not filament_found:
         raise ValueError(f"Filament {filament} not found in {master_settings_dir}.")
+
+    _logger.info(
+        f"Used the following master settings files:\n{'\n'.join(settings_files_used)}"
+    )
 
     part_path = Path(process_data["part_file"]).expanduser()
     if not part_path.exists():

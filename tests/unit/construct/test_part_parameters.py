@@ -150,6 +150,38 @@ def test_step_cached_lfcp_round_trip(tmp_path, monkeypatch):
     assert create_part(params) is restored
 
 
+def test_step_cached_includes_source_hash(tmp_path, monkeypatch):
+    params = PartParameters({"length": 10.0})
+    cache_dir = tmp_path / "cache"
+    monkeypatch.setenv("SHELLFORGEPY_STEP_CACHE_DIR", str(cache_dir))
+
+    def fake_serialize(part, path):
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text("cached")
+
+    monkeypatch.setattr(step_serialization, "serialize_to_step", fake_serialize)
+    monkeypatch.setattr(
+        step_serialization,
+        "_get_function_source_hash",
+        lambda func: "hash_a" if func.__name__ == "create_a" else "hash_b",
+    )
+
+    @step_serialization.step_cached(include_source_hash=True)
+    def create_a(parameters):
+        return "part-a"
+
+    @step_serialization.step_cached(include_source_hash=True)
+    def create_b(parameters):
+        return "part-b"
+
+    create_a(params)
+    create_b(params)
+
+    base_hash = params.parameters_hash()
+    assert (cache_dir / f"{base_hash}-hash_a.step").is_file()
+    assert (cache_dir / f"{base_hash}-hash_b.step").is_file()
+
+
 def test_step_cached_no_env(monkeypatch):
     params = PartParameters({"length": 10.0})
     monkeypatch.delenv("SHELLFORGEPY_STEP_CACHE_DIR", raising=False)

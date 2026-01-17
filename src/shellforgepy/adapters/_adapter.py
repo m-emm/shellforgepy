@@ -30,6 +30,12 @@ from shellforgepy.adapters._adapter_bridge import (
     deserialize_structured_step as adapter_deserialize_structured_step,
 )
 from shellforgepy.adapters._adapter_bridge import (
+    export_colored_parts_to_obj as adapter_export_colored_parts_to_obj,
+)
+from shellforgepy.adapters._adapter_bridge import (
+    export_solid_to_obj as adapter_export_solid_to_obj,
+)
+from shellforgepy.adapters._adapter_bridge import (
     export_solid_to_step as adapter_export_solid_to_step,
 )
 from shellforgepy.adapters._adapter_bridge import (
@@ -72,6 +78,10 @@ from shellforgepy.adapters._adapter_bridge import (
 from shellforgepy.adapters._adapter_bridge import rotate_part as adapter_rotate_part
 from shellforgepy.adapters._adapter_bridge import (
     rotate_part_native as adapter_rotate_part_native,
+)
+from shellforgepy.adapters._adapter_bridge import scale_part as adapter_scale_part
+from shellforgepy.adapters._adapter_bridge import (
+    scale_part_native as adapter_scale_part_native,
 )
 from shellforgepy.adapters._adapter_bridge import (
     translate_part as adapter_translate_part,
@@ -275,6 +285,11 @@ def rotate_part(part, angle, center=(0.0, 0.0, 0.0), axis=(0.0, 0.0, 1.0)):
     return adapter_rotate_part(part, angle, center=center, axis=axis)
 
 
+def scale_part(part, factor, center=(0.0, 0.0, 0.0)):
+    """Scale a CAD part around the given center."""
+    return adapter_scale_part(part, factor, center=center)
+
+
 def mirror_part(part, normal=(1, 0, 0), point=(0, 0, 0)):
     """Mirror a CadQuery part across a plane defined by normal and point."""
     return adapter_mirror_part(part, normal=normal, point=point)
@@ -287,6 +302,11 @@ def translate_part_native(part, *args):
 
 def rotate_part_native(part, v1, v2, angle):
     return adapter_rotate_part_native(part, v1, v2, angle)
+
+
+def scale_part_native(part, *args, **kwargs):
+    """Scale using native CAD signature. Used by composite objects."""
+    return adapter_scale_part_native(part, *args, **kwargs)
 
 
 def mirror_part_native(part, *args, **kwargs):
@@ -379,6 +399,61 @@ def export_solid_to_step(
     return adapter_export_solid_to_step(
         solid,
         destination,
+    )
+
+
+def export_solid_to_obj(
+    solid,
+    destination: str,
+    *,
+    tolerance=0.1,
+    angular_tolerance=0.1,
+    color: Optional[tuple] = None,
+    material_name: str = "material_0",
+) -> None:
+    """Export a solid to an OBJ file with optional color via MTL.
+
+    Args:
+        solid: Solid to export.
+        destination: Path to write the OBJ file to.
+        tolerance: Linear deflection tolerance in model units.
+        angular_tolerance: Angular deflection tolerance in radians.
+        color: Optional RGB color tuple (0.0-1.0 range). If provided, creates an MTL file.
+        material_name: Name of the material in the MTL file.
+    """
+    return adapter_export_solid_to_obj(
+        solid,
+        destination,
+        tolerance=tolerance,
+        angular_tolerance=angular_tolerance,
+        color=color,
+        material_name=material_name,
+    )
+
+
+def export_colored_parts_to_obj(
+    parts,
+    destination: str,
+    *,
+    tolerance=0.1,
+    angular_tolerance=0.1,
+) -> None:
+    """Export multiple parts with different colors to a single OBJ file.
+
+    Args:
+        parts: List of tuples (solid, name, color) where:
+            - solid: CAD solid
+            - name: Part/material name
+            - color: RGB tuple (0.0-1.0 range)
+        destination: Path to write the OBJ file to.
+        tolerance: Linear deflection tolerance in model units.
+        angular_tolerance: Angular deflection tolerance in radians.
+    """
+    return adapter_export_colored_parts_to_obj(
+        parts,
+        destination,
+        tolerance=tolerance,
+        angular_tolerance=angular_tolerance,
     )
 
 

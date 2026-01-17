@@ -30,6 +30,55 @@ def get_adapter_id():
     return "freecad"
 
 
+def _normalize_scale_factors(factor):
+    if isinstance(factor, (int, float, np.floating)):
+        value = float(factor)
+        return value, value, value
+    if isinstance(factor, (list, tuple, np.ndarray)) and len(factor) == 3:
+        return tuple(float(value) for value in factor)
+    raise ValueError("Scale factor must be a number or a 3-element sequence")
+
+
+def _scale_matrix(factor, center):
+    if FreeCAD is None:
+        raise RuntimeError("FreeCAD core modules are not available")
+
+    if center is None:
+        center = (0.0, 0.0, 0.0)
+
+    if Base is None:
+        raise RuntimeError("FreeCAD core modules are not available")
+
+    if isinstance(center, Base.Vector):
+        center_vec = center
+    else:
+        center_vec = Base.Vector(center[0], center[1], center[2])
+
+    scale_x, scale_y, scale_z = _normalize_scale_factors(factor)
+    offset_x = (1.0 - scale_x) * center_vec.x
+    offset_y = (1.0 - scale_y) * center_vec.y
+    offset_z = (1.0 - scale_z) * center_vec.z
+
+    matrix = FreeCAD.Matrix()
+    matrix.A11 = scale_x
+    matrix.A12 = 0.0
+    matrix.A13 = 0.0
+    matrix.A14 = offset_x
+    matrix.A21 = 0.0
+    matrix.A22 = scale_y
+    matrix.A23 = 0.0
+    matrix.A24 = offset_y
+    matrix.A31 = 0.0
+    matrix.A32 = 0.0
+    matrix.A33 = scale_z
+    matrix.A34 = offset_z
+    matrix.A41 = 0.0
+    matrix.A42 = 0.0
+    matrix.A43 = 0.0
+    matrix.A44 = 1.0
+    return matrix
+
+
 def create_solid_from_traditional_face_vertex_maps(maps):
     """
     Create a FreeCAD solid from traditional face-vertex maps.
@@ -680,6 +729,26 @@ def rotate_part(part, angle, center=(0.0, 0.0, 0.0), axis=(0.0, 0.0, 1.0)):
         return rotate_retval
 
 
+def scale_part(part, factor, center=(0.0, 0.0, 0.0)):
+    """Scale a FreeCAD part around the given center."""
+    if hasattr(part, "transformGeometry"):
+        scale_retval = part.transformGeometry(_scale_matrix(factor, center))
+    elif hasattr(part, "scale"):
+        if Base is None:
+            raise RuntimeError("FreeCAD core modules are not available")
+        scale_retval = part.copy()
+        scale_retval.scale(
+            float(factor),
+            Base.Vector(center[0], center[1], center[2]),
+        )
+    else:
+        raise TypeError("part does not support scaling")
+    if hasattr(part, "reconstruct"):
+        return part.reconstruct(scale_retval)
+    else:
+        return scale_retval
+
+
 def mirror_part(part, normal=(1, 0, 0), point=(0, 0, 0)):
     """Mirror a FreeCAD part across a plane defined by normal and point.
 
@@ -730,6 +799,15 @@ def translate_part_native(part, *args):
             f"Not reconstructing part {part} , id={id(part)}, translated id={id(translated)}"
         )
         return translated
+
+
+def scale_part_native(part, factor, center=(0.0, 0.0, 0.0)):
+    """Scale using native FreeCAD signature. Used by composite objects."""
+    scale_retval = part.transformGeometry(_scale_matrix(factor, center))
+    if hasattr(part, "reconstruct"):
+        return part.reconstruct(scale_retval)
+    else:
+        return scale_retval
 
 
 def rotate_part_native(part, base, dir, degree):

@@ -8,6 +8,9 @@ import os
 from pathlib import Path
 
 from shellforgepy.adapters._adapter import (
+    export_colored_parts_to_obj as adapter_export_colored_parts_to_obj,
+)
+from shellforgepy.adapters._adapter import (
     export_solid_to_step as adapter_export_solid_to_step,
 )
 from shellforgepy.adapters._adapter import (
@@ -19,6 +22,18 @@ from shellforgepy.construct.part_collector import PartCollector
 from shellforgepy.produce.production_parts_model import PartList
 
 _logger = logging.getLogger(__name__)
+
+# Default colors for parts when not specified (a pleasant color palette)
+DEFAULT_PART_COLORS = [
+    (0.90, 0.30, 0.30),  # Red
+    (0.30, 0.75, 0.40),  # Green
+    (0.30, 0.50, 0.90),  # Blue
+    (0.95, 0.75, 0.20),  # Yellow/Gold
+    (0.80, 0.40, 0.80),  # Purple
+    (0.30, 0.80, 0.80),  # Cyan
+    (0.95, 0.55, 0.25),  # Orange
+    (0.70, 0.70, 0.70),  # Gray
+]
 
 
 def export_solid_to_stl(
@@ -177,6 +192,7 @@ def _arrange_parts_for_production(
                 "y": y_cursor,
                 "width": width,
                 "height": height,
+                "color": rect["original"].get("color"),
             }
         )
 
@@ -203,7 +219,10 @@ def _arrange_parts_for_production(
             item["shape"] = translate(offset_x, offset_y, 0)(item["shape"])
 
     _logger.info(f"Arranged {len(arranged)} parts for production")
-    return [{"name": item["name"], "part": item["shape"]} for item in arranged]
+    return [
+        {"name": item["name"], "part": item["shape"], "color": item.get("color")}
+        for item in arranged
+    ]
 
 
 def arrange_and_export_parts(
@@ -218,14 +237,21 @@ def arrange_and_export_parts(
     max_build_height=None,
     verbose=False,
     export_step=False,
+    export_obj=True,
+    viewer_base_url=None,
 ):
     """Arrange named parts with production support, export individual STLs, and a fused assembly.
 
     Args:
         export_step: If True, also export STEP files alongside STL files.
+        export_obj: If True (default), export OBJ files with colors/materials.
+        viewer_base_url: Base URL for the 3D viewer. If set, viewer URLs are added to the manifest.
     """
 
     env_export_dir = os.environ.get("SHELLFORGEPY_EXPORT_DIR")
+    env_viewer_url = os.environ.get("SHELLFORGEPY_VIEWER_BASE_URL")
+    if env_viewer_url:
+        viewer_base_url = env_viewer_url
     manifest_path_env = os.environ.get("SHELLFORGEPY_WORKFLOW_MANIFEST")
     manifest_path: Path | None = (
         Path(manifest_path_env).expanduser() if manifest_path_env else None
@@ -276,16 +302,20 @@ def arrange_and_export_parts(
         )
         arranged_shapes = [item["part"] for item in arranged_parts]
         names = [item["name"] for item in arranged_parts]
+        # Colors are preserved through arrangement
+        colors = [item.get("color") for item in arranged_parts]
     else:
-        # Simple arrangement - just extract shapes and names
+        # Simple arrangement - just extract shapes, names, and colors
         shapes = []
         names = []
+        colors = []
         for entry in parts_list:
             if "name" not in entry or "part" not in entry:
                 raise KeyError("Each part mapping must include 'name' and 'part'")
             shape = entry["part"]
             shapes.append(shape)
             names.append(str(entry["name"]))
+            colors.append(entry.get("color"))
 
         arranged_shapes = shapes
 
@@ -331,6 +361,34 @@ def arrange_and_export_parts(
         export_solid_to_step(fused_shape, assembly_step_path)
         print(f"Exported whole part to {assembly_step_path}")
 
+    # Export colored OBJ file
+    obj_path = None
+    if export_obj:
+        obj_path = export_dir / f"{base_name}.obj"
+        # Build parts list with colors (assign default colors if not specified)
+        colored_parts = []
+        for i, (name, shape, color) in enumerate(zip(names, arranged_shapes, colors)):
+            if color is None:
+                # Assign a default color from the palette
+                color = DEFAULT_PART_COLORS[i % len(DEFAULT_PART_COLORS)]
+            colored_parts.append((shape, name, tuple(color)))
+
+        print(f"Exporting colored OBJ to {obj_path}")
+        adapter_export_colored_parts_to_obj(colored_parts, str(obj_path))
+        print(f"Exported colored OBJ to {obj_path}")
+
+        if manifest_data is not None:
+            manifest_data["obj_path"] = str(obj_path.resolve())
+            mtl_path = obj_path.with_suffix(".mtl")
+            manifest_data["mtl_path"] = str(mtl_path.resolve())
+
+            # Generate viewer URL if base URL is configured
+            if viewer_base_url:
+                obj_filename = obj_path.name
+                viewer_url = f"{viewer_base_url.rstrip('/')}/?file={obj_filename}"
+                manifest_data["viewer_url"] = viewer_url
+                print(f"Viewer URL: {viewer_url}")
+
     if manifest_data is not None:
         manifest_data["assembly_path"] = str(assembly_path.resolve())
 
@@ -365,11 +423,15 @@ def arrange_and_export(
     max_build_height=None,
     verbose=False,
     export_step=False,
+    export_obj=True,
+    viewer_base_url=None,
 ):
     """Arrange and export a single part with production support.
 
     Args:
         export_step: If True, also export STEP files alongside STL files.
+        export_obj: If True (default), export OBJ files with colors/materials.
+        viewer_base_url: Base URL for the 3D viewer. If set, viewer URLs are added to the manifest.
     """
 
     if script_file is None:
@@ -397,4 +459,6 @@ def arrange_and_export(
         max_build_height=max_build_height,
         verbose=verbose,
         export_step=export_step,
+        export_obj=export_obj,
+        viewer_base_url=viewer_base_url,
     )

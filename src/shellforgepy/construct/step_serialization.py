@@ -10,6 +10,8 @@ and additional_data dict that cannot be encoded in the STEP file's object names.
 """
 
 import functools
+import hashlib
+import inspect
 import json
 import logging
 import os
@@ -341,15 +343,37 @@ def deserialize_to_leader_followers_cutters_part(
     )
 
 
-def step_cached(func):
+def step_cached(func=None, *, include_source_hash=False):
     """
     Cache parts to STEP files based on PartParameters.
 
     When SHELLFORGEPY_STEP_CACHE_DIR is set, a STEP file named by the parameter
     hash will be used for cache hits. On misses, the function is called and the
     result serialized to the cache.
-    """
 
+    Set include_source_hash=True to invalidate the cache when the function
+    source changes.
+    """
+    if func is not None:
+        return _step_cached_impl(func, include_source_hash=include_source_hash)
+
+    def decorator(inner_func):
+        return _step_cached_impl(inner_func, include_source_hash=include_source_hash)
+
+    return decorator
+
+
+def _get_function_source_hash(func) -> Optional[str]:
+    try:
+        source = inspect.getsource(func)
+    except (OSError, TypeError):
+        _logger.warning("Unable to read source for %s; skipping source hash.", func)
+        return None
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    return digest
+
+
+def _step_cached_impl(func, include_source_hash: bool):
     @functools.wraps(func)
     def wrapper(parameters: PartParameters, *args, **kwargs):
         if not isinstance(parameters, PartParameters):
@@ -361,6 +385,10 @@ def step_cached(func):
 
         os.makedirs(cache_dir, exist_ok=True)
         cache_key = parameters.parameters_hash()
+        if include_source_hash:
+            source_hash = _get_function_source_hash(func)
+            if source_hash:
+                cache_key = f"{cache_key}-{source_hash}"
         step_path = os.path.join(cache_dir, f"{cache_key}.step")
 
         if os.path.exists(step_path):

@@ -4,6 +4,7 @@ from shellforgepy.adapters._adapter import (
     copy_part,
     mirror_part_native,
     rotate_part_native,
+    scale_part_native,
     translate_part_native,
 )
 
@@ -42,6 +43,12 @@ class NamedPart:
         mirrored_part = mirror_part_native(self.part, *args, **kwargs)
         self.part = mirrored_part
         return NamedPart(self.name, mirrored_part)
+
+    def scale(self, factor, center=(0.0, 0.0, 0.0)):
+        """We mimick most cad-systems in-place scaling. We must do an in-place update of self.part."""
+        scaled_part = scale_part_native(self.part, factor, center=center)
+        self.part = scaled_part
+        return NamedPart(self.name, scaled_part)
 
     def reconstruct(self, transformed_result=None):
         """Reconstruct this NamedPart after transformation."""
