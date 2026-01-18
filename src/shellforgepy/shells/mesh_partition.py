@@ -1734,6 +1734,23 @@ class MeshPartition:
                 else:
                     new_face_to_region[new_face_idx] = new_region_id
 
+        if (
+            len(
+                {
+                    r
+                    for r in new_face_to_region.values()
+                    if r == region_id or r == new_region_id
+                }
+            )
+            < 2
+        ):
+            _logger.warning(
+                f"Perforate and split by plane did not create two regions for region {region_id}."
+            )
+            raise Exception(
+                f"Region {region_id} was not split by plane with normal {plane_normal} at point {plane_point}."
+            )
+
         return MeshPartition(new_mesh, new_face_to_region)
 
     def perforate_and_split_region_by_cylinder(

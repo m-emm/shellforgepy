@@ -44,6 +44,7 @@ CONFIG_KEYS = {
     "orca_env": "orca.env",
     "render_script": "render.script",
     "upload_printer": "upload.printer",
+    "viewer_base_url": "viewer.base_url",
 }
 
 CONFIG_KEY_DOCUMENTATION = {
@@ -58,6 +59,7 @@ CONFIG_KEY_DOCUMENTATION = {
     "orca_env": "Environment variables to set when running OrcaSlicer.",
     "render_script": "Path to a custom rendering script to generate preview images.",
     "upload_printer": "Network address of the 3D printer to upload the print job to.",
+    "viewer_base_url": "Base URL for the 3D viewer (e.g., http://localhost:5173).",
 }
 
 
@@ -365,6 +367,11 @@ def run_workflow(args: argparse.Namespace) -> int:
     env[EXPORT_DIR_ENV] = str(run_directory)
     env[MANIFEST_ENV] = str(manifest_path)
 
+    # Set viewer base URL if configured
+    viewer_base_url = _resolve_config_key_value(config, "viewer_base_url")
+    if viewer_base_url:
+        env["SHELLFORGEPY_VIEWER_BASE_URL"] = str(viewer_base_url)
+
     default_runner = Path(__file__).resolve().parents[3] / "freecad_python.sh"
     _logger.info(
         f"Default Python runner: {default_runner} exists: {default_runner.exists()}"
@@ -413,6 +420,12 @@ def run_workflow(args: argparse.Namespace) -> int:
     part_path = _ensure_path(part_path, "generated STL")
 
     _logger.info("Detected part file: %s", part_path)
+
+    # Log viewer URL if available in manifest
+    viewer_url = manifest.get("viewer_url")
+    if viewer_url:
+        _logger.info("3D Viewer URL: %s", viewer_url)
+
     viewer_default = _resolve_config_key_value(config, "default_stl_file")
     if viewer_default:
         try:
@@ -625,10 +638,15 @@ def run_workflow(args: argparse.Namespace) -> int:
     # Open Orca GUI if requested
     if args.open and slice_requested:
         if project_path.exists():
-            _logger.info("Opening OrcaSlicer GUI with project file: %s", project_path)
+            open_cmd = [str(orca_exec_path), str(project_path)]
+            _logger.info(
+                "Opening OrcaSlicer GUI with project file: %s with %s",
+                project_path,
+                open_cmd,
+            )
             try:
                 # Start OrcaSlicer in the background
-                open_cmd = [str(orca_exec_path), str(project_path)]
+
                 subprocess.Popen(
                     open_cmd,
                     stdout=subprocess.DEVNULL,

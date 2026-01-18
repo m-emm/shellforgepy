@@ -54,7 +54,9 @@ def normalize_to_solid(obj) -> cq.Solid | cq.Shape:
         _logger.debug(f"normalize_to_solid: processing object of type {type(obj)}")
     solids = extract_solids(obj)
     if not solids:
-        raise ValueError("No solids found in object. (Is it only faces/shells?)")
+        raise ValueError(
+            f"No solids found in object. (Is it only faces/shells?) solids={solids} type(obj)={type(obj)}"
+        )
 
     if len(solids) == 1:
         return solids[0]
@@ -71,6 +73,32 @@ def _as_cq_vector(value) -> cq.Vector:
     if len(value) != 3:
         raise ValueError("Vector value must provide exactly three components")
     return cq.Vector(float(value[0]), float(value[1]), float(value[2]))
+
+
+def _normalize_scale_factors(factor):
+    if isinstance(factor, (int, float, np.floating)):
+        value = float(factor)
+        return value, value, value
+    if isinstance(factor, (list, tuple, np.ndarray)) and len(factor) == 3:
+        return tuple(float(value) for value in factor)
+    raise ValueError("Scale factor must be a number or a 3-element sequence")
+
+
+def _scale_matrix(factor, center):
+    if center is None:
+        center = (0.0, 0.0, 0.0)
+    center_vec = _as_cq_vector(center)
+    scale_x, scale_y, scale_z = _normalize_scale_factors(factor)
+    offset_x = (1.0 - scale_x) * center_vec.x
+    offset_y = (1.0 - scale_y) * center_vec.y
+    offset_z = (1.0 - scale_z) * center_vec.z
+    return cq.Matrix(
+        (
+            (scale_x, 0.0, 0.0, offset_x),
+            (0.0, scale_y, 0.0, offset_y),
+            (0.0, 0.0, scale_z, offset_z),
+        )
+    )
 
 
 def get_bounding_box(
@@ -612,6 +640,153 @@ def export_solid_to_step(
     )
 
 
+def export_solid_to_obj(
+    solid,
+    destination: str,
+    *,
+    tolerance=0.1,
+    angular_tolerance=0.1,
+    color: Optional[Tuple[float, float, float]] = None,
+    material_name: str = "material_0",
+) -> None:
+    """Export a CadQuery solid to an OBJ file with optional color via MTL.
+
+    Args:
+        solid: CadQuery solid or workplane to export.
+        destination: Path to write the OBJ file to.
+        tolerance: Linear deflection tolerance in model units (default 0.1).
+        angular_tolerance: Angular deflection tolerance in radians.
+        color: Optional RGB color tuple (0.0-1.0 range). If provided, creates an MTL file.
+        material_name: Name of the material in the MTL file.
+    """
+    import os
+
+    destination = str(destination)
+    shape = _as_shape(solid)
+
+    # Tessellate the shape
+    vertices, triangles = shape.tessellate(tolerance, angular_tolerance)
+
+    # Determine MTL file path if color is provided
+    mtl_path = None
+    mtl_filename = None
+    if color is not None:
+        base, _ = os.path.splitext(destination)
+        mtl_path = base + ".mtl"
+        mtl_filename = os.path.basename(mtl_path)
+
+    # Write OBJ file
+    with open(destination, "w") as f:
+        f.write("# OBJ file exported by ShellForgePy\n")
+
+        if mtl_filename:
+            f.write(f"mtllib {mtl_filename}\n")
+
+        # Write vertices
+        for v in vertices:
+            f.write(f"v {v.x} {v.y} {v.z}\n")
+
+        # Use material if provided
+        if color is not None:
+            f.write(f"usemtl {material_name}\n")
+
+        # Write faces (OBJ uses 1-based indexing)
+        for tri in triangles:
+            f.write(f"f {tri[0]+1} {tri[1]+1} {tri[2]+1}\n")
+
+    # Write MTL file if color is provided
+    if mtl_path and color is not None:
+        _write_mtl_file(mtl_path, {material_name: color})
+
+
+def export_colored_parts_to_obj(
+    parts: List[Tuple[object, str, Tuple[float, float, float]]],
+    destination: str,
+    *,
+    tolerance=0.1,
+    angular_tolerance=0.1,
+) -> None:
+    """Export multiple parts with different colors to a single OBJ file.
+
+    Args:
+        parts: List of tuples (solid, name, color) where:
+            - solid: CadQuery solid or workplane
+            - name: Part/material name (used as material identifier)
+            - color: RGB tuple (0.0-1.0 range)
+        destination: Path to write the OBJ file to.
+        tolerance: Linear deflection tolerance in model units.
+        angular_tolerance: Angular deflection tolerance in radians.
+    """
+    import os
+
+    destination = str(destination)
+    base, _ = os.path.splitext(destination)
+    mtl_path = base + ".mtl"
+    mtl_filename = os.path.basename(mtl_path)
+
+    materials = {}
+    vertex_offset = 0
+
+    with open(destination, "w") as f:
+        f.write("# OBJ file exported by ShellForgePy\n")
+        f.write(f"mtllib {mtl_filename}\n\n")
+
+        for solid, name, color in parts:
+            shape = _as_shape(solid)
+            vertices, triangles = shape.tessellate(tolerance, angular_tolerance)
+
+            # Sanitize material name (OBJ material names shouldn't have spaces)
+            mat_name = name.replace(" ", "_").replace("/", "_")
+            materials[mat_name] = color
+
+            f.write(f"# Object: {name}\n")
+            f.write(f"o {mat_name}\n")
+
+            # Write vertices
+            for v in vertices:
+                f.write(f"v {v.x} {v.y} {v.z}\n")
+
+            # Use material
+            f.write(f"usemtl {mat_name}\n")
+
+            # Write faces (OBJ uses 1-based indexing, offset by previous vertices)
+            for tri in triangles:
+                f.write(
+                    f"f {tri[0]+1+vertex_offset} {tri[1]+1+vertex_offset} {tri[2]+1+vertex_offset}\n"
+                )
+
+            vertex_offset += len(vertices)
+            f.write("\n")
+
+    # Write MTL file
+    _write_mtl_file(mtl_path, materials)
+
+
+def _write_mtl_file(
+    path: str,
+    materials: Dict[str, Tuple[float, float, float]],
+) -> None:
+    """Write an MTL material library file.
+
+    Args:
+        path: Path to write the MTL file to.
+        materials: Dictionary mapping material names to RGB color tuples (0.0-1.0).
+    """
+    with open(path, "w") as f:
+        f.write("# MTL file exported by ShellForgePy\n\n")
+
+        for mat_name, color in materials.items():
+            r, g, b = color
+            f.write(f"newmtl {mat_name}\n")
+            f.write(f"Ka {r*0.2:.6f} {g*0.2:.6f} {b*0.2:.6f}\n")  # Ambient
+            f.write(f"Kd {r:.6f} {g:.6f} {b:.6f}\n")  # Diffuse
+            f.write(f"Ks 0.500000 0.500000 0.500000\n")  # Specular
+            f.write(f"Ns 96.078431\n")  # Specular exponent
+            f.write(f"Ni 1.000000\n")  # Optical density
+            f.write(f"d 1.000000\n")  # Dissolve (opacity)
+            f.write(f"illum 2\n\n")  # Illumination model
+
+
 def export_structured_step(
     structure: Dict[str, List[Tuple[str | None, object]]],
     path: str,
@@ -625,8 +800,10 @@ def export_structured_step(
                 "GROUP_NAME": [(name, solid), ...]
             }
         path:
-            Output STEP file path.
+            Output STEP file path (str or Path-like object).
     """
+    # Convert Path to str if needed (CadQuery's Write() requires str)
+    path = str(path)
 
     root = cq.Assembly(name="ROOT")
 
@@ -652,14 +829,17 @@ def export_structured_step(
 def import_solid_from_step(
     source: str,
 ):
-    """Import a CadQuery solid or workplane from a STEP file.
+    """Import a CadQuery solid from a STEP file.
 
     Args:
         source: Path to read the STEP file from.
-    """
 
+    Returns:
+        Normalized solid (not a Workplane)
+    """
+    source = str(source)  # Handle Path objects
     imported = cq.importers.importStep(source)
-    return imported
+    return normalize_to_solid(imported)
 
 
 def deserialize_structured_step(path: str) -> Dict[str, List[Tuple[str, object]]]:
@@ -671,6 +851,8 @@ def deserialize_structured_step(path: str) -> Dict[str, List[Tuple[str, object]]
             "GROUP_NAME": [(name, solid), ...]
         }
     """
+    # Convert Path to str if needed
+    path = str(path)
 
     assembly = cq.importers.importStep(path)
 
@@ -684,19 +866,33 @@ def deserialize_structured_step(path: str) -> Dict[str, List[Tuple[str, object]]
 
             for child in group.children:
                 part_name = child.name
-                solid = child.obj
+                # Normalize to solid to ensure consistent type
+                solid = normalize_to_solid(child.obj)
                 parts.append((part_name, solid))
 
             result[group_name] = parts
 
         return result
 
-    # Fallback: flat STEP (no structure)
-    return {"ROOT": [(None, assembly)]}
+    # Fallback: flat STEP (no structure) - extract individual solids
+    solids = extract_solids(assembly)
+    if solids:
+        return {"ROOT": [(None, solid) for solid in solids]}
+    return {"ROOT": [(None, normalize_to_solid(assembly))]}
 
 
 def copy_part(part):
-    """Create a copy of a CadQuery part."""
+    """Create a copy of a CadQuery part.
+
+    Handles empty Compounds gracefully by returning an empty Compound copy.
+    """
+    # Check for empty Compound before normalizing
+    if isinstance(part, cq.Compound):
+        solids = list(part.Solids())
+        if not solids:
+            # Return a copy of the empty Compound
+            return cq.Compound.makeCompound([])
+
     part = normalize_to_solid(part)  # get rid of assemblies, etc
 
     return part.copy()
@@ -732,6 +928,20 @@ def rotate_part(part, angle, center=(0.0, 0.0, 0.0), axis=(0.0, 0.0, 1.0)):
         return rotate_retval
 
 
+def scale_part(part, factor, center=(0.0, 0.0, 0.0)):
+    """Scale a CadQuery part around the given center."""
+    if hasattr(part, "transformGeometry"):
+        scale_retval = part.transformGeometry(_scale_matrix(factor, center))
+    elif hasattr(part, "scale"):
+        scale_retval = part.scale(factor, center=center)
+    else:
+        raise TypeError("part does not support scaling")
+    if hasattr(part, "reconstruct"):
+        return part.reconstruct(scale_retval)
+    else:
+        return scale_retval
+
+
 def mirror_part(part, normal=(1, 0, 0), point=(0, 0, 0)):
     """Mirror a CadQuery part across a plane defined by normal and point."""
     normal_vec = cq.Vector(*normal)
@@ -762,6 +972,15 @@ def translate_part_native(part, *args):
             f"Not reconstructing part {part} , id={id(part)}, translated id={id(translate_retval)}"
         )
         return translate_retval
+
+
+def scale_part_native(part, factor, center=(0.0, 0.0, 0.0)):
+    """Scale using native CadQuery signature. Used by composite objects."""
+    scale_retval = part.transformGeometry(_scale_matrix(factor, center))
+    if hasattr(part, "reconstruct"):
+        return part.reconstruct(scale_retval)
+    else:
+        return scale_retval
 
 
 def rotate_part_native(part, v1, v2, angle):

@@ -30,6 +30,7 @@ from shellforgepy.simple import (
     create_extruded_polygon,
     get_vertex_coordinates,
     rotate,
+    scale,
     stack_alignment_of,
     translate,
 )
@@ -132,6 +133,25 @@ def test_basic_rotate_around_origin():
     assert (
         abs(rotated_bounds_z[2] - 5) < 1e-6
     ), f"Z-rotated Z length should be 5, got {rotated_bounds_z[2]}"
+
+
+@pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
+def test_basic_scale_around_center():
+    """Test scaling around a specific center keeps the center fixed."""
+    box = create_box(10, 20, 30, (0, 0, 0))
+    center = box.Center()
+
+    scaled = scale(2.0, center=(center.x, center.y, center.z))(box)
+    scaled_center = scaled.Center()
+
+    assert abs(scaled_center.x - center.x) < 1e-6
+    assert abs(scaled_center.y - center.y) < 1e-6
+    assert abs(scaled_center.z - center.z) < 1e-6
+
+    bbox = scaled.BoundingBox()
+    assert abs(bbox.xlen - 20) < 1e-6
+    assert abs(bbox.ylen - 40) < 1e-6
+    assert abs(bbox.zlen - 60) < 1e-6
 
 
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")

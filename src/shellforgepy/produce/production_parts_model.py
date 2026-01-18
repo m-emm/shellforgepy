@@ -16,6 +16,7 @@ class PartInfo:
     skip_in_production: bool = False
     prod_rotation_angle: Optional[float] = None
     prod_rotation_axis: Optional[Tuple[float, float, float]] = None
+    color: Optional[Tuple[float, float, float]] = None  # RGB tuple (0.0-1.0)
 
 
 class PartList:
@@ -33,6 +34,7 @@ class PartList:
         skip_in_production=False,
         prod_rotation_angle=None,
         prod_rotation_axis=None,
+        color=None,
     ):
         if isinstance(part, LeaderFollowersCuttersPart):
             shape = part.get_leader_as_part()
@@ -48,6 +50,15 @@ class PartList:
                 raise ValueError("prod_rotation_axis must contain exactly three values")
             axis_tuple = tuple(float(component) for component in prod_rotation_axis)
 
+        color_tuple = None
+        if color is not None:
+            if len(color) != 3:
+                raise ValueError("color must be an RGB tuple with exactly three values")
+            color_tuple = tuple(float(c) for c in color)
+            # Validate range
+            if not all(0.0 <= c <= 1.0 for c in color_tuple):
+                raise ValueError("color RGB values must be in the range 0.0-1.0")
+
         self.parts.append(
             PartInfo(
                 name=name,
@@ -56,6 +67,7 @@ class PartList:
                 skip_in_production=skip_in_production,
                 prod_rotation_angle=prod_rotation_angle,
                 prod_rotation_axis=axis_tuple,
+                color=color_tuple,
             )
         )
 
@@ -72,6 +84,7 @@ class PartList:
                     if info.prod_rotation_axis is not None
                     else None
                 ),
+                "color": (list(info.color) if info.color is not None else None),
             }
             for info in self.parts
         ]

@@ -6,6 +6,7 @@ from shellforgepy.adapters._adapter import (
     get_bounding_box,
     mirror_part,
     rotate_part,
+    scale_part,
     translate_part,
 )
 from shellforgepy.construct.alignment import Alignment
@@ -55,6 +56,19 @@ def mirror(normal=(1, 0, 0), point=(0, 0, 0)):
     def retval(body):
         body_copy = copy_part(body)
         return mirror_part(body_copy, normal=normal, point=point)
+
+    return retval
+
+
+def scale(factor, center=None):
+    """Create a scaling transformation function."""
+
+    # There are NO FRAMEWORK SPECIFC CALLS allowed here! Use adapter functions only!
+    #  isinstance(x, NamedPart)  or similar ARE FORBIDDEN here!"
+
+    def retval(body):
+        body_copy = copy_part(body)
+        return scale_part(body_copy, factor, center=center)
 
     return retval
 
