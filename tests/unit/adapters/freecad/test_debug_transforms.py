@@ -1,4 +1,8 @@
 import numpy as np
+import pytest
+
+pytest.importorskip("FreeCAD")
+
 from shellforgepy.construct.named_part import NamedPart
 from shellforgepy.simple import create_box, get_bounding_box_center, rotate, translate
 

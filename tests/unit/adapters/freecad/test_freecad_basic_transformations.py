@@ -4,22 +4,13 @@ import pytest
 # FreeCAD specific tests
 # Any tests which require direct FreeCAD imports should go into the tests/unit/adapters/freecad/ folder
 
-# Try to import FreeCAD and skip tests if not available
-try:
-    import Part
-    from FreeCAD import Base
+pytest.importorskip("FreeCAD")
 
-    freecad_available = True
-except ImportError:
-    freecad_available = False
-    Base = None
-    Part = None
+from FreeCAD import Base
 
-if freecad_available:
-    from shellforgepy.adapters.freecad.freecad_adapter import mirror_part
-else:
-    mirror_part = None
+freecad_available = True
 
+from shellforgepy.adapters.freecad.freecad_adapter import mirror_part
 from shellforgepy.simple import (
     ALIGNMENT_SIGNS,
     Alignment,

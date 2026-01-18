@@ -1,7 +1,7 @@
 """Unit tests for the fixed create_screw_thread implementation."""
 
 import pytest
-from shellforgepy.adapters._adapter import get_volume
+from shellforgepy.adapters._adapter import get_bounding_box, get_volume
 from shellforgepy.geometry.higher_order_solids import create_screw_thread
 
 
@@ -199,6 +199,43 @@ def test_create_screw_thread_multiple_turns():
         volume > 0
     ), f"Multi-turn screw thread should have positive volume, got {volume}"
     print(f"Multi-turn screw thread volume: {volume:.6f}")
+
+
+def test_create_screw_thread_multi_start():
+    """Test creation of multi-start threads (e.g., T8 4-start thread cutter)."""
+    pitch = 2.0
+    starts = 4
+    common_kwargs = dict(
+        pitch=pitch,
+        inner_radius=2.75,
+        outer_radius=4.0,
+        outer_thickness=0.665,
+        num_turns=3,
+        resolution=20,
+        with_core=False,
+    )
+
+    single_start = create_screw_thread(**common_kwargs)
+    multi_start = create_screw_thread(**common_kwargs, starts=starts)
+
+    assert single_start is not None
+    assert multi_start is not None
+
+    single_height = (
+        get_bounding_box(single_start)[1][2] - get_bounding_box(single_start)[0][2]
+    )
+    multi_height = (
+        get_bounding_box(multi_start)[1][2] - get_bounding_box(multi_start)[0][2]
+    )
+
+    expected_multi_height = single_height + pitch * (starts - 1) / starts
+    assert multi_height == pytest.approx(
+        expected_multi_height, rel=0.05
+    ), "Multi-start thread should be axially staggered"
+
+    assert get_volume(multi_start) > get_volume(
+        single_start
+    ), "Multi-start thread should have larger volume than single start"
 
 
 def test_create_screw_thread_validation():

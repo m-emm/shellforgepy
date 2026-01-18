@@ -10,10 +10,9 @@ Advanced import regenerator that:
 
 import ast
 import subprocess
-import sys
-from pathlib import Path
-from typing import Dict, List, Set, Tuple, Optional, Any
 from collections import defaultdict
+from pathlib import Path
+from typing import Dict, List, Optional, Set
 
 PROJECT_DIR = Path(__file__).parent.parent.resolve()
 SRC_DIR = PROJECT_DIR / "src"

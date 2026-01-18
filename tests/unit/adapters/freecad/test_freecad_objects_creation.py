@@ -4,17 +4,11 @@ import pytest
 # FreeCAD specific tests
 # Any tests which require direct FreeCAD imports should go into the tests/unit/adapters/freecad/ folder
 
+pytest.importorskip("FreeCAD")
 
-# Try to import FreeCAD and skip tests if not available
-try:
-    from FreeCAD import Base
+from FreeCAD import Base  # noqa: F401
 
-    freecad_available = True
-except ImportError:
-    freecad_available = False
-    Base = None
-    Part = None
-
+freecad_available = True
 
 from shellforgepy.geometry.mesh_builders import create_dodecahedron_geometry
 from shellforgepy.simple import (

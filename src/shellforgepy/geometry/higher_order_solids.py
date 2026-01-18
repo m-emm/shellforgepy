@@ -542,6 +542,7 @@ def create_screw_thread(
     optimize_start=False,
     optimize_start_angle=15,
     core_offset=0,
+    starts=1,
 ):
     """Create a helical screw thread using trapezoidal snake geometry.
 
@@ -561,10 +562,20 @@ def create_screw_thread(
         optimize_start: Whether to optimize the thread start
         optimize_start_angle: Angle over which to optimize start (degrees)
         core_offset: Z offset for the core
+        starts: Number of thread starts (for multi-start threads)
 
     Returns:
         Solid representing the screw thread
     """
+    starts_value = starts
+    try:
+        starts = int(starts_value)
+    except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
+        raise ValueError("starts must be a positive integer") from exc
+
+    if starts < 1 or starts != starts_value:
+        raise ValueError("starts must be a positive integer")
+
     # Fix the default inner_thickness to match original implementation
     if inner_thickness is None:
         inner_thickness = pitch - outer_thickness
@@ -579,7 +590,9 @@ def create_screw_thread(
     # Convert angles to radians
     optimize_start_angle_rad = math.radians(optimize_start_angle)
 
-    def construct_thread_for_turn(turn_index, is_partial=False, num_segments=None):
+    def construct_thread_for_turn(
+        turn_index, start_angle_offset, z_offset, is_partial=False, num_segments=None
+    ):
         """Construct thread geometry for one turn using snake geometry."""
         if num_segments is None:
             num_segments = resolution
@@ -590,13 +603,18 @@ def create_screw_thread(
 
         for i in range(num_segments + 1):
             # Calculate angle for this segment
-            angle = 2 * math.pi * i / resolution
+            angle_progress = 2 * math.pi * i / resolution
+            angle = angle_progress + start_angle_offset
 
             # Apply optimization for first turn if requested
             current_outer_radius = outer_radius
-            if turn_index == 0 and optimize_start and angle < optimize_start_angle_rad:
+            if (
+                turn_index == 0
+                and optimize_start
+                and angle_progress < optimize_start_angle_rad
+            ):
                 # Gradually transition from inner to outer radius
-                radius_factor = angle / optimize_start_angle_rad
+                radius_factor = angle_progress / optimize_start_angle_rad
                 current_outer_radius = (inner_radius + outer_radius) / 2 + (
                     outer_radius - inner_radius
                 ) / 2 * radius_factor
@@ -607,7 +625,7 @@ def create_screw_thread(
 
             x = path_radius * math.cos(angle)
             y = path_radius * math.sin(angle)
-            z = pitch * i / resolution + turn_index * pitch
+            z = pitch * i / resolution + turn_index * pitch + z_offset
 
             base_points.append([x, y, z])
 
@@ -660,35 +678,58 @@ def create_screw_thread(
             print(f"Error creating thread turn {turn_index}: {e}")
             return None
 
-    # Build the complete thread
-    thread_parts = []
+    def build_thread_for_start(start_index):
+        """Build one start of the thread with a phase offset."""
+        start_angle_offset = 2 * math.pi * start_index / starts
+        z_offset = (pitch * start_index) / starts
 
-    # Create full turns
-    for turn_index in range(whole_turns):
-        if turn_index == 0 and optimize_start:
-            # First turn with optimization
-            turn_solid = construct_thread_for_turn(turn_index, is_partial=False)
-        else:
-            # Regular turn
-            turn_solid = construct_thread_for_turn(turn_index, is_partial=False)
+        thread_parts = []
 
-        if turn_solid is not None:
-            thread_parts.append(turn_solid)
+        # Create full turns
+        for turn_index in range(whole_turns):
+            turn_solid = construct_thread_for_turn(
+                turn_index,
+                start_angle_offset,
+                z_offset,
+                is_partial=False,
+            )
+            if turn_solid is not None:
+                thread_parts.append(turn_solid)
 
-    # Create partial turn if needed
-    if partial_turn > 0:
-        partial_solid = construct_thread_for_turn(
-            whole_turns, is_partial=True, num_segments=partial_turn_segments
-        )
-        if partial_solid is not None:
-            thread_parts.append(partial_solid)
+        # Create partial turn if needed
+        if partial_turn > 0:
+            partial_solid = construct_thread_for_turn(
+                whole_turns,
+                start_angle_offset,
+                z_offset,
+                is_partial=True,
+                num_segments=partial_turn_segments,
+            )
+            if partial_solid is not None:
+                thread_parts.append(partial_solid)
 
-    if not thread_parts:
+        if not thread_parts:
+            return None
+
+        # Fuse all thread parts for this start
+        start_thread = thread_parts[0]
+        for part in thread_parts[1:]:
+            start_thread = start_thread.fuse(part)
+
+        return start_thread
+
+    # Build and fuse all starts
+    thread_starts = []
+    for start_index in range(starts):
+        start_thread = build_thread_for_start(start_index)
+        if start_thread is not None:
+            thread_starts.append(start_thread)
+
+    if not thread_starts:
         raise ValueError("Failed to create any thread geometry")
 
-    # Fuse all thread parts
-    final_thread = thread_parts[0]
-    for part in thread_parts[1:]:
+    final_thread = thread_starts[0]
+    for part in thread_starts[1:]:
         final_thread = final_thread.fuse(part)
 
     # Add core if requested (following original logic)

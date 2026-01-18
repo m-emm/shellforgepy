@@ -3,22 +3,17 @@ import tempfile
 from pathlib import Path
 
 import pytest
+
+pytest.importorskip("FreeCAD")
+
+from FreeCAD import Base
 from shellforgepy.adapters._adapter import get_volume
 from shellforgepy.simple import *
 
 # FreeCAD specific tests
 # Any tests which require direct FreeCAD imports should go into the tests/unit/adapters/freecad/ folder
 
-
-try:
-    import FreeCAD
-
-    if FreeCAD is not None:
-        freecad_available = True
-    else:
-        freecad_available = False
-except ImportError:
-    freecad_available = False
+freecad_available = True
 
 
 @pytest.mark.skipif(not freecad_available, reason="FreeCAD not available")
@@ -122,15 +117,9 @@ def test_named_part_rotate():
     named_part = NamedPart("test_box", box)
 
     # Rotate 90 degrees around Z axis using native FreeCAD signature: rotate(base, dir, degree)
-    if freecad_available:
-        from FreeCAD import Base
-
-        base_vec = Base.Vector(0, 0, 0)  # center point
-        dir_vec = Base.Vector(0, 0, 1)  # axis direction
-        rotated_part = named_part.rotate(base_vec, dir_vec, 90)
-    else:
-        # For CadQuery compatibility, use different rotation approach
-        rotated_part = named_part.rotate((0, 0, 0), (0, 0, 1), 90)
+    base_vec = Base.Vector(0, 0, 0)  # center point
+    dir_vec = Base.Vector(0, 0, 1)  # axis direction
+    rotated_part = named_part.rotate(base_vec, dir_vec, 90)
 
     # After rotation, dimensions should swap (roughly)
     min_point, max_point = get_bounding_box(rotated_part)

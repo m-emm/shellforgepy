@@ -70,9 +70,9 @@ htmlcov/
 
 # Development and build artifacts
 .claude/
-tools/
 file_summaries.json
 FILES.md
+devtools/
 
 # Output directories
 output/

@@ -2,16 +2,9 @@
 
 import pytest
 
-# Try to import FreeCAD and skip tests if not available
-try:
-    import Part
-    from FreeCAD import Base
+pytest.importorskip("FreeCAD")
 
-    freecad_available = True
-except ImportError:
-    freecad_available = False
-    Base = None
-    Part = None
+freecad_available = True
 
 from shellforgepy.adapters.freecad.freecad_adapter import (
     apply_fillet_by_alignment,
