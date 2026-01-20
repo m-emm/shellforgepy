@@ -83,13 +83,13 @@ from shellforgepy.adapters._adapter_bridge import scale_part as adapter_scale_pa
 from shellforgepy.adapters._adapter_bridge import (
     scale_part_native as adapter_scale_part_native,
 )
+from shellforgepy.adapters._adapter_bridge import tesselate as adapter_tesselate
 from shellforgepy.adapters._adapter_bridge import (
     translate_part as adapter_translate_part,
 )
 from shellforgepy.adapters._adapter_bridge import (
     translate_part_native as adapter_translate_part_native,
 )
-from shellforgepy.adapters._adapter_bridge import tesselate as adapter_tesselate
 
 """Adapter functions that wrap the selected CAD backend. 
 These functions should not contain any backend-specific code. They document the  api that users of shellforgepy should use, independent of the CAD backend.

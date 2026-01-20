@@ -2,6 +2,7 @@ import logging
 from itertools import product
 
 import numpy as np
+from scipy.spatial import ConvexHull
 from shellforgepy.adapters._adapter import (
     create_box,
     get_bounding_box,
@@ -406,6 +407,7 @@ def find_planar_surface_features(
     normal_tolerance=1e-4,
     tessellation_tolerance=0.1,
     tessellation_angular_tolerance=0.1,
+    on_convex_hull=False,
 ):
     """
     Find planar surface features by grouping coplanar triangles from tessellation.
@@ -422,6 +424,9 @@ def find_planar_surface_features(
         Linear deflection for tessellation.
     tessellation_angular_tolerance : float, optional
         Angular deflection for tessellation.
+    on_convex_hull : bool, optional
+        If True, compute the convex hull of tessellated vertices and use hull triangles
+        for plane detection instead of the original tessellation.
 
     Returns:
     --------
@@ -449,6 +454,15 @@ def find_planar_surface_features(
         return np.array(vertex, dtype=np.float64)
 
     vertex_array = np.array([_vertex_to_array(vertex) for vertex in vertices])
+
+    hull_center = None
+    if on_convex_hull:
+        if vertex_array.shape[0] < 4:
+            return []
+        hull = ConvexHull(vertex_array)
+        triangles = hull.simplices
+        hull_center = np.mean(vertex_array, axis=0)
+
     plane_records = []
 
     for tri in triangles:
@@ -461,6 +475,10 @@ def find_planar_surface_features(
             continue
 
         normal = normalize(normal)
+        if hull_center is not None:
+            tri_center = np.mean(tri_points, axis=0)
+            if np.dot(normal, tri_center - hull_center) < 0:
+                normal = -normal
         point = tri_points[0]
         matched = None
 

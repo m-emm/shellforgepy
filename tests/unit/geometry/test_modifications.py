@@ -227,6 +227,21 @@ def test_find_planar_surface_features_box():
             assert np.all(distances <= 1e-6)
 
 
+def test_find_planar_surface_features_box_on_convex_hull():
+    """Test planar surface detection on a box using the convex hull."""
+    box = create_box(10, 20, 30)
+    planes = find_planar_surface_features(
+        box,
+        plane_tolerance=1e-6,
+        normal_tolerance=1e-4,
+        tessellation_tolerance=0.5,
+        tessellation_angular_tolerance=0.1,
+        on_convex_hull=True,
+    )
+
+    assert len(planes) == 6
+
+
 def test_find_planar_surface_features_two_walls():
     """Test planar surface detection on two thin perpendicular walls."""
     wall_a = create_box(10, 1, 10)
