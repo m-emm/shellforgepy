@@ -591,6 +591,24 @@ class PartitionableSpheroidTriangleMesh:
         return cls(vertices, faces)
 
     @classmethod
+    def make_points_unique(cls, points, resolution=1e-6):
+        """
+        Make a list of points unique by rounding to a certain resolution.
+        This is useful for removing duplicate points that are very close together.
+        """
+
+        int_points = np.round(np.array(points) / resolution).astype(np.int64)
+        unique_int_points = set()
+        unique_points = []
+        for i, p in enumerate(int_points):
+            key = (p[0], p[1], p[2])
+            if key not in unique_int_points:
+                unique_int_points.add(key)
+                unique_points.append(points[i])
+
+        return np.array(unique_points)
+
+    @classmethod
     def from_point_cloud(cls, point_cloud, vertex_labels=None):
 
         vertices = np.array(point_cloud)
@@ -613,6 +631,19 @@ class PartitionableSpheroidTriangleMesh:
                 for p in points_on_unit_sphere_r_theta_phi
             ]
         )
+
+        # check for duplicate points
+        resolution = 1e-6
+        int_points = np.round(points_for_convex_hull / resolution).astype(np.int64)
+        unique_int_points = set()
+        for p in int_points:
+            key = (p[0], p[1], p[2])
+            if key in unique_int_points:
+                raise ValueError(
+                    "Duplicate points detected in point cloud after rounding. "
+                    "Please ensure all points are unique."
+                )
+            unique_int_points.add(key)
 
         hull = ConvexHull(points_for_convex_hull)
 

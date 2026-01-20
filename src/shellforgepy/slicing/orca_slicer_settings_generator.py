@@ -43,6 +43,7 @@ def generate_settings(
         raise FileNotFoundError(f"Directory {master_settings_dir} does not exist.")
 
     filament_found = False
+    filament_filename = None
     settings_files_used = []
     for config_file in master_settings_dir.glob("*.yaml"):
         with config_file.open("r", encoding="utf-8") as file_handle:
@@ -56,10 +57,11 @@ def generate_settings(
 
             if master_data["name"] != filament:
                 _logger.info(
-                    f"Skipping {name} config, not matching filament name {filament}"
+                    f"Skipping {name} config, in {config_file.absolute().as_posix()} matching filament name {filament}"
                 )
                 continue
             filament_found = True
+            filament_filename = config_file.absolute().as_posix()
 
         settings_files_used.append(config_file.absolute().as_posix())
         if master_data["type"] == "machine":
@@ -101,6 +103,8 @@ def generate_settings(
 
     if not filament_found:
         raise ValueError(f"Filament {filament} not found in {master_settings_dir}.")
+    else:
+        _logger.info(f"Filament {filament} found in {filament_filename} and processed.")
 
     _logger.info(
         f"Used the following master settings files:\n{'\n'.join(settings_files_used)}"
