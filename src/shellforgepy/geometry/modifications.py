@@ -7,6 +7,7 @@ from shellforgepy.adapters._adapter import (
     get_bounding_box,
     get_bounding_box_size,
     get_volume,
+    tesselate,
 )
 from shellforgepy.construct.alignment_operations import rotate, translate
 from shellforgepy.construct.bounding_box_helpers import bottom_bounding_box_point
@@ -396,6 +397,89 @@ def orient_for_flatness(part, samples=100, z_rotation_samples=8):
                 best_part = rotated_part
 
     return best_part
+
+
+def find_planar_surface_features(
+    part,
+    *,
+    plane_tolerance=1e-5,
+    normal_tolerance=1e-4,
+    tessellation_tolerance=0.1,
+    tessellation_angular_tolerance=0.1,
+):
+    """
+    Find planar surface features by grouping coplanar triangles from tessellation.
+
+    Parameters:
+    -----------
+    part : solid object
+        The part to analyze.
+    plane_tolerance : float, optional
+        Max distance tolerance for a triangle to be considered coplanar.
+    normal_tolerance : float, optional
+        Normal alignment tolerance based on dot product (1 - tolerance).
+    tessellation_tolerance : float, optional
+        Linear deflection for tessellation.
+    tessellation_angular_tolerance : float, optional
+        Angular deflection for tessellation.
+
+    Returns:
+    --------
+    list of dict
+        Each dictionary contains:
+        - 'normal': plane normal (numpy array)
+        - 'point': a point on the plane (numpy array)
+        - 'triangles': list of triangle vertex arrays (shape (3, 3))
+    """
+
+    vertices, triangles = tesselate(
+        part,
+        tolerance=tessellation_tolerance,
+        angular_tolerance=tessellation_angular_tolerance,
+    )
+
+    if not triangles:
+        return []
+
+    def _vertex_to_array(vertex):
+        if hasattr(vertex, "x") and hasattr(vertex, "y") and hasattr(vertex, "z"):
+            return np.array([vertex.x, vertex.y, vertex.z], dtype=np.float64)
+        if hasattr(vertex, "X") and hasattr(vertex, "Y") and hasattr(vertex, "Z"):
+            return np.array([vertex.X, vertex.Y, vertex.Z], dtype=np.float64)
+        return np.array(vertex, dtype=np.float64)
+
+    vertex_array = np.array([_vertex_to_array(vertex) for vertex in vertices])
+    plane_records = []
+
+    for tri in triangles:
+        tri_indices = np.array(tri, dtype=int)
+        tri_points = vertex_array[tri_indices]
+        normal = np.cross(tri_points[1] - tri_points[0], tri_points[2] - tri_points[0])
+        normal_length = np.linalg.norm(normal)
+
+        if normal_length < 1e-12:
+            continue
+
+        normal = normalize(normal)
+        point = tri_points[0]
+        matched = None
+
+        for record in plane_records:
+            dot = np.dot(record["normal"], normal)
+            if dot >= 1.0 - normal_tolerance:
+                distance = abs(np.dot(record["normal"], point - record["point"]))
+                if distance <= plane_tolerance:
+                    matched = record
+                    break
+
+        if matched is None:
+            plane_records.append(
+                {"normal": normal, "point": point, "triangles": [tri_points]}
+            )
+        else:
+            matched["triangles"].append(tri_points)
+
+    return plane_records
 
 
 # ---------------------------

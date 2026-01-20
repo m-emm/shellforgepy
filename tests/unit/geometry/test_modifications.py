@@ -7,6 +7,7 @@ from shellforgepy.adapters._adapter import (
     get_volume,
 )
 from shellforgepy.geometry.modifications import (
+    find_planar_surface_features,
     orient_for_flatness,
     orient_for_flatness_riemannian,
     slice_part,
@@ -196,6 +197,57 @@ def test_slice_part_plane_point_progression():
         expected_diff = slice_normal * slice_thickness
 
         assert np.allclose(diff, expected_diff, atol=1e-10)
+
+
+def test_find_planar_surface_features_box():
+    """Test planar surface detection on a simple box."""
+    box = create_box(10, 20, 30)
+    planes = find_planar_surface_features(
+        box,
+        plane_tolerance=1e-6,
+        normal_tolerance=1e-4,
+        tessellation_tolerance=0.5,
+        tessellation_angular_tolerance=0.1,
+    )
+
+    assert len(planes) == 6
+
+    for plane in planes:
+        assert "normal" in plane
+        assert "point" in plane
+        assert "triangles" in plane
+        assert len(plane["triangles"]) > 0
+
+        normal = plane["normal"]
+        point = plane["point"]
+        assert np.max(np.abs(normal)) > 0.99
+
+        for tri_points in plane["triangles"]:
+            distances = np.abs((tri_points - point) @ normal)
+            assert np.all(distances <= 1e-6)
+
+
+def test_find_planar_surface_features_two_walls():
+    """Test planar surface detection on two thin perpendicular walls."""
+    wall_a = create_box(10, 1, 10)
+    wall_b = create_box(1, 10, 10)
+    walls = fuse_parts(wall_a, wall_b)
+
+    planes = find_planar_surface_features(
+        walls,
+        plane_tolerance=1e-6,
+        normal_tolerance=1e-4,
+        tessellation_tolerance=0.5,
+        tessellation_angular_tolerance=0.1,
+    )
+
+    assert len(planes) >= 4
+
+    for plane in planes:
+        assert "normal" in plane
+        assert "point" in plane
+        assert "triangles" in plane
+        assert len(plane["triangles"]) > 0
 
 
 def test_slice_part_bounding_box_alignment():

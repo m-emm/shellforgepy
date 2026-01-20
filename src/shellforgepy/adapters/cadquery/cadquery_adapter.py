@@ -362,6 +362,21 @@ def get_vertex_points(obj) -> list:
     return points
 
 
+def tesselate(obj, tolerance=0.1, angular_tolerance=0.1):
+    """Tessellate a CadQuery shape into vertices and triangle indices.
+
+    Args:
+        obj: CadQuery shape, workplane, or assembly.
+        tolerance: Linear deflection tolerance in model units.
+        angular_tolerance: Angular deflection tolerance in radians.
+
+    Returns:
+        Tuple of (vertices, triangles) as returned by CadQuery's tessellate.
+    """
+    shape = _as_shape(obj)
+    return shape.tessellate(tolerance, angular_tolerance)
+
+
 def _validate_closed_mesh(faces) -> None:
     edge_set = set()
     for face in faces:

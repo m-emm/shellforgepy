@@ -89,6 +89,7 @@ from shellforgepy.adapters._adapter_bridge import (
 from shellforgepy.adapters._adapter_bridge import (
     translate_part_native as adapter_translate_part_native,
 )
+from shellforgepy.adapters._adapter_bridge import tesselate as adapter_tesselate
 
 """Adapter functions that wrap the selected CAD backend. 
 These functions should not contain any backend-specific code. They document the  api that users of shellforgepy should use, independent of the CAD backend.
@@ -189,6 +190,22 @@ def get_vertex_coordinates_np(obj):
         numpy array of shape (n_vertices, 3) with coordinates
     """
     return adapter_get_vertex_coordinates_np(obj)
+
+
+def tesselate(obj, tolerance=0.1, angular_tolerance=0.1):
+    """Tessellate a geometry object into vertices and triangles.
+
+    Args:
+        obj: A geometry object compatible with the active adapter.
+        tolerance: Linear deflection tolerance in model units.
+        angular_tolerance: Angular deflection tolerance in radians.
+
+    Returns:
+        Tuple of (vertices, triangles) as returned by the active adapter.
+    """
+    return adapter_tesselate(
+        obj, tolerance=tolerance, angular_tolerance=angular_tolerance
+    )
 
 
 def create_solid_from_traditional_face_vertex_maps(
