@@ -83,7 +83,10 @@ from shellforgepy.adapters._adapter_bridge import scale_part as adapter_scale_pa
 from shellforgepy.adapters._adapter_bridge import (
     scale_part_native as adapter_scale_part_native,
 )
-from shellforgepy.adapters._adapter_bridge import tesselate as adapter_tesselate
+from shellforgepy.adapters._adapter_bridge import tesellate as adapter_tesellate
+from shellforgepy.adapters._adapter_bridge import (
+    tessellate_part_native as adapter_tessellate_part_native,
+)
 from shellforgepy.adapters._adapter_bridge import (
     translate_part as adapter_translate_part,
 )
@@ -192,7 +195,7 @@ def get_vertex_coordinates_np(obj):
     return adapter_get_vertex_coordinates_np(obj)
 
 
-def tesselate(obj, tolerance=0.1, angular_tolerance=0.1):
+def tesellate(obj, tolerance=0.1, angular_tolerance=0.1):
     """Tessellate a geometry object into vertices and triangles.
 
     Args:
@@ -203,7 +206,7 @@ def tesselate(obj, tolerance=0.1, angular_tolerance=0.1):
     Returns:
         Tuple of (vertices, triangles) as returned by the active adapter.
     """
-    return adapter_tesselate(
+    return adapter_tesellate(
         obj, tolerance=tolerance, angular_tolerance=angular_tolerance
     )
 
@@ -319,6 +322,10 @@ def translate_part_native(part, *args):
 
 def rotate_part_native(part, v1, v2, angle):
     return adapter_rotate_part_native(part, v1, v2, angle)
+
+
+def tessellate_part_native(part, *args, **kwargs):
+    return adapter_tessellate_part_native(part, *args, **kwargs)
 
 
 def scale_part_native(part, *args, **kwargs):

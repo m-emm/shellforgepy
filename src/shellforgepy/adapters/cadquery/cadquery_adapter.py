@@ -362,7 +362,7 @@ def get_vertex_points(obj) -> list:
     return points
 
 
-def tesselate(obj, tolerance=0.1, angular_tolerance=0.1):
+def tesellate(obj, tolerance=0.1, angular_tolerance=0.1):
     """Tessellate a CadQuery shape into vertices and triangle indices.
 
     Args:
@@ -1008,6 +1008,18 @@ def rotate_part_native(part, v1, v2, angle):
         return part.reconstruct(rotation_retval)
     else:
         return rotation_retval
+
+
+def tessellate_part_native(part, tolerance, angularTolerance):
+    """Tessellate using native CadQuery signature: tessellate(tolerance, angularTolerance)."""
+    # There are NO FRAMEWORK SPECIFC CALLS allowed here! Use adapter functions only!
+    #  isinstance(x, NamedPart)  or similar ARE FORBIDDEN here!
+    # if something is needed like this, do it in reconstruct
+
+    tessellation = part.tessellate(
+        tolerance=tolerance, angularTolerance=angularTolerance
+    )
+    return tessellation
 
 
 def mirror_part_native(part, mirrorPlane, basePointVector):

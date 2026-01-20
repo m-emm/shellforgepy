@@ -415,7 +415,7 @@ def get_vertex_points(obj) -> list:
     return points
 
 
-def tesselate(obj, tolerance=0.1, angular_tolerance=0.1):
+def tesellate(obj, tolerance=0.1, angular_tolerance=0.1):
     """Tessellate a FreeCAD shape into vertices and triangle indices.
 
     Args:

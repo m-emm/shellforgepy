@@ -31,6 +31,7 @@ copy_part = selected_adapter.copy_part
 create_filleted_box = selected_adapter.create_filleted_box
 translate_part_native = selected_adapter.translate_part_native
 rotate_part_native = selected_adapter.rotate_part_native
+tessellate_part_native = selected_adapter.tessellate_part_native
 mirror_part_native = selected_adapter.mirror_part_native
 scale_part_native = selected_adapter.scale_part_native
 apply_fillet_to_edges = selected_adapter.apply_fillet_to_edges
@@ -45,7 +46,7 @@ create_extruded_polygon = selected_adapter.create_extruded_polygon
 copy_part = selected_adapter.copy_part
 get_vertex_coordinates = selected_adapter.get_vertex_coordinates
 get_vertex_coordinates_np = selected_adapter.get_vertex_coordinates_np
-tesselate = selected_adapter.tesselate
+tesellate = selected_adapter.tesellate
 __all__ = [
     "apply_fillet_by_alignment",
     "apply_fillet_to_edges",
@@ -82,7 +83,7 @@ __all__ = [
     "rotate_part",
     "scale_part_native",
     "scale_part",
-    "tesselate",
+    "tesellate",
     "translate_part_native",
     "translate_part",
 ]

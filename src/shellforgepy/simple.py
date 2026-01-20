@@ -112,6 +112,7 @@ from .geometry.higher_order_solids import (
 from .geometry.modifications import (
     orient_for_flatness,
     orient_for_flatness_riemannian,
+    orient_max_planar_area,
     slice_part,
 )
 from .geometry.sheet_metal import (
@@ -258,6 +259,7 @@ __all__ = [
     "create_conical_ring",
     "PartParameters",
     "step_cached",
+    "orient_max_planar_area",
 ]
 
 

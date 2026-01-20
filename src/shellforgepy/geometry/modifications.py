@@ -8,7 +8,7 @@ from shellforgepy.adapters._adapter import (
     get_bounding_box,
     get_bounding_box_size,
     get_volume,
-    tesselate,
+    tesellate,
 )
 from shellforgepy.construct.alignment_operations import rotate, translate
 from shellforgepy.construct.bounding_box_helpers import bottom_bounding_box_point
@@ -25,6 +25,14 @@ from shellforgepy.geometry.spherical_tools import (
 )
 
 _logger = logging.getLogger(__name__)
+
+
+def _vertex_to_array(vertex):
+    if hasattr(vertex, "x") and hasattr(vertex, "y") and hasattr(vertex, "z"):
+        return np.array([vertex.x, vertex.y, vertex.z], dtype=np.float64)
+    if hasattr(vertex, "X") and hasattr(vertex, "Y") and hasattr(vertex, "Z"):
+        return np.array([vertex.X, vertex.Y, vertex.Z], dtype=np.float64)
+    return np.array(vertex, dtype=np.float64)
 
 
 def slice_part(
@@ -437,7 +445,7 @@ def find_planar_surface_features(
         - 'triangles': list of triangle vertex arrays (shape (3, 3))
     """
 
-    vertices, triangles = tesselate(
+    vertices, triangles = tesellate(
         part,
         tolerance=tessellation_tolerance,
         angular_tolerance=tessellation_angular_tolerance,
@@ -445,13 +453,6 @@ def find_planar_surface_features(
 
     if not triangles:
         return []
-
-    def _vertex_to_array(vertex):
-        if hasattr(vertex, "x") and hasattr(vertex, "y") and hasattr(vertex, "z"):
-            return np.array([vertex.x, vertex.y, vertex.z], dtype=np.float64)
-        if hasattr(vertex, "X") and hasattr(vertex, "Y") and hasattr(vertex, "Z"):
-            return np.array([vertex.X, vertex.Y, vertex.Z], dtype=np.float64)
-        return np.array(vertex, dtype=np.float64)
 
     vertex_array = np.array([_vertex_to_array(vertex) for vertex in vertices])
 
@@ -498,6 +499,201 @@ def find_planar_surface_features(
             matched["triangles"].append(tri_points)
 
     return plane_records
+
+
+def _compute_bed_contact_area(
+    part,
+    *,
+    plane_tolerance,
+    normal_tolerance,
+    tessellation_tolerance,
+    tessellation_angular_tolerance,
+):
+    vertices, triangles = tesellate(
+        part,
+        tolerance=tessellation_tolerance,
+        angular_tolerance=tessellation_angular_tolerance,
+    )
+
+    if not triangles:
+        return 0.0
+
+    vertex_array = np.array([_vertex_to_array(vertex) for vertex in vertices])
+    tri_indices = np.array(triangles, dtype=int)
+    tri_points = vertex_array[tri_indices]
+
+    min_z = float(np.min(vertex_array[:, 2]))
+    normals = np.cross(
+        tri_points[:, 1] - tri_points[:, 0], tri_points[:, 2] - tri_points[:, 0]
+    )
+    normal_lengths = np.linalg.norm(normals, axis=1)
+
+    down_vector = np.array([0.0, 0.0, -1.0])
+    alignment = np.zeros_like(normal_lengths)
+    valid_normals = normal_lengths > 0
+    alignment[valid_normals] = np.dot(
+        normals[valid_normals] / normal_lengths[valid_normals, None], down_vector
+    )
+
+    on_bed_plane = np.all(
+        np.abs(tri_points[:, :, 2] - min_z) <= plane_tolerance, axis=1
+    )
+    aligned_with_bed = alignment >= 1.0 - normal_tolerance
+    mask = on_bed_plane & aligned_with_bed & valid_normals
+
+    if not np.any(mask):
+        return 0.0
+
+    return float(0.5 * np.sum(normal_lengths[mask]))
+
+
+def _compute_bed_contact_extent(
+    part,
+    *,
+    plane_tolerance,
+    normal_tolerance,
+    tessellation_tolerance,
+    tessellation_angular_tolerance,
+):
+    vertices, triangles = tesellate(
+        part,
+        tolerance=tessellation_tolerance,
+        angular_tolerance=tessellation_angular_tolerance,
+    )
+
+    if not triangles:
+        return 0.0
+
+    vertex_array = np.array([_vertex_to_array(vertex) for vertex in vertices])
+    tri_indices = np.array(triangles, dtype=int)
+    tri_points = vertex_array[tri_indices]
+
+    min_z = float(np.min(vertex_array[:, 2]))
+    normals = np.cross(
+        tri_points[:, 1] - tri_points[:, 0], tri_points[:, 2] - tri_points[:, 0]
+    )
+    normal_lengths = np.linalg.norm(normals, axis=1)
+
+    down_vector = np.array([0.0, 0.0, -1.0])
+    alignment = np.zeros_like(normal_lengths)
+    valid_normals = normal_lengths > 0
+    alignment[valid_normals] = np.dot(
+        normals[valid_normals] / normal_lengths[valid_normals, None], down_vector
+    )
+
+    on_bed_plane = np.all(
+        np.abs(tri_points[:, :, 2] - min_z) <= plane_tolerance, axis=1
+    )
+    aligned_with_bed = alignment >= 1.0 - normal_tolerance
+    mask = on_bed_plane & aligned_with_bed & valid_normals
+
+    if not np.any(mask):
+        return 0.0
+
+    bed_points = tri_points[mask].reshape(-1, 3)
+    min_xy = np.min(bed_points[:, :2], axis=0)
+    max_xy = np.max(bed_points[:, :2], axis=0)
+    extents = max_xy - min_xy
+
+    return float(np.max(extents))
+
+
+def orient_max_planar_area(
+    part,
+    *,
+    plane_tolerance=1e-5,
+    normal_tolerance=1e-4,
+    tessellation_tolerance=0.1,
+    tessellation_angular_tolerance=0.1,
+    on_convex_hull=True,
+    optimize_bed_adhesion_area=False,
+    optimize_bed_adhesion_extent=False,
+):
+    """
+    Orient a part so the plane with the largest planar feature area is on Z=0.
+
+    The part is rotated so the selected plane lies flat with its normal aligned
+    to -Z, then translated so the minimum Z is 0. The plane area is computed
+    from the tessellated triangles in each planar feature. When
+    ``optimize_bed_adhesion_area`` is True, all planar feature orientations are
+    evaluated by rotating the part, re-tessellating, and summing the area of
+    triangles lying on the build plane; the orientation with the largest
+    build-plane contact area is selected. When ``optimize_bed_adhesion_extent``
+    is True, the orientation maximizing the longest in-plane extent of the
+    bed-contact footprint (bounding-box max of X/Y) is selected.
+    """
+    if optimize_bed_adhesion_area and optimize_bed_adhesion_extent:
+        raise ValueError(
+            "Use only one of optimize_bed_adhesion_area or optimize_bed_adhesion_extent."
+        )
+
+    _logger.info("Finding planar surface features...")
+    plane_features = find_planar_surface_features(
+        part,
+        plane_tolerance=plane_tolerance,
+        normal_tolerance=normal_tolerance,
+        tessellation_tolerance=tessellation_tolerance,
+        tessellation_angular_tolerance=tessellation_angular_tolerance,
+        on_convex_hull=on_convex_hull,
+    )
+
+    if not plane_features:
+        raise ValueError("No planar surface features found for orientation.")
+
+    _logger.info(f"Found {len(plane_features)} planar surface features.")
+
+    best_area = -np.inf
+    best_part = None
+
+    down_vector = np.array([0.0, 0.0, -1.0])
+
+    for i, feature in enumerate(plane_features):
+        _logger.info(f"Evaluating planar feature {i+1}/{len(plane_features)}")
+        normal = normalize(feature["normal"])
+        if optimize_bed_adhesion_area or optimize_bed_adhesion_extent:
+            axis, angle_deg = _shortest_arc_axis_angle(normal, down_vector)
+            rotated_part = (
+                part if angle_deg < 1e-12 else rotate(angle_deg, axis=tuple(axis))(part)
+            )
+            if optimize_bed_adhesion_area:
+                area = _compute_bed_contact_area(
+                    rotated_part,
+                    plane_tolerance=plane_tolerance,
+                    normal_tolerance=normal_tolerance,
+                    tessellation_tolerance=tessellation_tolerance,
+                    tessellation_angular_tolerance=tessellation_angular_tolerance,
+                )
+            else:
+                area = _compute_bed_contact_extent(
+                    rotated_part,
+                    plane_tolerance=plane_tolerance,
+                    normal_tolerance=normal_tolerance,
+                    tessellation_tolerance=tessellation_tolerance,
+                    tessellation_angular_tolerance=tessellation_angular_tolerance,
+                )
+        else:
+            triangles = np.array(feature["triangles"], dtype=np.float64)
+            edges_a = triangles[:, 1] - triangles[:, 0]
+            edges_b = triangles[:, 2] - triangles[:, 0]
+            area = float(
+                0.5 * np.sum(np.linalg.norm(np.cross(edges_a, edges_b), axis=1))
+            )
+        if area > best_area:
+            best_area = area
+            if optimize_bed_adhesion_area:
+                best_part = rotated_part
+            elif optimize_bed_adhesion_extent:
+                best_part = rotated_part
+            else:
+                axis, angle_deg = _shortest_arc_axis_angle(normal, down_vector)
+                best_part = (
+                    part
+                    if angle_deg < 1e-12
+                    else rotate(angle_deg, axis=tuple(axis))(part)
+                )
+
+    min_point, _ = get_bounding_box(best_part)
+    return translate(0.0, 0.0, -min_point[2])(best_part)
 
 
 # ---------------------------

@@ -25,6 +25,7 @@ from shellforgepy.adapters._adapter import (
     mirror_part_native,
     rotate_part_native,
     scale_part_native,
+    tessellate_part_native,
     translate_part_native,
 )
 from shellforgepy.adapters.freecad.freecad_adapter import get_vertex_points
@@ -886,6 +887,9 @@ class LeaderFollowersCuttersPart:
                 self.non_production_indices_by_name.copy()
             )
             return result
+
+    def tessellate(self, *args, **kwargs):
+        return tessellate_part_native(self.leader, *args, **kwargs)
 
 
 def _unwrap_named_part(part):

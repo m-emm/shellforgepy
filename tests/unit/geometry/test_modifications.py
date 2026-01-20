@@ -5,11 +5,13 @@ from shellforgepy.adapters._adapter import (
     create_cylinder,
     fuse_parts,
     get_volume,
+    tesellate,
 )
 from shellforgepy.geometry.modifications import (
     find_planar_surface_features,
     orient_for_flatness,
     orient_for_flatness_riemannian,
+    orient_max_planar_area,
     slice_part,
 )
 from shellforgepy.simple import get_bounding_box, get_bounding_box_size
@@ -263,6 +265,178 @@ def test_find_planar_surface_features_two_walls():
         assert "point" in plane
         assert "triangles" in plane
         assert len(plane["triangles"]) > 0
+
+
+def test_orient_max_planar_area_box():
+    """Orient a box to put its largest face on the build plate."""
+    box = create_box(10, 20, 30)
+    oriented = orient_max_planar_area(
+        box,
+        plane_tolerance=1e-6,
+        normal_tolerance=1e-4,
+        tessellation_tolerance=0.5,
+        tessellation_angular_tolerance=0.1,
+        on_convex_hull=True,
+    )
+
+    size = get_bounding_box_size(oriented)
+    min_point, _ = get_bounding_box(oriented)
+
+    assert np.isclose(min_point[2], 0.0, atol=1e-6)
+    assert np.isclose(size[2], 10.0, atol=1e-3)
+
+
+def test_orient_max_planar_area_optimize_bed_adhesion():
+    """Ensure bed-adhesion optimization chooses the best contact orientation."""
+
+    def _as_array(vertex):
+        if hasattr(vertex, "x") and hasattr(vertex, "y") and hasattr(vertex, "z"):
+            return np.array([vertex.x, vertex.y, vertex.z], dtype=np.float64)
+        if hasattr(vertex, "X") and hasattr(vertex, "Y") and hasattr(vertex, "Z"):
+            return np.array([vertex.X, vertex.Y, vertex.Z], dtype=np.float64)
+        return np.array(vertex, dtype=np.float64)
+
+    def bed_contact_area(part, kwargs):
+        vertices, triangles = tesellate(
+            part,
+            tolerance=kwargs["tessellation_tolerance"],
+            angular_tolerance=kwargs["tessellation_angular_tolerance"],
+        )
+        if not triangles:
+            return 0.0
+
+        vertex_array = np.array([_as_array(vertex) for vertex in vertices])
+        tri_points = vertex_array[np.array(triangles, dtype=int)]
+
+        normals = np.cross(
+            tri_points[:, 1] - tri_points[:, 0], tri_points[:, 2] - tri_points[:, 0]
+        )
+        normal_lengths = np.linalg.norm(normals, axis=1)
+        min_z = float(np.min(vertex_array[:, 2]))
+        on_bed = np.all(
+            np.abs(tri_points[:, :, 2] - min_z) <= kwargs["plane_tolerance"], axis=1
+        )
+
+        alignment = np.zeros_like(normal_lengths)
+        valid_normals = normal_lengths > 0
+        alignment[valid_normals] = np.dot(
+            normals[valid_normals] / normal_lengths[valid_normals, None],
+            np.array([0.0, 0.0, -1.0]),
+        )
+
+        mask = valid_normals & on_bed & (alignment >= 1.0 - kwargs["normal_tolerance"])
+        if not np.any(mask):
+            return 0.0
+
+        return float(0.5 * np.sum(normal_lengths[mask]))
+
+    body = create_cone(radius1=20, radius2=10, height=20)
+    foot = create_cylinder(radius=3, height=5, origin=(0, 0, -5))
+    part = fuse_parts(body, foot)
+
+    kwargs = dict(
+        plane_tolerance=1e-6,
+        normal_tolerance=1e-4,
+        tessellation_tolerance=0.5,
+        tessellation_angular_tolerance=0.1,
+        on_convex_hull=False,
+    )
+
+    area_oriented = orient_max_planar_area(part, **kwargs)
+    adhesion_oriented = orient_max_planar_area(
+        part, optimize_bed_adhesion_area=True, **kwargs
+    )
+
+    default_area = bed_contact_area(area_oriented, kwargs)
+    optimized_area = bed_contact_area(adhesion_oriented, kwargs)
+
+    assert optimized_area > default_area * 5
+    assert optimized_area > 0
+
+    default_min_z, _ = get_bounding_box(area_oriented)
+    optimized_min_z, _ = get_bounding_box(adhesion_oriented)
+
+    assert np.isclose(default_min_z[2], 0.0, atol=1e-6)
+    assert np.isclose(optimized_min_z[2], 0.0, atol=1e-6)
+
+
+def test_orient_max_planar_area_optimize_bed_extent():
+    """Ensure bed-adhesion extent optimization prefers longest footprint."""
+
+    def _as_array(vertex):
+        if hasattr(vertex, "x") and hasattr(vertex, "y") and hasattr(vertex, "z"):
+            return np.array([vertex.x, vertex.y, vertex.z], dtype=np.float64)
+        if hasattr(vertex, "X") and hasattr(vertex, "Y") and hasattr(vertex, "Z"):
+            return np.array([vertex.X, vertex.Y, vertex.Z], dtype=np.float64)
+        return np.array(vertex, dtype=np.float64)
+
+    def bed_contact_extent(part, kwargs):
+        vertices, triangles = tesellate(
+            part,
+            tolerance=kwargs["tessellation_tolerance"],
+            angular_tolerance=kwargs["tessellation_angular_tolerance"],
+        )
+        if not triangles:
+            return 0.0
+
+        vertex_array = np.array([_as_array(vertex) for vertex in vertices])
+        tri_points = vertex_array[np.array(triangles, dtype=int)]
+
+        normals = np.cross(
+            tri_points[:, 1] - tri_points[:, 0], tri_points[:, 2] - tri_points[:, 0]
+        )
+        normal_lengths = np.linalg.norm(normals, axis=1)
+        min_z = float(np.min(vertex_array[:, 2]))
+
+        on_bed = np.all(
+            np.abs(tri_points[:, :, 2] - min_z) <= kwargs["plane_tolerance"], axis=1
+        )
+
+        alignment = np.zeros_like(normal_lengths)
+        valid_normals = normal_lengths > 0
+        alignment[valid_normals] = np.dot(
+            normals[valid_normals] / normal_lengths[valid_normals, None],
+            np.array([0.0, 0.0, -1.0]),
+        )
+        mask = valid_normals & on_bed & (alignment >= 1.0 - kwargs["normal_tolerance"])
+        if not np.any(mask):
+            return 0.0
+
+        bed_points = tri_points[mask].reshape(-1, 3)
+        min_xy = np.min(bed_points[:, :2], axis=0)
+        max_xy = np.max(bed_points[:, :2], axis=0)
+        extents = max_xy - min_xy
+        return float(np.max(extents))
+
+    base = create_box(20, 20, 10)
+    fin = create_box(1, 30, 5, origin=(19.5, -5, 2))
+    part = fuse_parts(base, fin)
+
+    kwargs = dict(
+        plane_tolerance=1e-6,
+        normal_tolerance=1e-4,
+        tessellation_tolerance=0.5,
+        tessellation_angular_tolerance=0.1,
+        on_convex_hull=False,
+    )
+
+    area_oriented = orient_max_planar_area(
+        part, optimize_bed_adhesion_area=True, **kwargs
+    )
+    extent_oriented = orient_max_planar_area(
+        part, optimize_bed_adhesion_extent=True, **kwargs
+    )
+
+    area_extent = bed_contact_extent(area_oriented, kwargs)
+    optimized_extent = bed_contact_extent(extent_oriented, kwargs)
+
+    assert optimized_extent > area_extent * 1.1
+    assert optimized_extent > 0
+
+    min_area_z, _ = get_bounding_box(area_oriented)
+    min_extent_z, _ = get_bounding_box(extent_oriented)
+    assert np.isclose(min_area_z[2], 0.0, atol=1e-6)
+    assert np.isclose(min_extent_z[2], 0.0, atol=1e-6)
 
 
 def test_slice_part_bounding_box_alignment():
