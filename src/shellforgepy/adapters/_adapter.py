@@ -195,6 +195,18 @@ def get_vertex_coordinates_np(obj):
     return adapter_get_vertex_coordinates_np(obj)
 
 
+def _vertex_to_tuple(vertex):
+    if hasattr(vertex, "toTuple"):
+        vx = vertex.toTuple()
+    elif hasattr(vertex, "x") and hasattr(vertex, "y") and hasattr(vertex, "z"):
+        vx = (vertex.x, vertex.y, vertex.z)
+    elif hasattr(vertex, "X") and hasattr(vertex, "Y") and hasattr(vertex, "Z"):
+        vx = (vertex.X, vertex.Y, vertex.Z)
+    else:
+        vx = tuple(vertex)
+    return (float(vx[0]), float(vx[1]), float(vx[2]))
+
+
 def tesellate(obj, tolerance=0.1, angular_tolerance=0.1):
     """Tessellate a geometry object into vertices and triangles.
 
@@ -204,11 +216,15 @@ def tesellate(obj, tolerance=0.1, angular_tolerance=0.1):
         angular_tolerance: Angular deflection tolerance in radians.
 
     Returns:
-        Tuple of (vertices, triangles) as returned by the active adapter.
+        Tuple of (vertices, triangles) with vertices as float tuples and
+        triangles as index tuples.
     """
-    return adapter_tesellate(
+    vertices, triangles = adapter_tesellate(
         obj, tolerance=tolerance, angular_tolerance=angular_tolerance
     )
+    vertices = [_vertex_to_tuple(v) for v in vertices]
+    triangles = [tuple(int(idx) for idx in tri) for tri in triangles]
+    return vertices, triangles
 
 
 def create_solid_from_traditional_face_vertex_maps(

@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from shellforgepy.adapters._adapter import (
     create_box,
     create_cone,
@@ -14,7 +15,7 @@ from shellforgepy.geometry.modifications import (
     orient_max_planar_area,
     slice_part,
 )
-from shellforgepy.simple import get_bounding_box, get_bounding_box_size
+from shellforgepy.simple import get_bounding_box, get_bounding_box_size, rotate
 
 
 def test_slice_part_basic_functionality():
@@ -267,6 +268,73 @@ def test_find_planar_surface_features_two_walls():
         assert len(plane["triangles"]) > 0
 
 
+def test_find_planar_surface_features_limits_feature_count(monkeypatch):
+    """Ensure runaway planar feature counts raise early."""
+    import shellforgepy.geometry.modifications as modifications
+
+    rng = np.random.default_rng(123)
+
+    def exploding_tesellate(obj, tolerance=0.1, angular_tolerance=0.1):
+        vertices = []
+        triangles = []
+        for i in range(150):
+            base = rng.normal(size=3) * (1 + 0.05 * i)
+            v0 = base
+            v1 = base + np.array([0.0, 1.0, 0.0])
+            v2 = base + np.array([0.0, 0.0, 1.0 + 0.001 * i])
+            start = len(vertices)
+            vertices.extend([tuple(v0), tuple(v1), tuple(v2)])
+            triangles.append((start, start + 1, start + 2))
+        return vertices, triangles
+
+    monkeypatch.setattr(modifications, "tesellate", exploding_tesellate)
+
+    with pytest.raises(ValueError, match="Too many planar surface features"):
+        find_planar_surface_features(create_box(1, 1, 1))
+
+
+def test_find_planar_surface_features_many_holes_filtered():
+    """Many tiny holes should be filtered into a manageable feature set."""
+    slab = create_box(80, 60, 2)
+    for i in range(40):
+        hx = -30 + (i % 10) * 6
+        hy = -20 + (i // 10) * 10
+        hole = create_cylinder(
+            radius=0.6, height=4, origin=(hx, hy, -1), direction=(0, 0, 1)
+        )
+        slab = slab.cut(hole)
+
+    planes = find_planar_surface_features(slab, on_convex_hull=False)
+    assert len(planes) < 50
+
+    oriented = orient_max_planar_area(slab, on_convex_hull=False)
+    min_point, _ = get_bounding_box(oriented)
+    assert np.isclose(min_point[2], 0.0, atol=1e-6)
+
+
+def test_orient_max_planar_area_obtuse_slabs_with_holes():
+    """Two angled slabs with small holes should not explode feature count."""
+    slab_a = create_box(80, 60, 2, origin=(-40, -30, -1))
+    slab_b = create_box(80, 60, 2, origin=(-40, -30, -1))
+    slab_b = rotate(135, center=(0.0, -30.0, 0.0), axis=(1, 0, 0))(slab_b)
+
+    part = fuse_parts(slab_a, slab_b)
+
+    for i in range(10):
+        hx = -30 + i * 6.0
+        hole = create_cylinder(
+            radius=0.5, height=6, origin=(hx, -10, -3), direction=(0, 0, 1)
+        )
+        part = part.cut(hole)
+
+    oriented = orient_max_planar_area(part, on_convex_hull=True)
+    min_point, _ = get_bounding_box(oriented)
+    assert np.isclose(min_point[2], 0.0, atol=1e-6)
+
+    planes = find_planar_surface_features(part, on_convex_hull=True)
+    assert len(planes) <= 100
+
+
 def test_orient_max_planar_area_box():
     """Orient a box to put its largest face on the build plate."""
     box = create_box(10, 20, 30)
@@ -289,13 +357,6 @@ def test_orient_max_planar_area_box():
 def test_orient_max_planar_area_optimize_bed_adhesion():
     """Ensure bed-adhesion optimization chooses the best contact orientation."""
 
-    def _as_array(vertex):
-        if hasattr(vertex, "x") and hasattr(vertex, "y") and hasattr(vertex, "z"):
-            return np.array([vertex.x, vertex.y, vertex.z], dtype=np.float64)
-        if hasattr(vertex, "X") and hasattr(vertex, "Y") and hasattr(vertex, "Z"):
-            return np.array([vertex.X, vertex.Y, vertex.Z], dtype=np.float64)
-        return np.array(vertex, dtype=np.float64)
-
     def bed_contact_area(part, kwargs):
         vertices, triangles = tesellate(
             part,
@@ -305,7 +366,7 @@ def test_orient_max_planar_area_optimize_bed_adhesion():
         if not triangles:
             return 0.0
 
-        vertex_array = np.array([_as_array(vertex) for vertex in vertices])
+        vertex_array = np.array(vertices, dtype=np.float64)
         tri_points = vertex_array[np.array(triangles, dtype=int)]
 
         normals = np.cross(
@@ -363,13 +424,6 @@ def test_orient_max_planar_area_optimize_bed_adhesion():
 def test_orient_max_planar_area_optimize_bed_extent():
     """Ensure bed-adhesion extent optimization prefers longest footprint."""
 
-    def _as_array(vertex):
-        if hasattr(vertex, "x") and hasattr(vertex, "y") and hasattr(vertex, "z"):
-            return np.array([vertex.x, vertex.y, vertex.z], dtype=np.float64)
-        if hasattr(vertex, "X") and hasattr(vertex, "Y") and hasattr(vertex, "Z"):
-            return np.array([vertex.X, vertex.Y, vertex.Z], dtype=np.float64)
-        return np.array(vertex, dtype=np.float64)
-
     def bed_contact_extent(part, kwargs):
         vertices, triangles = tesellate(
             part,
@@ -379,7 +433,7 @@ def test_orient_max_planar_area_optimize_bed_extent():
         if not triangles:
             return 0.0
 
-        vertex_array = np.array([_as_array(vertex) for vertex in vertices])
+        vertex_array = np.array(vertices, dtype=np.float64)
         tri_points = vertex_array[np.array(triangles, dtype=int)]
 
         normals = np.cross(
@@ -437,6 +491,34 @@ def test_orient_max_planar_area_optimize_bed_extent():
     min_extent_z, _ = get_bounding_box(extent_oriented)
     assert np.isclose(min_area_z[2], 0.0, atol=1e-6)
     assert np.isclose(min_extent_z[2], 0.0, atol=1e-6)
+
+
+def test_find_planar_surface_features_convex_hull_noise(monkeypatch):
+    """Ensure convex-hull planar features are merged despite noisy vertices."""
+    import shellforgepy.geometry.modifications as modifications
+
+    base = create_box(20, 20, 10)
+    rng = np.random.default_rng(0)
+    original_tesellate = modifications.tesellate
+
+    def noisy_tesellate(obj, tolerance=0.1, angular_tolerance=0.1):
+        verts, tris = original_tesellate(
+            obj, tolerance=tolerance, angular_tolerance=angular_tolerance
+        )
+        extra_vertices = []
+        for _ in range(200):
+            y = rng.uniform(0, 20)
+            z = rng.uniform(0, 10)
+            jitter_x = rng.normal(loc=5e-5, scale=2e-5)
+            extra_vertices.append((20 + jitter_x, y, z))
+        return list(verts) + extra_vertices, tris
+
+    monkeypatch.setattr(modifications, "tesellate", noisy_tesellate)
+
+    planes = find_planar_surface_features(base, on_convex_hull=True)
+
+    assert len(planes) == 6
+    assert all(len(plane["triangles"]) > 0 for plane in planes)
 
 
 def test_slice_part_bounding_box_alignment():

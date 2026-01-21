@@ -99,8 +99,11 @@ def create_cylinder_mesh_stl(output_dir="output"):
     points = generate_cylinder_point_cloud(
         radius, height, num_vertical=2, angular_resolution=80, num_top_bottom=2
     )
+    raw_point_count = len(points)
+    points = PartitionableSpheroidTriangleMesh.make_points_unique(points)
     print(
-        f"Generated {len(points)} points for cylinder (radius={radius}mm, height={height}mm)"
+        f"Generated {raw_point_count} raw points, deduplicated to {len(points)} unique points for cylinder "
+        f"(radius={radius}mm, height={height}mm)"
     )
 
     # Step 2: Create triangulated mesh from point cloud

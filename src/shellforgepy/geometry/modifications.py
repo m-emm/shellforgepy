@@ -416,6 +416,9 @@ def find_planar_surface_features(
     tessellation_tolerance=0.1,
     tessellation_angular_tolerance=0.1,
     on_convex_hull=False,
+    max_planar_features=100,
+    min_feature_area=0.0,
+    min_feature_area_ratio=5e-3,
 ):
     """
     Find planar surface features by grouping coplanar triangles from tessellation.
@@ -435,6 +438,14 @@ def find_planar_surface_features(
     on_convex_hull : bool, optional
         If True, compute the convex hull of tessellated vertices and use hull triangles
         for plane detection instead of the original tessellation.
+    max_planar_features : int, optional
+        Maximum number of planar features to allow before aborting. This prevents
+        runaway feature counts on noisy tessellations (e.g. tiny holes on convex hulls).
+    min_feature_area : float, optional
+        Absolute minimum area a planar feature must have to be returned.
+    min_feature_area_ratio : float, optional
+        Minimum area ratio relative to the largest detected feature. Features smaller
+        than ``max(min_feature_area, min_feature_area_ratio * max_area)`` are dropped.
 
     Returns:
     --------
@@ -456,6 +467,8 @@ def find_planar_surface_features(
 
     vertex_array = np.array([_vertex_to_array(vertex) for vertex in vertices])
 
+    plane_tolerance_eff = plane_tolerance
+    normal_tolerance_eff = normal_tolerance
     hull_center = None
     if on_convex_hull:
         if vertex_array.shape[0] < 4:
@@ -463,6 +476,11 @@ def find_planar_surface_features(
         hull = ConvexHull(vertex_array)
         triangles = hull.simplices
         hull_center = np.mean(vertex_array, axis=0)
+        # Convex hull triangulation can introduce noisy sliver facets; relax
+        # tolerances to merge nearly coplanar faces back together.
+        plane_tolerance_eff = max(plane_tolerance, tessellation_tolerance * 0.5)
+        angular_floor = 1.0 - np.cos(min(np.pi, tessellation_angular_tolerance))
+        normal_tolerance_eff = max(normal_tolerance, angular_floor)
 
     plane_records = []
 
@@ -485,9 +503,9 @@ def find_planar_surface_features(
 
         for record in plane_records:
             dot = np.dot(record["normal"], normal)
-            if dot >= 1.0 - normal_tolerance:
+            if dot >= 1.0 - normal_tolerance_eff:
                 distance = abs(np.dot(record["normal"], point - record["point"]))
-                if distance <= plane_tolerance:
+                if distance <= plane_tolerance_eff:
                     matched = record
                     break
 
@@ -498,7 +516,34 @@ def find_planar_surface_features(
         else:
             matched["triangles"].append(tri_points)
 
-    return plane_records
+    if not plane_records:
+        return []
+
+    # Filter out tiny features that arise from curved or highly tessellated surfaces.
+    def _feature_area(record):
+        triangles = np.array(record["triangles"], dtype=float)
+        edges_a = triangles[:, 1] - triangles[:, 0]
+        edges_b = triangles[:, 2] - triangles[:, 0]
+        return float(0.5 * np.sum(np.linalg.norm(np.cross(edges_a, edges_b), axis=1)))
+
+    areas = np.array([_feature_area(rec) for rec in plane_records], dtype=float)
+    max_area = float(np.max(areas))
+    area_threshold = max(min_feature_area, max_area * min_feature_area_ratio)
+
+    filtered_records = [
+        rec for rec, area in zip(plane_records, areas) if area >= area_threshold
+    ]
+
+    if not filtered_records:
+        filtered_records = [plane_records[int(np.argmax(areas))]]
+
+    if len(filtered_records) > max_planar_features:
+        raise ValueError(
+            f"Too many planar surface features ({len(filtered_records)}). "
+            "Increase tolerances, disable convex-hull mode, or simplify the part."
+        )
+
+    return filtered_records
 
 
 def _compute_bed_contact_area(
@@ -608,6 +653,9 @@ def orient_max_planar_area(
     on_convex_hull=True,
     optimize_bed_adhesion_area=False,
     optimize_bed_adhesion_extent=False,
+    max_planar_features=100,
+    min_feature_area=0.0,
+    min_feature_area_ratio=5e-3,
 ):
     """
     Orient a part so the plane with the largest planar feature area is on Z=0.
@@ -621,6 +669,12 @@ def orient_max_planar_area(
     build-plane contact area is selected. When ``optimize_bed_adhesion_extent``
     is True, the orientation maximizing the longest in-plane extent of the
     bed-contact footprint (bounding-box max of X/Y) is selected.
+
+    ``max_planar_features`` guards against runaway feature counts when using
+    noisy convex-hull tessellations (e.g. many tiny holes).
+
+    Tiny planar features can be discarded via ``min_feature_area`` and
+    ``min_feature_area_ratio`` relative to the largest detected feature.
     """
     if optimize_bed_adhesion_area and optimize_bed_adhesion_extent:
         raise ValueError(
@@ -635,6 +689,9 @@ def orient_max_planar_area(
         tessellation_tolerance=tessellation_tolerance,
         tessellation_angular_tolerance=tessellation_angular_tolerance,
         on_convex_hull=on_convex_hull,
+        max_planar_features=max_planar_features,
+        min_feature_area=min_feature_area,
+        min_feature_area_ratio=min_feature_area_ratio,
     )
 
     if not plane_features:
