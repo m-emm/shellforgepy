@@ -1,4 +1,5 @@
 import logging
+import math
 from itertools import product
 
 import numpy as np
@@ -704,9 +705,37 @@ def orient_max_planar_area(
 
     down_vector = np.array([0.0, 0.0, -1.0])
 
-    for i, feature in enumerate(plane_features):
+    feature_meta = []
+    for feature in plane_features:
+        triangles = np.array(feature["triangles"], dtype=np.float64)
+        edges_a = triangles[:, 1] - triangles[:, 0]
+        edges_b = triangles[:, 2] - triangles[:, 0]
+        tri_area = float(
+            0.5 * np.sum(np.linalg.norm(np.cross(edges_a, edges_b), axis=1))
+        )
+        bbox_min = np.min(triangles.reshape(-1, 3), axis=0)
+        bbox_max = np.max(triangles.reshape(-1, 3), axis=0)
+        tri_extent = float(np.max(bbox_max - bbox_min))
+        feature_meta.append((tri_area, tri_extent, feature))
+
+    feature_meta.sort(
+        key=(
+            (lambda item: item[1])
+            if optimize_bed_adhesion_extent
+            else (lambda item: item[0])
+        ),
+        reverse=True,
+    )
+
+    for i, (feature_area, feature_extent, feature) in enumerate(feature_meta):
         _logger.info(f"Evaluating planar feature {i+1}/{len(plane_features)}")
         normal = normalize(feature["normal"])
+        upper_bound = feature_extent if optimize_bed_adhesion_extent else feature_area
+        if best_area > -np.inf and best_area >= upper_bound * (1.0 - 1e-9):
+            _logger.info(
+                "Stopping evaluation early: remaining features too small to beat current best."
+            )
+            break
         if optimize_bed_adhesion_area or optimize_bed_adhesion_extent:
             axis, angle_deg = _shortest_arc_axis_angle(normal, down_vector)
             rotated_part = (
@@ -729,12 +758,7 @@ def orient_max_planar_area(
                     tessellation_angular_tolerance=tessellation_angular_tolerance,
                 )
         else:
-            triangles = np.array(feature["triangles"], dtype=np.float64)
-            edges_a = triangles[:, 1] - triangles[:, 0]
-            edges_b = triangles[:, 2] - triangles[:, 0]
-            area = float(
-                0.5 * np.sum(np.linalg.norm(np.cross(edges_a, edges_b), axis=1))
-            )
+            area = feature_area
         if area > best_area:
             best_area = area
             if optimize_bed_adhesion_area:
@@ -1034,3 +1058,47 @@ def orient_for_flatness_riemannian(
     }
     _logger.info(f"Optimization completed: {info}")
     return rotated_best
+
+
+def cut_in_two(part, cut_point, cut_normal, cut_thickness=0):
+    point = np.array(cut_point, dtype=float)
+    normal = np.array(cut_normal, dtype=float)
+    if np.linalg.norm(normal) == 0:
+        raise ValueError("Cut normal must be non-zero")
+
+    bbox_min, bbox_max = get_bounding_box(part)
+    diag = math.dist(bbox_min, bbox_max)
+    cutter_size = diag * 4 if diag > 0 else 500
+
+    cutter = create_box(cutter_size, cutter_size, cutter_size)
+    cutter = translate(-cutter_size / 2, -cutter_size / 2, -cutter_size)(cutter)
+
+    top_cutter = create_box(cutter_size, cutter_size, cutter_size)
+    top_cutter = translate(-cutter_size / 2, -cutter_size / 2, -cutter_size)(top_cutter)
+    top_cutter = translate(0, 0, cutter_size)(top_cutter)
+
+    normal_unit = normal / np.linalg.norm(normal)
+    z_axis = np.array((0.0, 0.0, 1.0))
+    cos_angle = np.dot(z_axis, normal_unit)
+    cos_angle = max(-1.0, min(1.0, cos_angle))
+    angle = math.degrees(math.acos(cos_angle))
+
+    if abs(angle) > 1e-6:
+        axis = np.cross(z_axis, normal_unit)
+        axis_length = np.linalg.norm(axis)
+        if axis_length > 1e-6:
+            axis_vector = tuple(axis / axis_length)
+            cutter = rotate(angle, axis=axis_vector)(cutter)
+            top_cutter = rotate(angle, axis=axis_vector)(top_cutter)
+
+    cutter = translate(point[0], point[1], point[2])(cutter)
+    top_cutter = translate(point[0], point[1], point[2])(top_cutter)
+
+    if cut_thickness > 0:
+        offset = normal_unit * (cut_thickness / 2)
+        cutter = translate(offset[0], offset[1], offset[2])(cutter)
+        top_cutter = translate(-offset[0], -offset[1], -offset[2])(top_cutter)
+
+    upper_part = part.cut(cutter)
+    lower_part = part.cut(top_cutter)
+    return upper_part, lower_part

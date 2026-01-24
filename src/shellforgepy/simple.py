@@ -110,6 +110,7 @@ from .geometry.higher_order_solids import (
     directed_cylinder_at,
 )
 from .geometry.modifications import (
+    cut_in_two,
     orient_for_flatness,
     orient_for_flatness_riemannian,
     orient_max_planar_area,
@@ -260,6 +261,7 @@ __all__ = [
     "PartParameters",
     "step_cached",
     "orient_max_planar_area",
+    "cut_in_two",
 ]
 
 
