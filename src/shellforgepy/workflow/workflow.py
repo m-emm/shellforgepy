@@ -11,6 +11,8 @@ import shutil
 import subprocess
 import sys
 import threading
+import urllib.parse
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
@@ -45,6 +47,7 @@ CONFIG_KEYS = {
     "render_script": "render.script",
     "upload_printer": "upload.printer",
     "viewer_base_url": "viewer.base_url",
+    "model_viewer_upload_url": "viewer.model_upload_url",
 }
 
 CONFIG_KEY_DOCUMENTATION = {
@@ -60,6 +63,7 @@ CONFIG_KEY_DOCUMENTATION = {
     "render_script": "Path to a custom rendering script to generate preview images.",
     "upload_printer": "Network address of the 3D printer to upload the print job to.",
     "viewer_base_url": "Base URL for the 3D viewer (e.g., http://localhost:5173).",
+    "model_viewer_upload_url": "API endpoint to upload OBJ/MTL files (e.g., http://localhost:4000/api/files).",
 }
 
 
@@ -84,6 +88,10 @@ def _default_config_template() -> Dict[str, object]:
             "script": "~/path/to/render.sh",
             "executable": "",
             "args": [],
+        },
+        "viewer": {
+            "base_url": "http://localhost:5173",
+            "model_upload_url": "http://localhost:4000/api/files",
         },
     }
 
@@ -317,6 +325,44 @@ def _list_created_files(directory: Path) -> List[Path]:
     return files
 
 
+def _upload_file_to_viewer(file_path: Path, upload_url: str) -> None:
+    """Upload a file to the viewer backend API using multipart/form-data."""
+    boundary = "----WebKitFormBoundary" + os.urandom(16).hex()
+
+    with file_path.open("rb") as f:
+        file_content = f.read()
+
+    # Build multipart/form-data body
+    body_parts = []
+    body_parts.append(f"--{boundary}".encode())
+    body_parts.append(
+        f'Content-Disposition: form-data; name="file"; filename="{file_path.name}"'.encode()
+    )
+    body_parts.append(b"Content-Type: application/octet-stream")
+    body_parts.append(b"")
+    body_parts.append(file_content)
+    body_parts.append(f"--{boundary}--".encode())
+
+    body = b"\r\n".join(body_parts)
+
+    headers = {
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "Content-Length": str(len(body)),
+    }
+
+    request = urllib.request.Request(
+        upload_url, data=body, headers=headers, method="POST"
+    )
+
+    with urllib.request.urlopen(request, timeout=30) as response:
+        if response.status not in (200, 201):
+            raise WorkflowError(
+                f"File upload failed with status {response.status}: {response.read().decode()}"
+            )
+        response_data = json.loads(response.read().decode())
+        return response_data
+
+
 def run_workflow(args: argparse.Namespace) -> int:
     config_path = get_config_path(args.config)
     config = load_config(config_path)
@@ -436,6 +482,35 @@ def run_workflow(args: argparse.Namespace) -> int:
             _logger.info("Copied STL to viewer path: %s", viewer_path)
         except Exception as exc:  # pragma: no cover - best effort
             _logger.warning("Failed to update viewer STL %s: %s", viewer_default, exc)
+
+    # Upload OBJ and MTL files to viewer backend if configured
+    upload_url = _resolve_config_key_value(config, "model_viewer_upload_url")
+    if upload_url:
+        try:
+            # Find OBJ and MTL files in the run directory
+            obj_files = list(run_directory.glob("*.obj"))
+            mtl_files = list(run_directory.glob("*.mtl"))
+
+            uploaded_files = []
+            for obj_file in obj_files:
+                _logger.info("Uploading OBJ file to viewer: %s", obj_file.name)
+                result = _upload_file_to_viewer(obj_file, upload_url)
+                uploaded_files.append(result)
+                _logger.info("Uploaded: %s", result.get("url"))
+
+            for mtl_file in mtl_files:
+                _logger.info("Uploading MTL file to viewer: %s", mtl_file.name)
+                result = _upload_file_to_viewer(mtl_file, upload_url)
+                uploaded_files.append(result)
+                _logger.info("Uploaded: %s", result.get("url"))
+
+            if uploaded_files:
+                _logger.info(
+                    "Successfully uploaded %d file(s) to viewer backend",
+                    len(uploaded_files),
+                )
+        except Exception as exc:  # pragma: no cover - best effort
+            _logger.warning("Failed to upload files to viewer backend: %s", exc)
 
     slice_requested = bool(args.slice or args.upload)
 
