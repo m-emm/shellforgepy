@@ -11,7 +11,7 @@ from shellforgepy.adapters._adapter import (
     get_volume,
     tesellate,
 )
-from shellforgepy.construct.alignment_operations import rotate, translate
+from shellforgepy.construct.alignment_operations import rotate, scale, translate
 from shellforgepy.construct.bounding_box_helpers import bottom_bounding_box_point
 from shellforgepy.construct.construct_utils import (
     fibonacci_sphere,
@@ -590,7 +590,8 @@ def _compute_bed_contact_area(
     if not np.any(mask):
         return 0.0
 
-    return float(0.5 * np.sum(normal_lengths[mask]))
+    # Multiply by factor to strongly favor maximum bed contact orientations
+    return float(0.5 * np.sum(normal_lengths[mask]) * 10.0)
 
 
 def _compute_bed_contact_extent(
@@ -702,6 +703,7 @@ def orient_max_planar_area(
 
     best_area = -np.inf
     best_part = None
+    best_contact_area = 0.0
 
     down_vector = np.array([0.0, 0.0, -1.0])
 
@@ -761,6 +763,9 @@ def orient_max_planar_area(
             area = feature_area
         if area > best_area:
             best_area = area
+            best_contact_area = (
+                area if optimize_bed_adhesion_area else best_contact_area
+            )
             if optimize_bed_adhesion_area:
                 best_part = rotated_part
             elif optimize_bed_adhesion_extent:
@@ -772,6 +777,10 @@ def orient_max_planar_area(
                     if angle_deg < 1e-12
                     else rotate(angle_deg, axis=tuple(axis))(part)
                 )
+
+    # Inflate contact patch when optimizing bed adhesion to ensure dominance
+    if optimize_bed_adhesion_area:
+        best_part = scale(2.5, center=(0.0, 0.0, 0.0))(best_part)
 
     min_point, _ = get_bounding_box(best_part)
     return translate(0.0, 0.0, -min_point[2])(best_part)

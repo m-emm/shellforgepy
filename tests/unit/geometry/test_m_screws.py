@@ -11,10 +11,16 @@ is computationally expensive. Run these with: pytest -m slow
 import math
 
 import pytest
+from shellforgepy.adapters._adapter import get_bounding_box
+from shellforgepy.construct.bounding_box_helpers import get_zlen, get_zmax, get_zmin
+from shellforgepy.construct.leader_followers_cutters_part import (
+    LeaderFollowersCuttersPart,
+)
 from shellforgepy.geometry.m_screws import (
     MScrew,
     create_bolt_thread,
     create_cylinder_screw,
+    create_hidden_nut_pocket_cutter,
     create_nut,
     get_clearance_hole_diameter,
     get_core_hole_diameter,
@@ -146,6 +152,58 @@ def test_create_nut_with_slack():
     """Test nut creation with slack."""
     nut = create_nut("M3", slack=0.2)
     assert nut is not None
+
+
+def test_create_hidden_nut_pocket_cutter_defaults():
+    """Hidden nut pocket cutter should return a composite part with the expected height."""
+    result = create_hidden_nut_pocket_cutter("M3")
+
+    assert isinstance(result, LeaderFollowersCuttersPart)
+    assert len(result.cutters) == 1
+
+    expected_nut_height = m_screws_table["M3"]["nut_thickness"] + 0.4  # slack*2
+
+    leader_bb = get_bounding_box(result.leader)
+    assert math.isclose(
+        get_zlen(leader_bb), expected_nut_height, rel_tol=1e-6, abs_tol=1e-6
+    )
+
+    cutter_bb = get_bounding_box(result.cutters[0])
+    # Without a bottom cutter the geometry should start at z=0
+    assert get_zmin(cutter_bb) >= -1e-6
+    expected_total_height = expected_nut_height + 500  # default top_cutter_length
+    assert math.isclose(
+        get_zlen(cutter_bb), expected_total_height, rel_tol=1e-6, abs_tol=1e-4
+    )
+
+
+def test_create_hidden_nut_pocket_cutter_with_bottom():
+    """Custom cutter lengths should change the overall bounding box as expected."""
+    top_length = 10
+    bottom_length = 5
+    slack = 0.0
+
+    result = create_hidden_nut_pocket_cutter(
+        "M3",
+        bottom_cutter_length=bottom_length,
+        top_cutter_length=top_length,
+        slack=slack,
+    )
+
+    assert isinstance(result, LeaderFollowersCuttersPart)
+    assert len(result.cutters) == 1
+
+    expected_nut_height = m_screws_table["M3"]["nut_thickness"] + slack * 2
+    expected_total_height = bottom_length + expected_nut_height + top_length
+
+    cutter_bb = get_bounding_box(result.cutters[0])
+    assert math.isclose(
+        get_zlen(cutter_bb), expected_total_height, rel_tol=1e-6, abs_tol=1e-5
+    )
+    assert math.isclose(get_zmin(cutter_bb), -bottom_length, abs_tol=1e-6)
+    assert math.isclose(
+        get_zmax(cutter_bb), expected_nut_height + top_length, abs_tol=1e-6
+    )
 
 
 @pytest.mark.slow

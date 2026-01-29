@@ -21,12 +21,21 @@ from dataclasses import dataclass
 from typing import Optional
 
 from shellforgepy.adapters._adapter import (
+    create_box,
     create_cylinder,
     create_extruded_polygon,
     cut_parts,
     fuse_parts,
 )
-from shellforgepy.construct.alignment_operations import translate
+from shellforgepy.construct.alignment_operations import (
+    Alignment,
+    align,
+    rotate,
+    translate,
+)
+from shellforgepy.construct.leader_followers_cutters_part import (
+    LeaderFollowersCuttersPart,
+)
 from shellforgepy.geometry.higher_order_solids import create_screw_thread
 
 # Complete metric screw specifications table
@@ -476,3 +485,73 @@ def get_screw_info(size):
         raise KeyError(f"Unsupported screw size: {size}")
 
     return m_screws_table[size].copy()
+
+
+def create_hidden_nut_pocket_cutter(
+    size,
+    nut_height=None,
+    bottom_cutter_length=None,
+    top_cutter_length=500,
+    slack=0.2,
+    clearance_hole_diameter=None,
+):
+    """
+    Create a cutter solid for a hidden nut holder for the specified screw size.
+
+    Args:
+        size: Screw size string (e.g., "M3", "M4", etc.)
+        height: Height of the nut holder
+        slack: Additional clearance to add to nut dimensions
+        bottom_cutter_length: Length of the bottom cutter section
+        top_cutter_length: Length of the top cutter section
+        clearance_hole: Diameter of the clearance hole (defaults to standard if None)
+
+    Returns:
+        A LeaderFollowersCuttersPart which has the nut pocket cutter as leader for easy alignment with a screw, hole or other cylindrical part. It contains a cutter, that it can be used with use_as_cutter_on
+
+
+    """
+
+    screw_spec = MScrew.from_size(size)
+
+    if clearance_hole_diameter is None:
+        clearance_hole_diameter = screw_spec.clearance_hole_normal
+
+    if nut_height is None:
+        nut_height = screw_spec.nut_thickness + slack * 2
+
+    nut = create_nut(size, height=nut_height, slack=slack, no_hole=True)
+    nut = rotate(30)(nut)  # rotate nut to align flat sides with cutter box
+
+    overall_cutter = nut
+
+    if bottom_cutter_length is not None:
+        bottom_cutter = create_cylinder(
+            clearance_hole_diameter / 2, bottom_cutter_length
+        )
+        bottom_cutter = align(bottom_cutter, nut, Alignment.CENTER)
+        bottom_cutter = align(bottom_cutter, nut, Alignment.STACK_BOTTOM)
+        overall_cutter = overall_cutter.fuse(bottom_cutter)
+
+    # create the top cutter section
+    top_cutter = create_cylinder(clearance_hole_diameter / 2, top_cutter_length)
+    top_cutter = align(top_cutter, nut, Alignment.CENTER)
+    top_cutter = align(top_cutter, nut, Alignment.STACK_TOP)
+    overall_cutter = overall_cutter.fuse(top_cutter)
+
+    # create the nut insertion slit cutter
+
+    nut_slit_cutter = create_box(screw_spec.nut_size + slack, 500, nut_height)
+
+    nut_slit_cutter = align(nut_slit_cutter, nut, Alignment.CENTER)
+    nut_slit_cutter = align(
+        nut_slit_cutter,
+        nut,
+        Alignment.STACK_BACK,
+        stack_gap=-screw_spec.nut_circle_diameter / 2,
+    )
+    overall_cutter = overall_cutter.fuse(nut_slit_cutter)
+
+    retval = LeaderFollowersCuttersPart(nut, cutters=[overall_cutter])
+
+    return retval

@@ -23,11 +23,20 @@ from shellforgepy.construct.bounding_box_helpers import (
 )
 
 
-def translate(x, y, z):
+def translate(*args):
     """Create a translation transformation function."""
 
     # There are NO FRAMEWORK SPECIFC CALLS allowed here! Use adapter functions only!
     #  isinstance(x, NamedPart)  or similar ARE FORBIDDEN here!"
+
+    if len(args) == 1 and isinstance(args[0], (list, tuple)) and len(args[0]) == 3:
+        x, y, z = args[0]
+    elif len(args) == 3:
+        x, y, z = args
+    else:
+        raise ValueError(
+            "translate() requires either 3 separate args or a single (x,y,z) tuple"
+        )
 
     def retval(body):
         body_copy = copy_part(body)

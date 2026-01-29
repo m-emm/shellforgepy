@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 STEP serialization for LeaderFollowersCuttersPart.
 
@@ -17,7 +19,11 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-import cadquery as cq
+try:
+    import cadquery as cq
+except ImportError:  # CadQuery optional when using non-CQ adapters
+    cq = None
+
 import numpy as np
 from shellforgepy.construct.leader_followers_cutters_part import (
     LeaderFollowersCuttersPart,
@@ -73,9 +79,18 @@ def _unwrap(part):
     return part
 
 
+def _require_cadquery():
+    if cq is None:
+        raise ImportError(
+            "CadQuery is required for STEP serialization. Install with `pip install cadquery`"
+        )
+
+
 def _to_cq_shape(part):
     """Convert a part to a CadQuery shape suitable for assembly."""
     unwrapped = _unwrap(part)
+
+    _require_cadquery()
 
     # If it's already a CadQuery shape, return as-is
     if isinstance(unwrapped, (cq.Shape, cq.Solid, cq.Compound)):
@@ -131,6 +146,8 @@ def serialize_to_step(
         part: The LeaderFollowersCuttersPart to serialize
         file_path: Path to the STEP file (str or Path-like)
     """
+    _require_cadquery()
+
     file_path = str(file_path)
 
     if not isinstance(part, LeaderFollowersCuttersPart):
@@ -202,13 +219,15 @@ def serialize_to_step(
 
 
 def _extract_parts_from_assembly(
-    assy: cq.Assembly,
-) -> Dict[str, List[Tuple[int, cq.Shape]]]:
+    assy,
+) -> Dict[str, List[Tuple[int, object]]]:
     """
     Extract parts from an assembly, organized by group.
 
     Returns a dict mapping group names to lists of (index, shape) tuples.
     """
+    _require_cadquery()
+
     groups: Dict[str, List[Tuple[int, cq.Shape]]] = {}
 
     def process_node(node: cq.Assembly):

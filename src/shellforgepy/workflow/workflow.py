@@ -67,9 +67,50 @@ CONFIG_KEY_DOCUMENTATION = {
 }
 
 
+def _resolve_executable_path(executable: str | Path) -> Path:
+    """Return an absolute path to an executable, searching PATH when needed."""
+
+    candidate = Path(executable).expanduser()
+    if candidate.exists():
+        return candidate
+
+    resolved = shutil.which(str(executable))
+    if resolved:
+        return Path(resolved)
+
+    raise WorkflowError(
+        f"Executable not found: {executable}. Provide an absolute path or ensure it is on PATH."
+    )
+
+
+def _detect_default_runner() -> Optional[Path]:
+    """Pick a sensible default runner that works across platforms."""
+
+    repo_runner = Path(__file__).resolve().parents[3] / "freecad_python.sh"
+    if os.name != "nt" and repo_runner.exists():
+        return repo_runner
+
+    for name in ("FreeCADCmd", "FreeCADCmd.exe", "freecadcmd", "freecadcmd.exe"):
+        resolved = shutil.which(name)
+        if resolved:
+            return Path(resolved)
+
+    return None
+
+
+def _default_orca_executable() -> str:
+    """Return a platform-appropriate default path for OrcaSlicer."""
+
+    if sys.platform.startswith("darwin"):
+        return "/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer"
+    if os.name == "nt":
+        return r"C:\\Program Files\\OrcaSlicer\\OrcaSlicer.exe"
+    return "OrcaSlicer"
+
+
 def _default_config_template() -> Dict[str, object]:
-    default_runner = Path(__file__).resolve().parents[2] / "freecad_python.sh"
-    runner_path = str(default_runner) if default_runner.exists() else sys.executable
+    default_runner = _detect_default_runner()
+    runner_path = str(default_runner) if default_runner else sys.executable
 
     return {
         "runs_dir": DEFAULT_RUNS_DIR_NAME,
@@ -78,7 +119,7 @@ def _default_config_template() -> Dict[str, object]:
         },
         "orca": {
             "master_settings_dir": "~/path/to/orca/settings_master",
-            "executable": "/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer",
+            "executable": _default_orca_executable(),
             "debug_level": 6,
         },
         "upload": {
@@ -418,31 +459,29 @@ def run_workflow(args: argparse.Namespace) -> int:
     if viewer_base_url:
         env["SHELLFORGEPY_VIEWER_BASE_URL"] = str(viewer_base_url)
 
-    default_runner = Path(__file__).resolve().parents[3] / "freecad_python.sh"
-    _logger.info(
-        f"Default Python runner: {default_runner} exists: {default_runner.exists()}"
-    )
-
-    if args.python:
-        _logger.info(f"Using args.python for the runner: {args.python}")
-        runner = args.python
-    elif _resolve_config_key_value(config, "python_runner"):
-        _logger.info(
-            f"Using config python_runner for the runner: {_resolve_config_key_value(config, 'python_runner')}"
-        )
-        runner = _resolve_config_key_value(config, "python_runner")
-    elif default_runner.exists():
-        _logger.info(
-            f"Using default freecad_python.sh for the runner: {default_runner}"
-        )
-        runner = str(default_runner)
+    default_runner = _detect_default_runner()
+    if default_runner:
+        _logger.info(f"Detected default runner candidate: {default_runner}")
     else:
-        _logger.info(f"Using sys.executable for the runner: {sys.executable}")
+        _logger.info(
+            "No platform-specific default runner detected; falling back to system Python."
+        )
+
+    runner_source = "system python"
+    if args.python:
+        runner = args.python
+        runner_source = "--python argument"
+    elif _resolve_config_key_value(config, "python_runner"):
+        runner = _resolve_config_key_value(config, "python_runner")
+        runner_source = "config python_runner"
+    elif default_runner:
+        runner = str(default_runner)
+        runner_source = "auto-detected default"
+    else:
         runner = sys.executable
 
-    runner_path = Path(runner).expanduser()
-    if not runner_path.exists():
-        raise WorkflowError(f"Configured runner does not exist: {runner_path}")
+    runner_path = _resolve_executable_path(runner)
+    _logger.info(f"Using runner ({runner_source}): {runner_path}")
 
     cmd = [str(runner_path), str(target_path)] + forwarded_args
     _logger.info("Running target via: %s", format_command(cmd))
@@ -577,9 +616,10 @@ def run_workflow(args: argparse.Namespace) -> int:
         raise WorkflowError(
             "OrcaSlicer executable not configured. Use '--orca-executable' or set 'orca.executable' in config."
         )
-    orca_exec_path = Path(orca_exec).expanduser()
-    if not orca_exec_path.exists():
-        raise WorkflowError(f"OrcaSlicer executable not found: {orca_exec_path}")
+    try:
+        orca_exec_path = _resolve_executable_path(orca_exec)
+    except WorkflowError as exc:
+        raise WorkflowError(f"OrcaSlicer executable not found: {orca_exec}") from exc
 
     debug_level = str(
         args.orca_debug or _resolve_config_key_value(config, "orca_debug_level") or 6
