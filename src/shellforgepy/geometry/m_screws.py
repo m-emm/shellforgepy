@@ -22,6 +22,7 @@ from typing import Optional
 
 from shellforgepy.adapters._adapter import (
     create_box,
+    create_cone,
     create_cylinder,
     create_extruded_polygon,
     cut_parts,
@@ -56,6 +57,23 @@ m_screws_table = {
         "cylinder_head_height": 2,
         "wrench_socket_outer_diameter": 7.0,
         "min_thread_length": 16,
+    },
+    "M2.5": {
+        "nut_size": 5,
+        "cap_screw_size": 2,
+        "cap_screw_head_size": 1.5,
+        "grub_screw_wrench_size": 1.3,
+        "clearance_hole_close": 2.7,
+        "clearance_hole_normal": 2.9,
+        "clearance_hole_loose": 3.1,
+        "pitch": 0.45,
+        "core_hole": 2.05,
+        "nut_circle_diameter": 5.45,
+        "nut_thickness": 2.0,
+        "cylinder_head_diameter": 4.5,
+        "cylinder_head_height": 2.5,
+        "wrench_socket_outer_diameter": 7.5,
+        "min_thread_length": 17,
     },
     "M3": {
         "nut_size": 5.5,
@@ -111,6 +129,8 @@ m_screws_table = {
         "min_thread_length": 22,
         "thread_inset_hole_diameter": 6.2,
         "thread_inset_length": 8,
+        "conical_head_diameter": 10,
+        "conical_head_height": 3.2,
     },
     "M6": {
         "nut_size": 10,
@@ -203,6 +223,8 @@ class MScrew:
     wrench_socket_outer_diameter: float
     thread_inset_hole_diameter: Optional[float] = None
     thread_inset_length: Optional[float] = None
+    conical_head_diameter: Optional[float] = None
+    conical_head_height: Optional[float] = None
 
     @staticmethod
     def from_size(size: str) -> "MScrew":
@@ -213,7 +235,18 @@ class MScrew:
         # Fill missing optional fields
         specs.setdefault("thread_inset_hole_diameter", None)
         specs.setdefault("thread_inset_length", None)
+        specs.setdefault("conical_head_diameter", None)
+        specs.setdefault("conical_head_height", None)
         return MScrew(size=size, **specs)
+
+    def get_clearance_hole_diameter(self, clearance_type="normal") -> float:
+        """Get the clearance hole diameter for this screw based on the specified clearance type."""
+        clearance_key = f"clearance_hole_{clearance_type}"
+        if not hasattr(self, clearance_key):
+            raise ValueError(
+                f"Invalid clearance type: {clearance_type}. Must be 'close', 'normal', or 'loose'"
+            )
+        return getattr(self, clearance_key)
 
 
 def get_nut_outer_diameter(size):
@@ -360,7 +393,7 @@ def create_cylinder_screw(
     if size not in m_screws_table:
         raise KeyError(f"Unsupported screw size: {size}")
 
-    thread_outer_diameter = int(size[1:]) + enlargement * 2
+    thread_outer_diameter = float(size[1:]) + enlargement * 2
 
     if with_thread:
         if only_minimal_thread:
@@ -390,6 +423,65 @@ def create_cylinder_screw(
     cylinder_head = translate(0, 0, length)(cylinder_head)
 
     retval = fuse_parts(thread, cylinder_head)
+    return retval
+
+
+def create_conical_head_screw(
+    size, length, with_thread=False, only_minimal_thread=True, enlargement=0
+):
+    """
+    Create a conical head screw for the specified size.
+
+    Args:
+        size: Screw size string (e.g., "M3", "M4", etc.)
+        length: Length of the screw shaft
+        with_thread: If True, creates actual threaded geometry
+        only_minimal_thread: If True, only creates minimal thread length needed
+        enlargement: Additional diameter to add for fit adjustment
+
+    Returns:
+        Solid: CAD solid representing the conical head screw
+
+    Raises:
+        KeyError: If the screw size is not supported
+    """
+    if size not in m_screws_table:
+        raise KeyError(f"Unsupported screw size: {size}")
+
+    thread_outer_diameter = float(size[1:]) + enlargement * 2
+
+    if with_thread:
+        if only_minimal_thread:
+            thread_length = min(length, m_screws_table[size]["min_thread_length"])
+            thread = create_bolt_thread(size, thread_length, cutter=True)
+            thread_cylinder = create_cylinder(
+                thread_outer_diameter / 2 + enlargement,
+                length - thread_length + enlargement,
+            )
+            # Stack the cylinder on top of the thread
+            thread_cylinder = translate(0, 0, thread_length)(thread_cylinder)
+            thread = fuse_parts(thread, thread_cylinder)
+        else:
+            thread_length = length
+            thread = create_bolt_thread(size, thread_length, cutter=True)
+    else:
+        thread = create_cylinder(thread_outer_diameter / 2, length)
+
+    # Conical head
+    conical_head_diameter = (
+        m_screws_table[size]["conical_head_diameter"] + enlargement * 2
+    )
+    conical_head_height = m_screws_table[size]["conical_head_height"] + enlargement
+
+    conical_head = create_cone(
+        radius1=thread_outer_diameter / 2 + enlargement,
+        radius2=conical_head_diameter / 2,
+        height=conical_head_height,
+    )
+    # Position head flush with the top of the thread - conical head screws are typically countersunk
+    conical_head = translate(0, 0, length - conical_head_height)(conical_head)
+
+    retval = fuse_parts(thread, conical_head)
     return retval
 
 

@@ -39,6 +39,7 @@ from shellforgepy.adapters._adapter import (
 from shellforgepy.geometry.m_screws import (
     MScrew,
     create_bolt_thread,
+    create_conical_head_screw,
     create_cylinder_screw,
     create_hidden_nut_pocket_cutter,
     create_nut,
@@ -109,6 +110,7 @@ from .geometry.higher_order_solids import (
     directed_box_at,
     directed_cone_at,
     directed_cylinder_at,
+    materialize_bounding_box,
 )
 from .geometry.modifications import (
     cut_in_two,
@@ -116,6 +118,7 @@ from .geometry.modifications import (
     orient_for_flatness_riemannian,
     orient_max_planar_area,
     slice_part,
+    transform_with_function_tesselating,
 )
 from .geometry.sheet_metal import (
     create_sheet_metal_bend,
@@ -211,6 +214,7 @@ __all__ = [
     "create_trapezoidal_snake_geometry",
     "create_triangular_prism_geometry",
     "create_triangular_prism",
+    "create_conical_head_screw",
     "cut_in_two",
     "deserialize_structured_step",
     "directed_box_at",
@@ -236,6 +240,7 @@ __all__ = [
     "m_screws_table",
     "matrix_to_coordinate_system_transform",
     "matrix_to_coordinate_system_transformation_function",
+    "materialize_bounding_box",
     "merge_meshes",
     "MeshPartition",
     "mirror",
@@ -264,6 +269,7 @@ __all__ = [
     "translate",
     "write_shell_maps_to_stl",
     "write_stl_binary",
+    "transform_with_function_tesselating",
 ]
 
 

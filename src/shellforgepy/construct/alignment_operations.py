@@ -159,6 +159,9 @@ def align_translation(part, to, alignment: Alignment, axes=None, stack_gap=0):
                 "If 'to' is None, only CENTER alignment is supported and will center at origin."
             )
 
+    if axes is not None and alignment != Alignment.CENTER:
+        raise ValueError("Axes constraint is only supported for CENTER alignment.")
+
     to_bb = get_bounding_box(to)
 
     part_width = get_xlen(bb)

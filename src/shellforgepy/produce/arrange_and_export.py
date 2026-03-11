@@ -23,16 +23,42 @@ from shellforgepy.produce.production_parts_model import PartList
 
 _logger = logging.getLogger(__name__)
 
-# Default colors for parts when not specified (a pleasant color palette)
+# Default colors for parts when not specified.
+# Uses standard ColorBrewer qualitative palettes from matplotlib
+# (Set2, Set3, Pastel2). All colors are in the lighter half of HLS
+# color space (lightness > 0.5) for better 3D visualization.
 DEFAULT_PART_COLORS = [
-    (0.90, 0.30, 0.30),  # Red
-    (0.30, 0.75, 0.40),  # Green
-    (0.30, 0.50, 0.90),  # Blue
-    (0.95, 0.75, 0.20),  # Yellow/Gold
-    (0.80, 0.40, 0.80),  # Purple
-    (0.30, 0.80, 0.80),  # Cyan
-    (0.95, 0.55, 0.25),  # Orange
-    (0.70, 0.70, 0.70),  # Gray
+    # Set2
+    (0.4000, 0.7608, 0.6471),  # Set2[0]
+    (0.9882, 0.5529, 0.3843),  # Set2[1]
+    (0.5529, 0.6275, 0.7961),  # Set2[2]
+    (0.9059, 0.5412, 0.7647),  # Set2[3]
+    (0.6510, 0.8471, 0.3294),  # Set2[4]
+    (1.0000, 0.8510, 0.1843),  # Set2[5]
+    (0.8980, 0.7686, 0.5804),  # Set2[6]
+    (0.7020, 0.7020, 0.7020),  # Set2[7]
+    # Set3
+    (0.5529, 0.8275, 0.7804),  # Set3[0]
+    (1.0000, 1.0000, 0.7020),  # Set3[1]
+    (0.7451, 0.7294, 0.8549),  # Set3[2]
+    (0.9843, 0.5020, 0.4471),  # Set3[3]
+    (0.5020, 0.6941, 0.8275),  # Set3[4]
+    (0.9922, 0.7059, 0.3843),  # Set3[5]
+    (0.7020, 0.8706, 0.4118),  # Set3[6]
+    (0.9882, 0.8039, 0.8980),  # Set3[7]
+    (0.8510, 0.8510, 0.8510),  # Set3[8]
+    (0.7373, 0.5020, 0.7412),  # Set3[9]
+    (0.8000, 0.9216, 0.7725),  # Set3[10]
+    (1.0000, 0.9294, 0.4353),  # Set3[11]
+    # Pastel2
+    (0.7020, 0.8863, 0.8039),  # Pastel2[0]
+    (0.9922, 0.8039, 0.6745),  # Pastel2[1]
+    (0.7961, 0.8353, 0.9098),  # Pastel2[2]
+    (0.9569, 0.7922, 0.8941),  # Pastel2[3]
+    (0.9020, 0.9608, 0.7882),  # Pastel2[4]
+    (1.0000, 0.9490, 0.6824),  # Pastel2[5]
+    (0.9451, 0.8863, 0.8000),  # Pastel2[6]
+    (0.8000, 0.8000, 0.8000),  # Pastel2[7]
 ]
 
 
@@ -239,6 +265,7 @@ def arrange_and_export_parts(
     export_step=False,
     export_obj=True,
     viewer_base_url=None,
+    export_individual_parts=True,
 ):
     """Arrange named parts with production support, export individual STLs, and a fused assembly.
 
@@ -246,6 +273,7 @@ def arrange_and_export_parts(
         export_step: If True, also export STEP files alongside STL files.
         export_obj: If True (default), export OBJ files with colors/materials.
         viewer_base_url: Base URL for the 3D viewer. If set, viewer URLs are added to the manifest.
+        export_individual_parts: If True (default), export individual part files alongside the fused assembly.
     """
 
     env_export_dir = os.environ.get("SHELLFORGEPY_EXPORT_DIR")
@@ -332,22 +360,30 @@ def arrange_and_export_parts(
     print("Fusing parts")
 
     for name, arranged_shape in zip(names, arranged_shapes):
-        fused_collector.fuse(arranged_shape)
-        part_filename = export_dir / f"{base_name}_{_safe_name(name)}.stl"
-        print(f"Exporting {name} to {part_filename}")
-        export_solid_to_stl(arranged_shape, part_filename)
-        print(f"Exported {name} to {part_filename}")
+        try:
+            fused_collector.fuse(arranged_shape)
+            part_filename = export_dir / f"{base_name}_{_safe_name(name)}.stl"
+            if export_individual_parts:
+                print(f"Exporting {name} to {part_filename}")
+                export_solid_to_stl(arranged_shape, part_filename)
+                print(f"Exported {name} to {part_filename}")
+            else:
+                print(
+                    f"Skipping individual export for {name} due to export_individual_parts=False"
+                )
 
-        if export_step:
-            step_filename = export_dir / f"{base_name}_{_safe_name(name)}.step"
-            print(f"Exporting {name} to {step_filename}")
-            export_solid_to_step(arranged_shape, step_filename)
-            print(f"Exported {name} to {step_filename}")
+            if export_step:
+                step_filename = export_dir / f"{base_name}_{_safe_name(name)}.step"
+                print(f"Exporting {name} to {step_filename}")
+                export_solid_to_step(arranged_shape, step_filename)
+                print(f"Exported {name} to {step_filename}")
 
-        if manifest_data is not None:
-            manifest_parts = manifest_data.setdefault("part_files", [])
-            if isinstance(manifest_parts, list):
-                manifest_parts.append(str(part_filename.resolve()))
+            if manifest_data is not None:
+                manifest_parts = manifest_data.setdefault("part_files", [])
+                if isinstance(manifest_parts, list):
+                    manifest_parts.append(str(part_filename.resolve()))
+        except Exception as e:
+            raise RuntimeError(f"Failed to export part '{name}': {e}") from e
 
     fused_shape = fused_collector.part
     assert fused_shape is not None  # fused_collector received at least one part
@@ -425,6 +461,7 @@ def arrange_and_export(
     export_step=False,
     export_obj=True,
     viewer_base_url=None,
+    export_individual_parts=True,
 ):
     """Arrange and export a single part with production support.
 
@@ -432,6 +469,7 @@ def arrange_and_export(
         export_step: If True, also export STEP files alongside STL files.
         export_obj: If True (default), export OBJ files with colors/materials.
         viewer_base_url: Base URL for the 3D viewer. If set, viewer URLs are added to the manifest.
+        export_individual_parts: If True (default), export individual part files alongside the fused assembly.
     """
 
     if script_file is None:
@@ -461,4 +499,5 @@ def arrange_and_export(
         export_step=export_step,
         export_obj=export_obj,
         viewer_base_url=viewer_base_url,
+        export_individual_parts=export_individual_parts,
     )

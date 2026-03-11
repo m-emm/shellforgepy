@@ -14,6 +14,7 @@ from shellforgepy.geometry.modifications import (
     orient_for_flatness_riemannian,
     orient_max_planar_area,
     slice_part,
+    transform_with_function_tesselating,
 )
 from shellforgepy.simple import get_bounding_box, get_bounding_box_size, rotate
 
@@ -200,6 +201,27 @@ def test_slice_part_plane_point_progression():
         expected_diff = slice_normal * slice_thickness
 
         assert np.allclose(diff, expected_diff, atol=1e-10)
+
+
+def test_transform_with_function_tesselating_affine_transform():
+    """Apply an affine transform and verify the rebuilt solid's geometry."""
+    box = create_box(2, 3, 4)
+    original_volume = get_volume(box)
+
+    transformed = transform_with_function_tesselating(
+        box,
+        lambda vertex: np.array(
+            [vertex[0] * 2.0 + 1.0, vertex[1] - 5.0, vertex[2] + 0.5]
+        ),
+    )
+
+    min_point, max_point = get_bounding_box(transformed)
+    size = get_bounding_box_size(transformed)
+
+    assert np.allclose(min_point, (1.0, -5.0, 0.5), atol=1e-6)
+    assert np.allclose(max_point, (5.0, -2.0, 4.5), atol=1e-6)
+    assert np.allclose(size, (4.0, 3.0, 4.0), atol=1e-6)
+    assert np.isclose(get_volume(transformed), original_volume * 2.0, rtol=1e-3)
 
 
 def test_find_planar_surface_features_box():

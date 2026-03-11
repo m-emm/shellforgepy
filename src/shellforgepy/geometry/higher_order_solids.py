@@ -851,17 +851,49 @@ def create_triangular_prism(corners):
     return create_solid_from_traditional_face_vertex_maps(maps)
 
 
-def materialize_bounding_box(part):
+def materialize_bounding_box(part, x_enlargement=0, y_enlargement=0, z_enlargement=0):
     bb = get_bounding_box(part)
     corners = [
-        (bb[0][0], bb[0][1], bb[0][2]),
-        (bb[1][0], bb[0][1], bb[0][2]),
-        (bb[1][0], bb[1][1], bb[0][2]),
-        (bb[0][0], bb[1][1], bb[0][2]),
-        (bb[0][0], bb[0][1], bb[1][2]),
-        (bb[1][0], bb[0][1], bb[1][2]),
-        (bb[1][0], bb[1][1], bb[1][2]),
-        (bb[0][0], bb[1][1], bb[1][2]),
+        (
+            bb[0][0] - x_enlargement / 2,
+            bb[0][1] - y_enlargement / 2,
+            bb[0][2] - z_enlargement / 2,
+        ),
+        (
+            bb[1][0] + x_enlargement / 2,
+            bb[0][1] - y_enlargement / 2,
+            bb[0][2] - z_enlargement / 2,
+        ),
+        (
+            bb[1][0] + x_enlargement / 2,
+            bb[1][1] + y_enlargement / 2,
+            bb[0][2] - z_enlargement / 2,
+        ),
+        (
+            bb[0][0] - x_enlargement / 2,
+            bb[1][1] + y_enlargement / 2,
+            bb[0][2] - z_enlargement / 2,
+        ),
+        (
+            bb[0][0] - x_enlargement / 2,
+            bb[0][1] - y_enlargement / 2,
+            bb[1][2] + z_enlargement / 2,
+        ),
+        (
+            bb[1][0] + x_enlargement / 2,
+            bb[0][1] - y_enlargement / 2,
+            bb[1][2] + z_enlargement / 2,
+        ),
+        (
+            bb[1][0] + x_enlargement / 2,
+            bb[1][1] + y_enlargement / 2,
+            bb[1][2] + z_enlargement / 2,
+        ),
+        (
+            bb[0][0] - x_enlargement / 2,
+            bb[1][1] + y_enlargement / 2,
+            bb[1][2] + z_enlargement / 2,
+        ),
     ]
 
     return create_distorted_cube(corners)

@@ -19,6 +19,7 @@ from shellforgepy.construct.leader_followers_cutters_part import (
 from shellforgepy.geometry.m_screws import (
     MScrew,
     create_bolt_thread,
+    create_conical_head_screw,
     create_cylinder_screw,
     create_hidden_nut_pocket_cutter,
     create_nut,
@@ -35,7 +36,7 @@ from shellforgepy.geometry.m_screws import (
 def test_supported_sizes():
     """Test that all expected screw sizes are supported."""
     sizes = list_supported_sizes()
-    expected_sizes = ["M2", "M3", "M4", "M5", "M6", "M8", "M10", "M12"]
+    expected_sizes = ["M2", "M2.5", "M3", "M4", "M5", "M6", "M8", "M10", "M12"]
     assert set(sizes) == set(expected_sizes)
 
 
@@ -441,3 +442,26 @@ def test_m_screw_class():
     # Test unsupported size
     with pytest.raises(KeyError, match="Unsupported screw size"):
         MScrew.from_size("M999")
+
+
+def test_create_conical_head_screw_basic():
+    """Test basic conical head screw creation without threading."""
+    screw = create_conical_head_screw("M5", length=16)
+    assert screw is not None
+
+    # Test with enlargement
+    screw = create_conical_head_screw("M5", length=16, enlargement=0.1)
+    assert screw is not None
+
+    # Test unsupported size
+    with pytest.raises(KeyError, match="Unsupported screw size"):
+        create_conical_head_screw("M999", length=10)
+
+
+@pytest.mark.slow
+def test_create_conical_head_screw_with_minimal_thread():
+    """Test conical head screw with only_minimal_thread=True (marked as slow)."""
+    screw = create_conical_head_screw(
+        "M5", length=16, with_thread=True, only_minimal_thread=True
+    )
+    assert screw is not None

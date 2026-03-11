@@ -3,6 +3,8 @@
 import os
 import tempfile
 
+import numpy as np
+
 
 def test_export_solid_to_obj_simple():
     """Test exporting a simple solid to OBJ without color."""
@@ -137,3 +139,57 @@ def test_obj_vertex_indices_are_correct():
                 assert (
                     1 <= idx <= vertex_count
                 ), f"Invalid vertex index {idx} (max {vertex_count})"
+
+
+def test_cadquery_tessellate_returns_normalized_numpy_arrays():
+    """CadQuery tessellation should expose backend-agnostic NumPy arrays."""
+    from shellforgepy.adapters.cadquery.cadquery_adapter import create_box, tesellate
+
+    vertices, triangles = tesellate(create_box(10, 10, 10))
+
+    assert isinstance(vertices, np.ndarray)
+    assert vertices.ndim == 2
+    assert vertices.shape[1] == 3
+    assert np.issubdtype(vertices.dtype, np.floating)
+
+    assert isinstance(triangles, np.ndarray)
+    assert triangles.ndim == 2
+    assert triangles.shape[1] == 3
+    assert np.issubdtype(triangles.dtype, np.integer)
+
+
+def test_export_colored_meshes_to_obj_accepts_numpy_mesh_data():
+    """OBJ writer should work with plain numeric arrays from any backend."""
+    from shellforgepy.produce.obj_file_export import export_colored_meshes_to_obj
+
+    vertices = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ],
+        dtype=float,
+    )
+    triangles = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
+    meshes = [(vertices, triangles, "flat/mesh", (0.25, 0.5, 0.75))]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        obj_path = os.path.join(tmpdir, "mesh.obj")
+        mtl_path = os.path.join(tmpdir, "mesh.mtl")
+        export_colored_meshes_to_obj(meshes, obj_path)
+
+        assert os.path.exists(obj_path)
+        assert os.path.exists(mtl_path)
+
+        with open(obj_path) as f:
+            obj_content = f.read()
+        assert "o flat_mesh" in obj_content
+        assert "usemtl flat_mesh" in obj_content
+        assert obj_content.count("\nv ") == 4
+        assert obj_content.count("\nf ") == 2
+
+        with open(mtl_path) as f:
+            mtl_content = f.read()
+        assert "newmtl flat_mesh" in mtl_content
+        assert "Kd 0.250000 0.500000 0.750000" in mtl_content

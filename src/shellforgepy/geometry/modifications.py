@@ -6,6 +6,7 @@ import numpy as np
 from scipy.spatial import ConvexHull
 from shellforgepy.adapters._adapter import (
     create_box,
+    create_solid_from_traditional_face_vertex_maps,
     get_bounding_box,
     get_bounding_box_size,
     get_volume,
@@ -777,6 +778,65 @@ def orient_max_planar_area(
     return translate(0.0, 0.0, -min_point[2])(best_part)
 
 
+def transform_with_function_tesselating(part, transform_function):
+    """
+    Apply a coordinate transformation to a part by tesselating it, transforming
+    the vertices, and reconstructing a new part from the transformed vertices and
+    original triangles.
+
+    uses create_solid_from_traditional_face_vertex_maps to reconstruct the part
+    """
+    vertices, triangles = tesellate(part)
+    if not triangles:
+        return part
+
+    vertex_array = np.array([_vertex_to_array(vertex) for vertex in vertices])
+    transformed_vertices = []
+    for vertex in vertex_array:
+        transformed_vertex = np.asarray(transform_function(vertex), dtype=np.float64)
+        transformed_vertices.append(
+            (
+                float(transformed_vertex[0]),
+                float(transformed_vertex[1]),
+                float(transformed_vertex[2]),
+            )
+        )
+
+    # Tessellations can repeat the same geometric vertex with different indices.
+    # Deduplicate first so the face map represents a stitched closed shell.
+    deduped_vertices = []
+    deduped_indices = {}
+    old_to_new = {}
+    for old_index, vertex in enumerate(transformed_vertices):
+        key = tuple(np.round(vertex, 12))
+        if key not in deduped_indices:
+            deduped_indices[key] = len(deduped_vertices)
+            deduped_vertices.append(vertex)
+        old_to_new[old_index] = deduped_indices[key]
+
+    deduped_faces = []
+    for tri in triangles:
+        remapped = tuple(old_to_new[int(idx)] for idx in tri)
+        if len(set(remapped)) == 3:
+            deduped_faces.append(remapped)
+
+    _logger.info(
+        f"Reconstructing part from {len(deduped_vertices)} vertices and {len(deduped_faces)} faces..."
+    )
+    face_vertex_maps = {
+        "vertexes": {
+            str(i): tuple(float(coord) for coord in vertex)
+            for i, vertex in enumerate(deduped_vertices)
+        },
+        "faces": {str(i): tuple(face) for i, face in enumerate(deduped_faces)},
+    }
+
+    retval = create_solid_from_traditional_face_vertex_maps(face_vertex_maps)
+
+    _logger.info("Reconstruction complete.")
+    return retval
+
+
 # ---------------------------
 # Geometry on the sphere S^2
 # ---------------------------
@@ -1060,7 +1120,46 @@ def orient_for_flatness_riemannian(
     return rotated_best
 
 
-def cut_in_two(part, cut_point, cut_normal, cut_thickness=0):
+def cut_in_two(part, cut_point=None, cut_normal=None, cut_thickness=0):
+    """
+    Split a part into two halves using a plane defined by a point and normal.
+
+    Parameters:
+    -----------
+    part : solid object
+        The part to split.
+    cut_point : array-like, shape (3,), optional
+        A point on the cutting plane. If ``None``, the part bounding-box center is used.
+    cut_normal : array-like, shape (3,), optional
+        The cutting-plane normal. If ``None``, ``(1, 0, 0)`` is used.
+    cut_thickness : float, optional
+        Thickness of material removed around the cut plane. A value of ``0`` performs
+        an ideal split with no gap.
+
+    Returns:
+    --------
+    tuple
+        ``(upper_part, lower_part)`` where:
+        - ``upper_part`` is the side in the ``+cut_normal`` direction.
+        - ``lower_part`` is the side in the ``-cut_normal`` direction.
+
+        Using ``d(x) = dot(x - cut_point, normalize(cut_normal))``:
+        - for ``cut_thickness == 0``, ``upper_part`` is the ``d(x) >= 0`` side and
+          ``lower_part`` is the ``d(x) <= 0`` side.
+        - for ``cut_thickness > 0``, an approximate gap of ``cut_thickness`` is removed
+          around the plane: ``upper_part`` keeps roughly ``d(x) > +cut_thickness/2`` and
+          ``lower_part`` keeps roughly ``d(x) < -cut_thickness/2``.
+
+    Raises:
+    -------
+    ValueError
+        If ``cut_normal`` has zero length.
+    """
+    if cut_point is None:
+        bbox_min, bbox_max = get_bounding_box(part)
+        cut_point = (np.array(bbox_min) + np.array(bbox_max)) / 2
+    if cut_normal is None:
+        cut_normal = (1, 0, 0)
     point = np.array(cut_point, dtype=float)
     normal = np.array(cut_normal, dtype=float)
     if np.linalg.norm(normal) == 0:

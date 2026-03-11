@@ -162,6 +162,9 @@ class LeaderFollowersCuttersPart:
         """
 
         self.leader = leader
+        if isinstance(leader, list) or isinstance(leader, tuple):
+            raise ValueError("Leader must be a single part, not a list or tuple.")
+
         # Store raw parts directly for convenience during construction
         self.followers = _ensure_list(followers)
         self.cutters = _ensure_list(cutters)
@@ -251,6 +254,17 @@ class LeaderFollowersCuttersPart:
         """
         return self.cutter_indices_by_name.get(name, None)
 
+    def get_cutter_part_by_name(self, name):
+        index = self.get_cutter_index_by_name(name)
+        if index is not None:
+            return self.cutters[index]
+        raise KeyError(
+            f"Cutter with name '{name}' not found. Available names: {list(self.cutter_indices_by_name.keys())}"
+        )
+
+    def get_named_cutter(self, name):
+        return self.get_cutter_part_by_name(name)
+
     def get_non_production_index_by_name(self, name):
         """Get the index of a named non-production part.
 
@@ -262,12 +276,15 @@ class LeaderFollowersCuttersPart:
         """
         return self.non_production_indices_by_name.get(name, None)
 
+    def get_named_non_production_part(self, name):
+        return self.get_non_production_part_by_name(name)
+
     def get_non_production_part_by_name(self, name):
         index = self.get_non_production_index_by_name(name)
         if index is not None:
             return self.non_production_parts[index]
         raise KeyError(
-            f"Non-production part with name '{name}' not found. Available names: {list(self.non_production_indices_by_name.keys())}"
+            f"Non-production part with name '{name}' not found. Available names: {sorted(self.non_production_indices_by_name.keys())}"
         )
 
     def add_named_non_production_part(self, part, name):
@@ -282,6 +299,10 @@ class LeaderFollowersCuttersPart:
         """
         if not isinstance(name, str):
             raise TypeError("Non-production part name must be a string.")
+        if isinstance(part, list) or isinstance(part, tuple):
+            raise ValueError(
+                "Non-production part must be a single part, not a list or tuple."
+            )
         if name in self.non_production_indices_by_name:
             raise ValueError(f"Non-production part name '{name}' already exists.")
         self.non_production_parts.append(part)
@@ -299,6 +320,11 @@ class LeaderFollowersCuttersPart:
         """
         if not isinstance(name, str):
             raise TypeError("Follower name must be a string.")
+        if isinstance(follower, list) or isinstance(follower, tuple):
+            raise ValueError(
+                "Follower part must be a single part, not a list or tuple."
+            )
+
         if name in self.follower_indices_by_name:
             raise ValueError(f"Follower name '{name}' already exists.")
 
@@ -315,6 +341,42 @@ class LeaderFollowersCuttersPart:
         for part in self.non_production_parts:
             collector.fuse(_unwrap_named_part(part))
         return collector.part if collector.part is not None else collector
+
+    def get_named_non_production_part_items(self):
+        """Get a list of (name, part) tuples for all named non-production parts.
+
+        Returns:
+            List of (name, part) tuples for named non-production parts
+        """
+        return [
+            (name, self.non_production_parts[idx])
+            for name, idx in self.non_production_indices_by_name.items()
+        ]
+
+    def get_named_follower_items(self):
+        """Get a list of (name, part) tuples for all named followers.
+
+        Returns:
+            List of (name, part) tuples for named followers
+        """
+        return [
+            (name, self.followers[idx])
+            for name, idx in self.follower_indices_by_name.items()
+        ]
+
+    def get_named_cutter_items(self):
+        """Get a list of (name, part) tuples for all named cutters.
+
+        Returns:
+            List of (name, part) tuples for named cutters
+        """
+        return [
+            (name, self.cutters[idx])
+            for name, idx in self.cutter_indices_by_name.items()
+        ]
+
+    def get_named_follower(self, name):
+        return self.get_follower_part_by_name(name)
 
     def leaders_followers_fused(self):
         """Get the leader and all followers fused into a single shape.
@@ -398,6 +460,32 @@ class LeaderFollowersCuttersPart:
 
         return retval
 
+    def prefixed_copy(self, name_prefix):
+        """Create a copy of this composite part with all named components prefixed.
+
+        This is useful for avoiding name collisions when merging composites.
+
+        Args:
+            name_prefix: String prefix to add to all component names
+
+        Returns:
+            New LeaderFollowersCuttersPart with prefixed names
+        """
+        result = self.copy()
+        result.follower_indices_by_name = {
+            f"{name_prefix}_{name}": idx
+            for name, idx in self.follower_indices_by_name.items()
+        }
+        result.cutter_indices_by_name = {
+            f"{name_prefix}_{name}": idx
+            for name, idx in self.cutter_indices_by_name.items()
+        }
+        result.non_production_indices_by_name = {
+            f"{name_prefix}_{name}": idx
+            for name, idx in self.non_production_indices_by_name.items()
+        }
+        return result
+
     def add_named_cutter(self, cutter, name):
         """Add a cutter part with a specified name.
 
@@ -410,6 +498,8 @@ class LeaderFollowersCuttersPart:
         """
         if not isinstance(name, str):
             raise TypeError("Cutter name must be a string.")
+        if isinstance(cutter, list) or isinstance(cutter, tuple):
+            raise ValueError("Cutter must be a single part, not a list or tuple.")
         if name in self.cutter_indices_by_name:
             raise ValueError(f"Cutter name '{name}' already exists.")
         self.cutters.append(cutter)
