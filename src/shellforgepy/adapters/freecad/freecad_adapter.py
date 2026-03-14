@@ -639,8 +639,11 @@ def export_colored_parts_to_obj(
     angular_tolerance=0.1,
 ) -> None:
     """Export multiple FreeCAD parts with colors to a single OBJ file."""
+    total_parts = len(parts)
+    _logger.info("Preparing colored OBJ export for %d part(s)", total_parts)
+
     meshes = []
-    for part_entry in parts:
+    for index, part_entry in enumerate(parts, start=1):
         if len(part_entry) == 3:
             solid, name, color = part_entry
             animation = None
@@ -652,11 +655,20 @@ def export_colored_parts_to_obj(
                 "(solid, name, color[, animation])"
             )
 
+        if total_parts <= 10 or index == 1 or index == total_parts or index % 5 == 0:
+            _logger.info(
+                "OBJ export progress %d/%d: tessellating %s",
+                index,
+                total_parts,
+                name,
+            )
+
         vertices, triangles = tesellate(
             solid, tolerance=tolerance, angular_tolerance=angular_tolerance
         )
         meshes.append((vertices, triangles, name, color, animation))
 
+    _logger.info("Writing OBJ mesh file to %s", destination)
     export_colored_meshes_to_obj(meshes, destination)
 
 

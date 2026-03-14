@@ -457,15 +457,33 @@ def run_workflow(args: argparse.Namespace) -> int:
     with manifest_path.open("r", encoding="utf-8") as handle:
         manifest = json.load(handle)
 
+    slice_requested = bool(args.slice or args.upload)
+
     part_path = (
         Path(args.part_file).expanduser()
         if args.part_file
         else _resolve_manifest_path(run_directory, manifest.get("assembly_path"))
     )
+    if slice_requested:
+        part_path = _ensure_path(part_path, "generated STL")
+        _logger.info("Detected part file: %s", part_path)
+    else:
+        primary_artifact_path = part_path
+        if primary_artifact_path is None:
+            primary_artifact_path = _resolve_manifest_path(
+                run_directory, manifest.get("obj_path")
+            )
+        if primary_artifact_path is None:
+            primary_artifact_path = _resolve_manifest_path(
+                run_directory, manifest.get("assembly_step_path")
+            )
 
-    part_path = _ensure_path(part_path, "generated STL")
-
-    _logger.info("Detected part file: %s", part_path)
+        if primary_artifact_path is not None and primary_artifact_path.exists():
+            _logger.info("Detected geometry artifact: %s", primary_artifact_path)
+        else:
+            _logger.warning(
+                "No assembly STL/OBJ/STEP artifact path found in workflow manifest."
+            )
 
     # Log viewer URL if available in manifest
     viewer_url = manifest.get("viewer_url")
@@ -473,7 +491,7 @@ def run_workflow(args: argparse.Namespace) -> int:
         _logger.info("3D Viewer URL: %s", viewer_url)
 
     viewer_default = _resolve_config_key_value(config, "default_stl_file")
-    if viewer_default:
+    if viewer_default and part_path is not None and part_path.exists():
         try:
             viewer_path = Path(viewer_default).expanduser()
             viewer_path.parent.mkdir(parents=True, exist_ok=True)
@@ -482,6 +500,8 @@ def run_workflow(args: argparse.Namespace) -> int:
             _logger.info("Copied STL to viewer path: %s", viewer_path)
         except Exception as exc:  # pragma: no cover - best effort
             _logger.warning("Failed to update viewer STL %s: %s", viewer_default, exc)
+    elif viewer_default and not slice_requested:
+        _logger.info("Skipping viewer STL update because no STL was generated")
 
     # Upload OBJ and MTL files to viewer backend if configured
     upload_url = _resolve_config_key_value(config, "model_viewer_upload_url")
@@ -511,8 +531,6 @@ def run_workflow(args: argparse.Namespace) -> int:
                 )
         except Exception as exc:  # pragma: no cover - best effort
             _logger.warning("Failed to upload files to viewer backend: %s", exc)
-
-    slice_requested = bool(args.slice or args.upload)
 
     if not slice_requested:
         _logger.info(

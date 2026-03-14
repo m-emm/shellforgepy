@@ -274,9 +274,10 @@ def arrange_and_export_parts(
     export_individual_parts=True,
     export_stl=True,
 ):
-    """Arrange named parts with production support, export individual STLs, and a fused assembly.
+    """Arrange named parts with production support and export requested formats.
 
     Args:
+        export_stl: If True (default), export STL files for individual parts and the assembly.
         export_step: If True, also export STEP files alongside STL files.
         export_obj: If True (default), export OBJ files with colors/materials.
         viewer_base_url: Base URL for the 3D viewer. If set, viewer URLs are added to the manifest.
@@ -325,6 +326,15 @@ def arrange_and_export_parts(
     if not parts_list:
         raise ValueError("No parts provided for arrangement and export")
 
+    if not export_stl and not export_step and not export_obj:
+        raise ValueError("At least one export format must be enabled")
+
+    if process_data is not None and prod and not export_stl:
+        raise ValueError(
+            "process_data requires export_stl=True in production because slicer settings "
+            "need a generated STL part_file"
+        )
+
     # Use production arrangement or simple positioning
     if prod:
         # Use sophisticated production arrangement with flipping and rotation
@@ -365,50 +375,63 @@ def arrange_and_export_parts(
         manifest_data["export_dir"] = str(export_dir.resolve())
 
     base_name = Path(script_file).stem or "cadquery_parts"
-    fused_collector = PartCollector()
+    fused_shape = None
+    assembly_path = None
+    assembly_step_path = None
+    obj_path = None
+    needs_fused_export = export_stl or export_step
 
-    print("Fusing parts")
+    fused_collector = PartCollector() if needs_fused_export else None
+
+    if needs_fused_export:
+        _logger.info("Fusing parts")
 
     for name, arranged_shape in zip(names, arranged_shapes):
         try:
-            fused_collector.fuse(arranged_shape)
+            if fused_collector is not None:
+                fused_collector.fuse(arranged_shape)
+
             part_filename = export_dir / f"{base_name}_{_safe_name(name)}.stl"
-            if export_individual_parts:
-                print(f"Exporting {name} to {part_filename}")
+            if export_stl and export_individual_parts:
+                _logger.info("Exporting %s to %s", name, part_filename)
                 export_solid_to_stl(arranged_shape, part_filename)
-                print(f"Exported {name} to {part_filename}")
-            else:
-                print(
-                    f"Skipping individual export for {name} due to export_individual_parts=False"
+                _logger.info("Exported %s to %s", name, part_filename)
+            elif export_stl:
+                _logger.info(
+                    "Skipping individual export for %s due to export_individual_parts=False",
+                    name,
                 )
 
             if export_step:
                 step_filename = export_dir / f"{base_name}_{_safe_name(name)}.step"
-                print(f"Exporting {name} to {step_filename}")
+                _logger.info("Exporting %s to %s", name, step_filename)
                 export_solid_to_step(arranged_shape, step_filename)
-                print(f"Exported {name} to {step_filename}")
+                _logger.info("Exported %s to %s", name, step_filename)
 
-            if manifest_data is not None:
+            if manifest_data is not None and export_stl and export_individual_parts:
                 manifest_parts = manifest_data.setdefault("part_files", [])
                 if isinstance(manifest_parts, list):
                     manifest_parts.append(str(part_filename.resolve()))
         except Exception as e:
             raise RuntimeError(f"Failed to export part '{name}': {e}") from e
 
-    fused_shape = fused_collector.part
-    assert fused_shape is not None  # fused_collector received at least one part
+    if fused_collector is not None:
+        fused_shape = fused_collector.part
+        assert fused_shape is not None  # fused_collector received at least one part
 
-    assembly_path = export_dir / f"{base_name}.stl"
-    export_solid_to_stl(fused_shape, assembly_path)
-    print(f"Exported whole part to {assembly_path}")
+    if export_stl:
+        assert fused_shape is not None
+        assembly_path = export_dir / f"{base_name}.stl"
+        export_solid_to_stl(fused_shape, assembly_path)
+        _logger.info("Exported whole part to %s", assembly_path)
 
     if export_step:
+        assert fused_shape is not None
         assembly_step_path = export_dir / f"{base_name}.step"
         export_solid_to_step(fused_shape, assembly_step_path)
-        print(f"Exported whole part to {assembly_step_path}")
+        _logger.info("Exported whole part to %s", assembly_step_path)
 
     # Export colored OBJ file
-    obj_path = None
     if export_obj:
         obj_path = export_dir / f"{base_name}.obj"
         # Build parts list with colors (assign default colors if not specified)
@@ -421,9 +444,9 @@ def arrange_and_export_parts(
                 color = DEFAULT_PART_COLORS[i % len(DEFAULT_PART_COLORS)]
             colored_parts.append((shape, name, tuple(color), animation))
 
-        print(f"Exporting colored OBJ to {obj_path}")
+        _logger.info("Exporting colored OBJ to %s", obj_path)
         adapter_export_colored_parts_to_obj(colored_parts, str(obj_path))
-        print(f"Exported colored OBJ to {obj_path}")
+        _logger.info("Exported colored OBJ to %s", obj_path)
 
         if manifest_data is not None:
             manifest_data["obj_path"] = str(obj_path.resolve())
@@ -435,28 +458,38 @@ def arrange_and_export_parts(
                 obj_filename = obj_path.name
                 viewer_url = f"{viewer_base_url.rstrip('/')}/?file={obj_filename}"
                 manifest_data["viewer_url"] = viewer_url
-                print(f"Viewer URL: {viewer_url}")
+                _logger.info("Viewer URL: %s", viewer_url)
 
-    if manifest_data is not None:
+    if manifest_data is not None and assembly_path is not None:
         manifest_data["assembly_path"] = str(assembly_path.resolve())
+    if manifest_data is not None and assembly_step_path is not None:
+        manifest_data["assembly_step_path"] = str(assembly_step_path.resolve())
 
-    if process_data is not None:
+    if process_data is not None and export_stl:
+        assert assembly_path is not None
         process_data["part_file"] = assembly_path.resolve().as_posix()
         process_filename = assembly_path.with_name(f"{assembly_path.stem}_process.json")
         with process_filename.open("w", encoding="utf-8") as handle:
             json.dump(process_data, handle, indent=4)
-        print(f"Exported process data to {process_filename}")
+        _logger.info("Exported process data to %s", process_filename)
 
         if manifest_data is not None:
             manifest_data["process_data_path"] = str(process_filename.resolve())
+    elif process_data is not None:
+        _logger.info("Skipping process data export because export_stl=False")
 
     if manifest_path is not None and manifest_data is not None:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         with manifest_path.open("w", encoding="utf-8") as handle:
             json.dump(manifest_data, handle, indent=2, sort_keys=True)
-        print(f"Wrote workflow manifest to {manifest_path}")
+        _logger.info("Wrote workflow manifest to %s", manifest_path)
 
-    return assembly_path
+    if assembly_path is not None:
+        return assembly_path
+    if assembly_step_path is not None:
+        return assembly_step_path
+    assert obj_path is not None
+    return obj_path
 
 
 def arrange_and_export(
@@ -474,10 +507,12 @@ def arrange_and_export(
     export_obj=True,
     viewer_base_url=None,
     export_individual_parts=True,
+    export_stl=True,
 ):
     """Arrange and export a single part with production support.
 
     Args:
+        export_stl: If True (default), export STL files for individual parts and the assembly.
         export_step: If True, also export STEP files alongside STL files.
         export_obj: If True (default), export OBJ files with colors/materials.
         viewer_base_url: Base URL for the 3D viewer. If set, viewer URLs are added to the manifest.
@@ -512,4 +547,5 @@ def arrange_and_export(
         export_obj=export_obj,
         viewer_base_url=viewer_base_url,
         export_individual_parts=export_individual_parts,
+        export_stl=export_stl,
     )

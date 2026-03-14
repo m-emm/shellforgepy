@@ -303,6 +303,42 @@ def test_arrange_and_export_writes_obj_animation_comments():
 
 
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
+def test_arrange_and_export_obj_only_skips_fusion(monkeypatch):
+    """OBJ-only exports should not instantiate the fusion collector."""
+    import shellforgepy.produce.arrange_and_export as arrange_and_export_module
+
+    class FailingPartCollector:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("PartCollector should not be used for OBJ-only export")
+
+    monkeypatch.setattr(
+        arrange_and_export_module,
+        "PartCollector",
+        FailingPartCollector,
+    )
+
+    box = create_box(10, 10, 10)
+    parts_list = [{"name": "box", "part": box}]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        result_path = arrange_and_export_parts(
+            parts_list,
+            prod_gap=2.0,
+            bed_width=50.0,
+            script_file="test_obj_only.py",
+            export_directory=temp_dir,
+            export_stl=False,
+            export_step=False,
+            export_obj=True,
+        )
+
+        assert result_path.exists()
+        assert result_path.name == "test_obj_only.obj"
+        assert not (Path(temp_dir) / "test_obj_only.stl").exists()
+        assert not (Path(temp_dir) / "test_obj_only_box.stl").exists()
+
+
+@pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_arrange_and_export_with_process_data():
     """Test arrange and export with process data."""
     box = create_box(10, 10, 10)
@@ -332,6 +368,57 @@ def test_arrange_and_export_with_process_data():
         assert saved_data["temperature"] == 200
         assert saved_data["speed"] == 50
         assert "part_file" in saved_data
+
+
+@pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
+def test_arrange_and_export_skips_process_data_without_stl_in_non_prod():
+    """Non-production OBJ-only runs may carry process_data without writing it."""
+    box = create_box(10, 10, 10)
+    parts_list = [{"name": "box", "part": box}]
+    process_data = {"temperature": 200, "speed": 50}
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        result_path = arrange_and_export_parts(
+            parts_list,
+            prod_gap=2.0,
+            bed_width=50.0,
+            script_file="test_non_prod_obj_only.py",
+            export_directory=temp_dir,
+            process_data=process_data,
+            export_stl=False,
+            export_obj=True,
+            prod=False,
+        )
+
+        assert result_path.exists()
+        assert result_path.name == "test_non_prod_obj_only.obj"
+        assert not (Path(temp_dir) / "test_non_prod_obj_only_process.json").exists()
+        assert "part_file" not in process_data
+
+
+@pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
+def test_arrange_and_export_requires_stl_for_process_data_in_prod():
+    """Production runs still need STL when slicer process data is requested."""
+    box = create_box(10, 10, 10)
+    parts_list = [{"name": "box", "part": box}]
+    process_data = {"temperature": 200, "speed": 50}
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        with pytest.raises(
+            ValueError,
+            match="process_data requires export_stl=True in production",
+        ):
+            arrange_and_export_parts(
+                parts_list,
+                prod_gap=2.0,
+                bed_width=50.0,
+                script_file="test_prod_obj_only.py",
+                export_directory=temp_dir,
+                process_data=process_data,
+                export_stl=False,
+                export_obj=True,
+                prod=True,
+            )
 
 
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
