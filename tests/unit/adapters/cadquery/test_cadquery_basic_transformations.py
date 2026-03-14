@@ -664,6 +664,12 @@ def test_stack_alignment_conversion():
     assert stack_alignment_of(Alignment.BOTTOM) == Alignment.STACK_BOTTOM
     assert stack_alignment_of(Alignment.FRONT) == Alignment.STACK_FRONT
     assert stack_alignment_of(Alignment.BACK) == Alignment.STACK_BACK
+    assert stack_alignment_of(Alignment.EDGE_LEFT) == Alignment.STACK_LEFT
+    assert stack_alignment_of(Alignment.EDGE_RIGHT) == Alignment.STACK_RIGHT
+    assert stack_alignment_of(Alignment.EDGE_TOP) == Alignment.STACK_TOP
+    assert stack_alignment_of(Alignment.EDGE_BOTTOM) == Alignment.STACK_BOTTOM
+    assert stack_alignment_of(Alignment.EDGE_FRONT) == Alignment.STACK_FRONT
+    assert stack_alignment_of(Alignment.EDGE_BACK) == Alignment.STACK_BACK
 
 
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
@@ -675,6 +681,12 @@ def test_alignment_signs_constants():
     assert ALIGNMENT_SIGNS[Alignment.BOTTOM] == -1
     assert ALIGNMENT_SIGNS[Alignment.FRONT] == -1
     assert ALIGNMENT_SIGNS[Alignment.BACK] == 1
+    assert ALIGNMENT_SIGNS[Alignment.EDGE_LEFT] == -1
+    assert ALIGNMENT_SIGNS[Alignment.EDGE_RIGHT] == 1
+    assert ALIGNMENT_SIGNS[Alignment.EDGE_TOP] == 1
+    assert ALIGNMENT_SIGNS[Alignment.EDGE_BOTTOM] == -1
+    assert ALIGNMENT_SIGNS[Alignment.EDGE_FRONT] == -1
+    assert ALIGNMENT_SIGNS[Alignment.EDGE_BACK] == 1
     assert ALIGNMENT_SIGNS[Alignment.CENTER] == 0
 
 

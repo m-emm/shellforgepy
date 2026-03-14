@@ -16,6 +16,7 @@ from shellforgepy.simple import (
     mirror,
     rotate,
     scale,
+    stack_alignment_of,
     translate,
 )
 
@@ -290,6 +291,105 @@ def test_stack_alignment_positions_with_gap(alignment, axis, sign):
         assert np.isclose(stacked_min[axis], ref_max[axis] + gap)
     else:
         assert np.isclose(stacked_max[axis], ref_min[axis] - gap)
+
+
+@pytest.mark.parametrize(
+    "alignment, opposite, stack_alignment, axis, sign",
+    [
+        (
+            Alignment.EDGE_LEFT,
+            Alignment.EDGE_RIGHT,
+            Alignment.STACK_LEFT,
+            0,
+            -1,
+        ),
+        (
+            Alignment.EDGE_RIGHT,
+            Alignment.EDGE_LEFT,
+            Alignment.STACK_RIGHT,
+            0,
+            1,
+        ),
+        (
+            Alignment.EDGE_TOP,
+            Alignment.EDGE_BOTTOM,
+            Alignment.STACK_TOP,
+            2,
+            1,
+        ),
+        (
+            Alignment.EDGE_BOTTOM,
+            Alignment.EDGE_TOP,
+            Alignment.STACK_BOTTOM,
+            2,
+            -1,
+        ),
+        (
+            Alignment.EDGE_FRONT,
+            Alignment.EDGE_BACK,
+            Alignment.STACK_FRONT,
+            1,
+            -1,
+        ),
+        (
+            Alignment.EDGE_BACK,
+            Alignment.EDGE_FRONT,
+            Alignment.STACK_BACK,
+            1,
+            1,
+        ),
+    ],
+)
+def test_edge_alignment_metadata(alignment, opposite, stack_alignment, axis, sign):
+    assert alignment.opposite == opposite
+    assert alignment.stack_alignment == stack_alignment
+    assert alignment.axis == axis
+    assert alignment.sign == sign
+    assert stack_alignment_of(alignment) == stack_alignment
+
+
+@pytest.mark.parametrize(
+    "alignment, axis, sign",
+    [
+        (Alignment.EDGE_LEFT, 0, -1),
+        (Alignment.EDGE_RIGHT, 0, 1),
+        (Alignment.EDGE_FRONT, 1, -1),
+        (Alignment.EDGE_BACK, 1, 1),
+        (Alignment.EDGE_BOTTOM, 2, -1),
+        (Alignment.EDGE_TOP, 2, 1),
+    ],
+)
+def test_edge_alignment_centers_part_on_target_edge_on_corresponding_axis(
+    alignment, axis, sign
+):
+    reference = create_box(10, 20, 30)
+    part = create_box(4, 6, 8, origin=(27, -13, 11))
+
+    original_center = get_bounding_box_center(part)
+    aligned = align(part, reference, alignment)
+
+    ref_min, ref_max = get_bounding_box(reference)
+    aligned_center = get_bounding_box_center(aligned)
+
+    expected = ref_max[axis] if sign > 0 else ref_min[axis]
+    assert np.isclose(aligned_center[axis], expected)
+
+    for other_axis in {0, 1, 2} - {axis}:
+        assert np.isclose(aligned_center[other_axis], original_center[other_axis])
+
+
+@pytest.mark.parametrize("hole_radius", [2, 5, 9])
+def test_edge_alignment_supports_hole_inset_independent_of_hole_diameter(hole_radius):
+    plate = create_box(50, 50, 5)
+    hole = create_cylinder(hole_radius, 100)
+    hole_inset = 10
+
+    inset_hole = translate(hole_inset, 0, 0)(align(hole, plate, Alignment.EDGE_LEFT))
+
+    plate_bb = get_bounding_box(plate)
+    inset_hole_center = get_bounding_box_center(inset_hole)
+
+    assert np.isclose(inset_hole_center[0], plate_bb[0][0] + hole_inset)
 
 
 def test_mirror_reflects_across_plane_without_mutation():

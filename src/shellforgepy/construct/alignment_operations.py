@@ -74,18 +74,11 @@ def scale(factor, center=None):
 
 
 def stack_alignment_of(alignment):
-    stack_map = {
-        Alignment.LEFT: Alignment.STACK_LEFT,
-        Alignment.RIGHT: Alignment.STACK_RIGHT,
-        Alignment.TOP: Alignment.STACK_TOP,
-        Alignment.BOTTOM: Alignment.STACK_BOTTOM,
-        Alignment.FRONT: Alignment.STACK_FRONT,
-        Alignment.BACK: Alignment.STACK_BACK,
-    }
-    if alignment not in stack_map:
+    stack_alignment = alignment.stack_alignment
+    if stack_alignment is None:
         raise ValueError(f"Aligmment {alignment} has no corresponding stack alignment")
 
-    return stack_map[alignment]
+    return stack_alignment
 
 
 def _calc_stack_translation_vector(
@@ -170,6 +163,7 @@ def align_translation(part, to, alignment: Alignment, axes=None, stack_gap=0):
 
     min_bb_np = np.array(bb[0])
     max_bb_np = np.array(bb[1])
+    bb_center_np = (max_bb_np + min_bb_np) / 2
 
     min_to_bb_np = np.array(to_bb[0])
     max_to_bb_np = np.array(to_bb[1])
@@ -201,14 +195,26 @@ def align_translation(part, to, alignment: Alignment, axes=None, stack_gap=0):
         return translate(*project_to_axes(to_bb.xmin - bb.xmin, 0, 0))
     elif alignment == Alignment.RIGHT:
         return translate(*project_to_axes(to_bb.xmax - bb.xmax, 0, 0))
+    elif alignment == Alignment.EDGE_LEFT:
+        return translate(*project_to_axes(to_bb.xmin - bb_center_np[0], 0, 0))
+    elif alignment == Alignment.EDGE_RIGHT:
+        return translate(*project_to_axes(to_bb.xmax - bb_center_np[0], 0, 0))
     elif alignment == Alignment.BACK:
         return translate(*project_to_axes(0, to_bb.ymax - bb.ymax, 0))
     elif alignment == Alignment.FRONT:
         return translate(*project_to_axes(0, to_bb.ymin - bb.ymin, 0))
+    elif alignment == Alignment.EDGE_BACK:
+        return translate(*project_to_axes(0, to_bb.ymax - bb_center_np[1], 0))
+    elif alignment == Alignment.EDGE_FRONT:
+        return translate(*project_to_axes(0, to_bb.ymin - bb_center_np[1], 0))
     elif alignment == Alignment.TOP:
         return translate(*project_to_axes(0, 0, to_bb.zmax - bb.zmax))
     elif alignment == Alignment.BOTTOM:
         return translate(*project_to_axes(0, 0, to_bb.zmin - bb.zmin))
+    elif alignment == Alignment.EDGE_TOP:
+        return translate(*project_to_axes(0, 0, to_bb.zmax - bb_center_np[2]))
+    elif alignment == Alignment.EDGE_BOTTOM:
+        return translate(*project_to_axes(0, 0, to_bb.zmin - bb_center_np[2]))
     elif alignment == Alignment.CENTER:
         return translate(
             *project_to_axes(
@@ -251,6 +257,12 @@ def alignment_signs(aligmment_list):
         Alignment.BOTTOM: (0, 0, -1),
         Alignment.FRONT: (0, -1, 0),
         Alignment.BACK: (0, 1, 0),
+        Alignment.EDGE_LEFT: (-1, 0, 0),
+        Alignment.EDGE_RIGHT: (1, 0, 0),
+        Alignment.EDGE_TOP: (0, 0, 1),
+        Alignment.EDGE_BOTTOM: (0, 0, -1),
+        Alignment.EDGE_FRONT: (0, -1, 0),
+        Alignment.EDGE_BACK: (0, 1, 0),
         Alignment.CENTER: (0, 0, 0),
     }
 
