@@ -725,7 +725,7 @@ def export_solid_to_obj(
 
 
 def export_colored_parts_to_obj(
-    parts: List[Tuple[object, str, Tuple[float, float, float]]],
+    parts,
     destination: str,
     *,
     tolerance=0.1,
@@ -734,21 +734,33 @@ def export_colored_parts_to_obj(
     """Export multiple parts with different colors to a single OBJ file.
 
     Args:
-        parts: List of tuples (solid, name, color) where:
+        parts: List of tuples `(solid, name, color)` or
+            `(solid, name, color, animation)` where:
             - solid: CadQuery solid or workplane
             - name: Part/material name (used as material identifier)
             - color: RGB tuple (0.0-1.0 range)
+            - animation: Optional dict mapping animation key to XYZ vector
         destination: Path to write the OBJ file to.
         tolerance: Linear deflection tolerance in model units.
         angular_tolerance: Angular deflection tolerance in radians.
     """
     meshes = []
-    for solid, name, color in parts:
+    for part_entry in parts:
+        if len(part_entry) == 3:
+            solid, name, color = part_entry
+            animation = None
+        elif len(part_entry) == 4:
+            solid, name, color, animation = part_entry
+        else:
+            raise ValueError(
+                "Each part entry must contain 3 or 4 values: "
+                "(solid, name, color[, animation])"
+            )
         shape = _as_shape(solid)
         vertices, triangles = _tessellate_shape_to_numpy(
             shape, tolerance=tolerance, angular_tolerance=angular_tolerance
         )
-        meshes.append((vertices, triangles, name, color))
+        meshes.append((vertices, triangles, name, color, animation))
 
     return export_colored_meshes_to_obj(meshes, destination)
 

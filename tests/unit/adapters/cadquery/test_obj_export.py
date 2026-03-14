@@ -193,3 +193,46 @@ def test_export_colored_meshes_to_obj_accepts_numpy_mesh_data():
             mtl_content = f.read()
         assert "newmtl flat_mesh" in mtl_content
         assert "Kd 0.250000 0.500000 0.750000" in mtl_content
+
+
+def test_export_colored_meshes_to_obj_writes_animation_comments():
+    """OBJ writer should emit ShellForgePy animation comments per object."""
+    from shellforgepy.produce.obj_file_export import export_colored_meshes_to_obj
+
+    vertices = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+        ],
+        dtype=float,
+    )
+    triangles = np.array([[0, 1, 2]], dtype=np.int32)
+    meshes = [
+        (
+            vertices,
+            triangles,
+            "print bed",
+            (0.1, 0.2, 0.3),
+            {"bed_y": (0, 300, 0), "bed_x": (100, 0, 0)},
+        )
+    ]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        obj_path = os.path.join(tmpdir, "animated.obj")
+
+        export_colored_meshes_to_obj(meshes, obj_path)
+
+        with open(obj_path) as f:
+            obj_content = f.read()
+
+        assert "# Object: print bed" in obj_content
+        assert "o print_bed" in obj_content
+        assert "# shellforgepy_anim bed_y 0.0 300.0 0.0" in obj_content
+        assert "# shellforgepy_anim bed_x 100.0 0.0 0.0" in obj_content
+        assert obj_content.index("o print_bed") < obj_content.index(
+            "# shellforgepy_anim bed_y 0.0 300.0 0.0"
+        )
+        assert obj_content.index(
+            "# shellforgepy_anim bed_x 100.0 0.0 0.0"
+        ) < obj_content.index("\nv 0.0 0.0 0.0")

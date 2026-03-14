@@ -2,6 +2,10 @@ from typing import Optional
 
 import numpy as np
 from shellforgepy.adapters.font_resolver import FontResolutionError, resolve_font
+from shellforgepy.produce.obj_file_export import (
+    export_colored_meshes_to_obj,
+    export_mesh_to_obj,
+)
 
 # FreeCAD imports will be available when run in FreeCAD environment
 try:
@@ -605,6 +609,57 @@ def export_solid_to_stl(
     solid.exportStl(destination)
 
 
+def export_solid_to_obj(
+    solid,
+    destination: str,
+    *,
+    tolerance=0.1,
+    angular_tolerance=0.1,
+    color=None,
+    material_name: str = "material_0",
+) -> None:
+    """Export a FreeCAD solid to an OBJ file with optional color via MTL."""
+    vertices, triangles = tesellate(
+        solid, tolerance=tolerance, angular_tolerance=angular_tolerance
+    )
+    export_mesh_to_obj(
+        vertices,
+        triangles,
+        destination,
+        color=color,
+        material_name=material_name,
+    )
+
+
+def export_colored_parts_to_obj(
+    parts,
+    destination: str,
+    *,
+    tolerance=0.1,
+    angular_tolerance=0.1,
+) -> None:
+    """Export multiple FreeCAD parts with colors to a single OBJ file."""
+    meshes = []
+    for part_entry in parts:
+        if len(part_entry) == 3:
+            solid, name, color = part_entry
+            animation = None
+        elif len(part_entry) == 4:
+            solid, name, color, animation = part_entry
+        else:
+            raise ValueError(
+                "Each part entry must contain 3 or 4 values: "
+                "(solid, name, color[, animation])"
+            )
+
+        vertices, triangles = tesellate(
+            solid, tolerance=tolerance, angular_tolerance=angular_tolerance
+        )
+        meshes.append((vertices, triangles, name, color, animation))
+
+    export_colored_meshes_to_obj(meshes, destination)
+
+
 def export_solid_to_step(
     solid,
     destination: str,
@@ -851,6 +906,12 @@ def mirror_part_native(part, basePointVector, mirrorPlane):
         return part.reconstruct(mirrored)
     else:
         return mirrored
+
+
+def tessellate_part_native(part, tolerance=0.1, angularTolerance=0.1):
+    """Tessellate using native FreeCAD signature."""
+    shape = part.Shape if hasattr(part, "Shape") else part
+    return shape.tessellate(tolerance, angularTolerance)
 
 
 def fuse_parts(part1, part2):

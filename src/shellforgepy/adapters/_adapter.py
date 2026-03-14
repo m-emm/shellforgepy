@@ -481,10 +481,12 @@ def export_colored_parts_to_obj(
     """Export multiple parts with different colors to a single OBJ file.
 
     Args:
-        parts: List of tuples (solid, name, color) where:
+        parts: List of tuples `(solid, name, color)` or
+            `(solid, name, color, animation)` where:
             - solid: CAD solid
             - name: Part/material name
             - color: RGB tuple (0.0-1.0 range)
+            - animation: Optional dict mapping animation key to XYZ vector
         destination: Path to write the OBJ file to.
         tolerance: Linear deflection tolerance in model units.
         angular_tolerance: Angular deflection tolerance in radians.

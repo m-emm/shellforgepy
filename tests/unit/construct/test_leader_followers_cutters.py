@@ -18,7 +18,13 @@ from shellforgepy.simple import (
 def test_part_list_add_and_as_list():
     plist = PartList()
     shape = create_box(3, 3, 3)
-    plist.add(shape, "cube", prod_rotation_angle=45.0, prod_rotation_axis=(0, 1, 0))
+    plist.add(
+        shape,
+        "cube",
+        prod_rotation_angle=45.0,
+        prod_rotation_axis=(0, 1, 0),
+        animation={"x_axis": (220, 0, 0), "z": (0, 0, 200)},
+    )
 
     follower = translate(5, 0, 0)(create_box(1, 1, 1))
     group = LeaderFollowersCuttersPart(follower)
@@ -28,6 +34,10 @@ def test_part_list_add_and_as_list():
     assert {entry["name"] for entry in entries} == {"cube", "follower"}
     cube_entry = next(entry for entry in entries if entry["name"] == "cube")
     assert cube_entry["prod_rotation_axis"] == [0.0, 1.0, 0.0]
+    assert cube_entry["animation"] == {
+        "x_axis": [220.0, 0.0, 0.0],
+        "z": [0.0, 0.0, 200.0],
+    }
     assert cube_entry["part"] is not None  # Just check it exists
 
 
@@ -37,6 +47,14 @@ def test_part_list_duplicate_name_raises():
     plist.add(shape, "part")
     with pytest.raises(ValueError):
         plist.add(shape, "part")
+
+
+def test_part_list_animation_validation_raises():
+    plist = PartList()
+    shape = create_box(1, 1, 1)
+
+    with pytest.raises(ValueError, match="animation vector"):
+        plist.add(shape, "part", animation={"x": (1, 2)})
 
 
 def test_leader_followers_translate_and_rotate():

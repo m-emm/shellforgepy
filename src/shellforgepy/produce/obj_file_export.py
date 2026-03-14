@@ -25,6 +25,20 @@ def _color_to_rgb(color) -> tuple[float, float, float]:
     return (float(color[0]), float(color[1]), float(color[2]))
 
 
+def _animation_to_xyz(vector) -> tuple[float, float, float]:
+    """Normalize animation vectors to XYZ float triples."""
+    return (float(vector[0]), float(vector[1]), float(vector[2]))
+
+
+def _write_animation_comments(file_obj, animation) -> None:
+    if not animation:
+        return
+
+    for animation_key, vector in animation.items():
+        x, y, z = _animation_to_xyz(vector)
+        file_obj.write(f"# shellforgepy_anim {animation_key} {x} {y} {z}\n")
+
+
 def _write_mtl_file(
     path: str,
     materials: Dict[str, Tuple[float, float, float]],
@@ -112,13 +126,14 @@ def export_colored_meshes_to_obj(
     """Export multiple parts with different colors to a single OBJ file.
 
     Args:
-        parts: List of tuples (solid, name, color) where:
-            - solid: CadQuery solid or workplane
+        meshes: List of tuples `(vertices, triangles, name, color)` or
+            `(vertices, triangles, name, color, animation)` where:
+            - vertices: Vertex rows or vertex objects with coordinate access
+            - triangles: Triangles as integer index triplets
             - name: Part/material name (used as material identifier)
             - color: RGB tuple (0.0-1.0 range)
+            - animation: Optional dict mapping animation key to XYZ vector
         destination: Path to write the OBJ file to.
-        tolerance: Linear deflection tolerance in model units.
-        angular_tolerance: Angular deflection tolerance in radians.
     """
     import os
 
@@ -134,7 +149,17 @@ def export_colored_meshes_to_obj(
         f.write("# OBJ file exported by ShellForgePy\n")
         f.write(f"mtllib {mtl_filename}\n\n")
 
-        for vertices, triangles, name, color in meshes:
+        for mesh in meshes:
+            if len(mesh) == 4:
+                vertices, triangles, name, color = mesh
+                animation = None
+            elif len(mesh) == 5:
+                vertices, triangles, name, color, animation = mesh
+            else:
+                raise ValueError(
+                    "Each mesh entry must contain 4 or 5 values: "
+                    "(vertices, triangles, name, color[, animation])"
+                )
 
             # Sanitize material name (OBJ material names shouldn't have spaces)
             mat_name = name.replace(" ", "_").replace("/", "_")
@@ -142,6 +167,7 @@ def export_colored_meshes_to_obj(
 
             f.write(f"# Object: {name}\n")
             f.write(f"o {mat_name}\n")
+            _write_animation_comments(f, animation)
 
             # Write vertices
             normalized_vertices = [_vertex_to_xyz(v) for v in vertices]

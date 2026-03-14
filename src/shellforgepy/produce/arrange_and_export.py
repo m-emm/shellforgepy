@@ -219,6 +219,7 @@ def _arrange_parts_for_production(
                 "width": width,
                 "height": height,
                 "color": rect["original"].get("color"),
+                "animation": rect["original"].get("animation"),
             }
         )
 
@@ -246,7 +247,12 @@ def _arrange_parts_for_production(
 
     _logger.info(f"Arranged {len(arranged)} parts for production")
     return [
-        {"name": item["name"], "part": item["shape"], "color": item.get("color")}
+        {
+            "name": item["name"],
+            "part": item["shape"],
+            "color": item.get("color"),
+            "animation": item.get("animation"),
+        }
         for item in arranged
     ]
 
@@ -266,6 +272,7 @@ def arrange_and_export_parts(
     export_obj=True,
     viewer_base_url=None,
     export_individual_parts=True,
+    export_stl=True,
 ):
     """Arrange named parts with production support, export individual STLs, and a fused assembly.
 
@@ -332,11 +339,13 @@ def arrange_and_export_parts(
         names = [item["name"] for item in arranged_parts]
         # Colors are preserved through arrangement
         colors = [item.get("color") for item in arranged_parts]
+        animations = [item.get("animation") for item in arranged_parts]
     else:
-        # Simple arrangement - just extract shapes, names, and colors
+        # Simple arrangement - just extract shapes and export metadata
         shapes = []
         names = []
         colors = []
+        animations = []
         for entry in parts_list:
             if "name" not in entry or "part" not in entry:
                 raise KeyError("Each part mapping must include 'name' and 'part'")
@@ -344,6 +353,7 @@ def arrange_and_export_parts(
             shapes.append(shape)
             names.append(str(entry["name"]))
             colors.append(entry.get("color"))
+            animations.append(entry.get("animation"))
 
         arranged_shapes = shapes
 
@@ -403,11 +413,13 @@ def arrange_and_export_parts(
         obj_path = export_dir / f"{base_name}.obj"
         # Build parts list with colors (assign default colors if not specified)
         colored_parts = []
-        for i, (name, shape, color) in enumerate(zip(names, arranged_shapes, colors)):
+        for i, (name, shape, color, animation) in enumerate(
+            zip(names, arranged_shapes, colors, animations)
+        ):
             if color is None:
                 # Assign a default color from the palette
                 color = DEFAULT_PART_COLORS[i % len(DEFAULT_PART_COLORS)]
-            colored_parts.append((shape, name, tuple(color)))
+            colored_parts.append((shape, name, tuple(color), animation))
 
         print(f"Exporting colored OBJ to {obj_path}")
         adapter_export_colored_parts_to_obj(colored_parts, str(obj_path))

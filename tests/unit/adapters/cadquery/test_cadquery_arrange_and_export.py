@@ -272,6 +272,37 @@ def test_arrange_and_export_with_part_list():
 
 
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
+def test_arrange_and_export_writes_obj_animation_comments():
+    """Animation metadata from PartList should be serialized into the OBJ file."""
+    part_list = PartList()
+    box = create_box(10, 10, 10)
+    part_list.add(
+        box,
+        "print_bed",
+        animation={"bed_y": (0, 300, 0), "bed_x": (100, 0, 0)},
+    )
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        arrange_and_export_parts(
+            part_list,
+            prod_gap=2.0,
+            bed_width=50.0,
+            script_file="test_anim.py",
+            export_directory=temp_dir,
+        )
+
+        obj_path = Path(temp_dir) / "test_anim.obj"
+        assert obj_path.exists()
+
+        with obj_path.open() as f:
+            obj_content = f.read()
+
+        assert "o print_bed" in obj_content
+        assert "# shellforgepy_anim bed_y 0.0 300.0 0.0" in obj_content
+        assert "# shellforgepy_anim bed_x 100.0 0.0 0.0" in obj_content
+
+
+@pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_arrange_and_export_with_process_data():
     """Test arrange and export with process data."""
     box = create_box(10, 10, 10)
