@@ -5,6 +5,7 @@ from shellforgepy.construct.leader_followers_cutters_part import (
 from shellforgepy.construct.named_part import NamedPart
 from shellforgepy.produce.arrange_and_export import PartList
 from shellforgepy.simple import (
+    Alignment,
     create_box,
     get_bounding_box,
     get_bounding_box_center,
@@ -269,6 +270,76 @@ def test_leader_followers_cut_requires_cuttable_other():
 
     with pytest.raises(TypeError):
         group.cut(object())
+
+
+def test_aligned_from_follower_aligns_using_named_follower():
+    leader = create_box(2, 2, 2)
+    clamp = translate(0, -5, 0)(create_box(1, 1, 1))
+    side_plates = translate(0, 10, 0)(create_box(6, 4, 2))
+
+    group = LeaderFollowersCuttersPart(
+        leader,
+        followers=[clamp],
+        follower_names=["clamp_1"],
+    )
+
+    original_leader_center = get_bounding_box_center(group.leader)
+    original_clamp_bb = get_bounding_box(group.get_follower_part_by_name("clamp_1"))
+
+    aligned_group = group.aligned_from_follower(
+        "clamp_1",
+        side_plates,
+        Alignment.BACK,
+    )
+
+    aligned_leader_center = get_bounding_box_center(aligned_group.leader)
+    aligned_clamp_bb = get_bounding_box(
+        aligned_group.get_follower_part_by_name("clamp_1")
+    )
+    side_plates_bb = get_bounding_box(side_plates)
+    y_translation = aligned_clamp_bb[0][1] - original_clamp_bb[0][1]
+
+    assert aligned_group is not group
+    assert aligned_clamp_bb[1][1] == pytest.approx(side_plates_bb[1][1])
+    assert (
+        get_bounding_box(group.get_follower_part_by_name("clamp_1"))
+        == original_clamp_bb
+    )
+    assert aligned_leader_center[1] == pytest.approx(
+        original_leader_center[1] + y_translation
+    )
+
+
+def test_aligned_from_non_production_part_aligns_using_named_non_production_part():
+    leader = create_box(2, 2, 2)
+    profile = translate(4, 0, 0)(create_box(1, 1, 1))
+    target = translate(0, 0, 7)(create_box(6, 4, 2))
+
+    group = LeaderFollowersCuttersPart(
+        leader,
+        non_production_parts=[profile],
+        non_production_names=["lower_axis_profile"],
+    )
+
+    original_profile_center = get_bounding_box_center(
+        group.get_non_production_part_by_name("lower_axis_profile")
+    )
+    target_center = get_bounding_box_center(target)
+
+    aligned_group = group.aligned_from_non_production_part(
+        "lower_axis_profile",
+        target,
+        Alignment.CENTER,
+        axes=[2],
+    )
+
+    aligned_profile_center = get_bounding_box_center(
+        aligned_group.get_non_production_part_by_name("lower_axis_profile")
+    )
+
+    assert aligned_profile_center[0] == pytest.approx(original_profile_center[0])
+    assert aligned_profile_center[1] == pytest.approx(original_profile_center[1])
+    assert aligned_profile_center[2] == pytest.approx(target_center[2])
 
 
 def test_leader_followers_boundbox_property_matches_leader_bounds():

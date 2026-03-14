@@ -287,6 +287,60 @@ class LeaderFollowersCuttersPart:
             f"Non-production part with name '{name}' not found. Available names: {sorted(self.non_production_indices_by_name.keys())}"
         )
 
+    def align_translation_from_follower(
+        self, name, to, alignment, axes=None, stack_gap=0
+    ):
+        """Create an alignment translation using a named follower."""
+
+        from shellforgepy.construct.alignment_operations import align_translation
+
+        return align_translation(
+            self.get_follower_part_by_name(name),
+            to,
+            alignment,
+            axes=axes,
+            stack_gap=stack_gap,
+        )
+
+    def aligned_from_follower(self, name, to, alignment, axes=None, stack_gap=0):
+        """Return an aligned copy using a named follower."""
+
+        return self.align_translation_from_follower(
+            name,
+            to,
+            alignment,
+            axes=axes,
+            stack_gap=stack_gap,
+        )(self)
+
+    def align_translation_from_non_production_part(
+        self, name, to, alignment, axes=None, stack_gap=0
+    ):
+        """Create an alignment translation from a named non-production part."""
+
+        from shellforgepy.construct.alignment_operations import align_translation
+
+        return align_translation(
+            self.get_non_production_part_by_name(name),
+            to,
+            alignment,
+            axes=axes,
+            stack_gap=stack_gap,
+        )
+
+    def aligned_from_non_production_part(
+        self, name, to, alignment, axes=None, stack_gap=0
+    ):
+        """Return an aligned copy using a named non-production part."""
+
+        return self.align_translation_from_non_production_part(
+            name,
+            to,
+            alignment,
+            axes=axes,
+            stack_gap=stack_gap,
+        )(self)
+
     def add_named_non_production_part(self, part, name):
         """Add a non-production part with a specified name.
 
