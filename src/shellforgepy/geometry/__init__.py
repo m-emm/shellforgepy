@@ -4,6 +4,7 @@ Geometry module for shellforgepy.
 Provides geometric primitives, utilities, and higher-order solids for CAD operations.
 """
 
+from .dovetails import create_dovetail_tongue_and_groove
 from .higher_order_solids import (
     create_hex_prism,
     create_ring,
@@ -30,6 +31,7 @@ __all__ = [
     "create_hex_prism",
     "create_ring",
     "create_screw_thread",
+    "create_dovetail_tongue_and_groove",
     "create_trapezoid",
     "directed_cone_at",
     "directed_cylinder_at",

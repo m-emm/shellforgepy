@@ -357,8 +357,17 @@ class LeaderFollowersCuttersPart:
             raise ValueError(
                 "Non-production part must be a single part, not a list or tuple."
             )
+        if isinstance(part, LeaderFollowersCuttersPart):
+            raise ValueError(
+                "Non-production part cannot be a LeaderFollowersCuttersPart. It must be a single CAD part."
+            )
+
         if name in self.non_production_indices_by_name:
             raise ValueError(f"Non-production part name '{name}' already exists.")
+        if name in self.follower_indices_by_name:
+            raise ValueError(
+                f"Name '{name}' already exists as a follower. Names must be unique across followers, cutters, and non-production parts."
+            )
         self.non_production_parts.append(part)
         self.non_production_indices_by_name[name] = len(self.non_production_parts) - 1
 
@@ -379,8 +388,23 @@ class LeaderFollowersCuttersPart:
                 "Follower part must be a single part, not a list or tuple."
             )
 
+        if isinstance(follower, LeaderFollowersCuttersPart):
+            raise ValueError(
+                "Follower part cannot be a LeaderFollowersCuttersPart. It must be a single CAD part."
+            )
+
         if name in self.follower_indices_by_name:
             raise ValueError(f"Follower name '{name}' already exists.")
+
+        if name in self.cutter_indices_by_name:
+            raise ValueError(
+                f"Name '{name}' already exists as a cutter. Names must be unique across followers, cutters, and non-production parts."
+            )
+
+        if name in self.non_production_indices_by_name:
+            raise ValueError(
+                f"Name '{name}' already exists as a non-production part. Names must be unique across followers, cutters, and non-production parts."
+            )
 
         self.followers.append(follower)
         self.follower_indices_by_name[name] = len(self.followers) - 1
@@ -556,6 +580,11 @@ class LeaderFollowersCuttersPart:
             raise ValueError("Cutter must be a single part, not a list or tuple.")
         if name in self.cutter_indices_by_name:
             raise ValueError(f"Cutter name '{name}' already exists.")
+
+        if isinstance(cutter, LeaderFollowersCuttersPart):
+            raise ValueError(
+                "Cutter part cannot be a LeaderFollowersCuttersPart. It must be a single CAD part."
+            )
         self.cutters.append(cutter)
         self.cutter_indices_by_name[name] = len(self.cutters) - 1
 

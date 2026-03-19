@@ -92,6 +92,28 @@ ALIGNMENT_STACK_ALIGNMENT = {
     Alignment.EDGE_BACK: Alignment.STACK_BACK,
 }
 
+ALIGNMENT_EDGE_ALIGNMENT = {
+    Alignment.LEFT: Alignment.EDGE_LEFT,
+    Alignment.RIGHT: Alignment.EDGE_RIGHT,
+    Alignment.TOP: Alignment.EDGE_TOP,
+    Alignment.BOTTOM: Alignment.EDGE_BOTTOM,
+    Alignment.FRONT: Alignment.EDGE_FRONT,
+    Alignment.BACK: Alignment.EDGE_BACK,
+    Alignment.CENTER: None,
+    Alignment.STACK_LEFT: Alignment.EDGE_LEFT,
+    Alignment.STACK_RIGHT: Alignment.EDGE_RIGHT,
+    Alignment.STACK_TOP: Alignment.EDGE_TOP,
+    Alignment.STACK_BOTTOM: Alignment.EDGE_BOTTOM,
+    Alignment.STACK_FRONT: Alignment.EDGE_FRONT,
+    Alignment.STACK_BACK: Alignment.EDGE_BACK,
+    Alignment.EDGE_LEFT: Alignment.EDGE_LEFT,
+    Alignment.EDGE_RIGHT: Alignment.EDGE_RIGHT,
+    Alignment.EDGE_TOP: Alignment.EDGE_TOP,
+    Alignment.EDGE_BOTTOM: Alignment.EDGE_BOTTOM,
+    Alignment.EDGE_FRONT: Alignment.EDGE_FRONT,
+    Alignment.EDGE_BACK: Alignment.EDGE_BACK,
+}
+
 OPPOSITE_ALIGNMENTS = {
     Alignment.LEFT: Alignment.RIGHT,
     Alignment.RIGHT: Alignment.LEFT,
@@ -119,6 +141,9 @@ for k, v in ALIGNMENT_AXIS.items():
 
 for k, v in ALIGNMENT_STACK_ALIGNMENT.items():
     setattr(k, "stack_alignment", v)
+
+for k, v in ALIGNMENT_EDGE_ALIGNMENT.items():
+    setattr(k, "edge_alignment", v)
 
 
 for k, v in OPPOSITE_ALIGNMENTS.items():

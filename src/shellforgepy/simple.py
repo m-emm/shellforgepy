@@ -36,6 +36,7 @@ from shellforgepy.adapters._adapter import (
     get_volume,
     import_solid_from_step,
 )
+from shellforgepy.geometry.dovetails import create_dovetail_tongue_and_groove
 from shellforgepy.geometry.m_screws import (
     MScrew,
     create_bolt_thread,
@@ -184,6 +185,7 @@ __all__ = [
     "create_cube_geometry",
     "create_cylinder_screw",
     "create_cylinder",
+    "create_dovetail_tongue_and_groove",
     "create_distorted_cube",
     "create_dodecahedron_geometry",
     "create_extruded_polygon",

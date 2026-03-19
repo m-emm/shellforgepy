@@ -446,6 +446,9 @@ def test_m_screw_class():
 
 def test_create_conical_head_screw_basic():
     """Test basic conical head screw creation without threading."""
+    screw = create_conical_head_screw("M4", length=16)
+    assert screw is not None
+
     screw = create_conical_head_screw("M5", length=16)
     assert screw is not None
 
@@ -456,6 +459,11 @@ def test_create_conical_head_screw_basic():
     # Test unsupported size
     with pytest.raises(KeyError, match="Unsupported screw size"):
         create_conical_head_screw("M999", length=10)
+
+    with pytest.raises(
+        ValueError, match="Conical head dimensions are not defined for screw size"
+    ):
+        create_conical_head_screw("M12", length=10)
 
 
 @pytest.mark.slow

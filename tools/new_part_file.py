@@ -131,6 +131,9 @@ Examples:
 
     args = parser.parse_args()
 
+    if args.name.endswith(".py"):
+        args.name = args.name[:-3]
+
     # Convert name to snake_case for filename and function
     func_name = to_snake_case(args.name)
     filename = f"{func_name}.py"

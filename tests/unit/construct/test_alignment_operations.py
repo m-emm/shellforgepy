@@ -349,6 +349,34 @@ def test_edge_alignment_metadata(alignment, opposite, stack_alignment, axis, sig
 
 
 @pytest.mark.parametrize(
+    "alignment, edge_alignment",
+    [
+        (Alignment.LEFT, Alignment.EDGE_LEFT),
+        (Alignment.RIGHT, Alignment.EDGE_RIGHT),
+        (Alignment.TOP, Alignment.EDGE_TOP),
+        (Alignment.BOTTOM, Alignment.EDGE_BOTTOM),
+        (Alignment.FRONT, Alignment.EDGE_FRONT),
+        (Alignment.BACK, Alignment.EDGE_BACK),
+        (Alignment.CENTER, None),
+        (Alignment.STACK_LEFT, Alignment.EDGE_LEFT),
+        (Alignment.STACK_RIGHT, Alignment.EDGE_RIGHT),
+        (Alignment.STACK_TOP, Alignment.EDGE_TOP),
+        (Alignment.STACK_BOTTOM, Alignment.EDGE_BOTTOM),
+        (Alignment.STACK_FRONT, Alignment.EDGE_FRONT),
+        (Alignment.STACK_BACK, Alignment.EDGE_BACK),
+        (Alignment.EDGE_LEFT, Alignment.EDGE_LEFT),
+        (Alignment.EDGE_RIGHT, Alignment.EDGE_RIGHT),
+        (Alignment.EDGE_TOP, Alignment.EDGE_TOP),
+        (Alignment.EDGE_BOTTOM, Alignment.EDGE_BOTTOM),
+        (Alignment.EDGE_FRONT, Alignment.EDGE_FRONT),
+        (Alignment.EDGE_BACK, Alignment.EDGE_BACK),
+    ],
+)
+def test_edge_alignment_attribute(alignment, edge_alignment):
+    assert alignment.edge_alignment == edge_alignment
+
+
+@pytest.mark.parametrize(
     "alignment, axis, sign",
     [
         (Alignment.EDGE_LEFT, 0, -1),

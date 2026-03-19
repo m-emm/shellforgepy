@@ -74,6 +74,8 @@ m_screws_table = {
         "cylinder_head_height": 2.5,
         "wrench_socket_outer_diameter": 7.5,
         "min_thread_length": 17,
+        "conical_head_diameter": 5.0,
+        "conical_head_height": 1.5,
     },
     "M3": {
         "nut_size": 5.5,
@@ -93,6 +95,8 @@ m_screws_table = {
         "min_thread_length": 18,
         "thread_inset_hole_diameter": 4.3,
         "thread_inset_length": 6,
+        "conical_head_diameter": 6.0,
+        "conical_head_height": 1.7,
     },
     "M4": {
         "nut_size": 7,
@@ -110,6 +114,8 @@ m_screws_table = {
         "cylinder_head_height": 4,
         "wrench_socket_outer_diameter": 10.0,
         "min_thread_length": 20,
+        "conical_head_diameter": 8.0,
+        "conical_head_height": 2.3,
     },
     "M5": {
         "nut_size": 8,
@@ -148,6 +154,8 @@ m_screws_table = {
         "cylinder_head_height": 6,
         "wrench_socket_outer_diameter": 13.5,
         "min_thread_length": 24,
+        "conical_head_diameter": 12.0,
+        "conical_head_height": 3.3,
     },
     "M8": {
         "nut_size": 13,
@@ -165,6 +173,8 @@ m_screws_table = {
         "cylinder_head_height": 8,
         "wrench_socket_outer_diameter": 16.5,
         "min_thread_length": 28,
+        "conical_head_diameter": 16.0,
+        "conical_head_height": 4.4,
     },
     "M10": {
         "nut_size": 16,
@@ -182,6 +192,8 @@ m_screws_table = {
         "cylinder_head_height": 10,
         "wrench_socket_outer_diameter": 20.0,
         "min_thread_length": 32,
+        "conical_head_diameter": 20.0,
+        "conical_head_height": 5.5,
     },
     "M12": {
         "nut_size": 18,
@@ -448,6 +460,13 @@ def create_conical_head_screw(
     if size not in m_screws_table:
         raise KeyError(f"Unsupported screw size: {size}")
 
+    conical_head_diameter_base = m_screws_table[size].get("conical_head_diameter")
+    conical_head_height_base = m_screws_table[size].get("conical_head_height")
+    if conical_head_diameter_base is None or conical_head_height_base is None:
+        raise ValueError(
+            f"Conical head dimensions are not defined for screw size: {size}"
+        )
+
     thread_outer_diameter = float(size[1:]) + enlargement * 2
 
     if with_thread:
@@ -468,10 +487,8 @@ def create_conical_head_screw(
         thread = create_cylinder(thread_outer_diameter / 2, length)
 
     # Conical head
-    conical_head_diameter = (
-        m_screws_table[size]["conical_head_diameter"] + enlargement * 2
-    )
-    conical_head_height = m_screws_table[size]["conical_head_height"] + enlargement
+    conical_head_diameter = conical_head_diameter_base + enlargement * 2
+    conical_head_height = conical_head_height_base + enlargement
 
     conical_head = create_cone(
         radius1=thread_outer_diameter / 2 + enlargement,
