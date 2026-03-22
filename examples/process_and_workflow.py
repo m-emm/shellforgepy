@@ -63,13 +63,8 @@ PROCESS_DATA_06_PLA = {
         "outer_wall_line_width": "0.6",  # Slightly smaller for quality
         "sparse_infill_line_width": "0.7",  # Wider for faster infill
         "initial_layer_line_width": "0.7",
-        "solid_infill_line_width": "0.65",
-        "support_interface_line_width": "0.6",
         "internal_solid_infill_line_width": "0.65",
         "support_line_width": "0.65",
-        "bridge_line_width": "0.6",
-        "thin_wall_line_width": "0.6",
-        "gap_fill_line_width": "0.6",
         "top_surface_line_width": "0.6",  # Finer for surface quality
         ##### END .6MM NOZZLE SETTINGS #####
         # Basic setup
@@ -93,7 +88,7 @@ PROCESS_DATA_06_PLA = {
         "fan_min_speed": "80",
         "overhang_fan_speed": "100",
         "slow_down_for_layer_cooling": "1",
-        "min_layer_time": "8",
+        "slow_down_layer_time": "8",
         # Speed settings
         "external_perimeter_speed": f"{quality_speed}",
         "initial_layer_infill_speed": f"{quality_speed}",
@@ -114,22 +109,15 @@ PROCESS_DATA_06_PLA = {
         "outer_wall_acceleration": f"{quality_acceleration}",
         "top_surface_acceleration": f"{quality_acceleration}",
         "inner_wall_acceleration": f"{inner_acceleration}",
-        "solid_infill_acceleration": f"{inner_acceleration}",
         "sparse_infill_acceleration": f"{inner_acceleration}",
-        "support_acceleration": f"{inner_acceleration}",
-        "support_interface_acceleration": f"{inner_acceleration}",
-        "gap_fill_acceleration": f"{inner_acceleration}",
+        "internal_solid_infill_acceleration": f"{inner_acceleration}",
         "bridge_acceleration": f"{inner_acceleration}",
         # Jerk settings
         "initial_layer_jerk": f"{quality_jerk}",
         "outer_wall_jerk": f"{quality_jerk}",
         "top_surface_jerk": f"{quality_jerk}",
         "inner_wall_jerk": f"{inner_jerk}",
-        "solid_infill_jerk": f"{inner_jerk}",
-        "sparse_infill_jerk": f"{inner_jerk}",
-        "support_interface_jerk": f"{inner_jerk}",
-        "support_jerk": f"{inner_jerk}",
-        "gap_fill_jerk": f"{inner_jerk}",
+        "infill_jerk": f"{inner_jerk}",
         # Retraction
         "filament_retraction_length": "1.2",
         "filament_retraction_speed": "40",

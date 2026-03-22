@@ -214,6 +214,32 @@ If a CadQuery or FreeCAD adapter is available, the exporter will use it
 transparently. Otherwise you get a helpful error telling you which dependency is
 missing.
 
+### Clipping A Part To A Box
+
+`create_box_hole_cutter()` returns a `LeaderFollowersCuttersPart` whose leader is
+the box you want to keep and whose cutter removes material on all six sides.
+Align that assembly to a target part and then call `use_as_cutter_on(...)` to
+cut away everything outside the box.
+
+```python
+from shellforgepy.simple import (
+    Alignment,
+    align,
+    create_box,
+    create_box_hole_cutter,
+)
+
+part = create_box(120, 80, 40, origin=(-60, -40, -20))
+
+keep_volume = create_box_hole_cutter(50, 30, 20)
+keep_volume = align(keep_volume, part, Alignment.CENTER)
+
+trimmed_part = keep_volume.use_as_cutter_on(part)
+```
+
+The default `cutter_size=500` matches the usual design-script `BIG_THING`
+convention. Increase it when the part extends farther away from the keep-volume.
+
 ---
 
 ## Project layout

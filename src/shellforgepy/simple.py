@@ -37,6 +37,7 @@ from shellforgepy.adapters._adapter import (
     import_solid_from_step,
 )
 from shellforgepy.geometry.dovetails import create_dovetail_tongue_and_groove
+from shellforgepy.geometry.keepouts import create_box_hole_cutter
 from shellforgepy.geometry.m_screws import (
     MScrew,
     create_bolt_thread,
@@ -180,6 +181,7 @@ __all__ = [
     "create_bezier_snake_geometry",
     "create_bolt_thread",
     "create_box",
+    "create_box_hole_cutter",
     "create_cone",
     "create_conical_ring",
     "create_cube_geometry",

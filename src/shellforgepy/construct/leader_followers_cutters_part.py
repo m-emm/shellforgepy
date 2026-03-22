@@ -208,6 +208,11 @@ class LeaderFollowersCuttersPart:
         Example:
             # Prepare a panel for mounting a bracket
             prepared_panel = bracket.use_as_cutter_on(panel)
+
+            # Or clip a part down to a box-shaped keep-volume
+            keep_volume = create_box_hole_cutter(60, 40, 20)
+            keep_volume = align(keep_volume, part, Alignment.CENTER)
+            trimmed_part = keep_volume.use_as_cutter_on(part)
         """
 
         retval = copy_part(part)

@@ -13,6 +13,7 @@ from .higher_order_solids import (
     directed_cone_at,
     directed_cylinder_at,
 )
+from .keepouts import create_box_hole_cutter
 from .m_screws import (
     create_bolt_thread,
     create_cylinder_screw,
@@ -28,6 +29,7 @@ from .m_screws import (
 
 __all__ = [
     # Higher order solids
+    "create_box_hole_cutter",
     "create_hex_prism",
     "create_ring",
     "create_screw_thread",

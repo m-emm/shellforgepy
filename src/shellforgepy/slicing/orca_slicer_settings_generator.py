@@ -10,6 +10,61 @@ import yaml
 _logger = logging.getLogger(__name__)
 
 
+def _resolve_process_override_targets(process_overrides, used_master_configs):
+    missing_keys = []
+    ambiguous_keys = {}
+    resolved_targets = {}
+
+    for key in process_overrides:
+        matching_configs = [
+            config for config in used_master_configs if key in config["master_data"]
+        ]
+
+        if not matching_configs:
+            missing_keys.append(key)
+            continue
+
+        if len(matching_configs) > 1:
+            ambiguous_keys[key] = [
+                config["config_file"].absolute().as_posix()
+                for config in matching_configs
+            ]
+            continue
+
+        resolved_targets[key] = matching_configs[0]
+
+    if not missing_keys and not ambiguous_keys:
+        return resolved_targets
+
+    used_files = "\n".join(
+        config["config_file"].absolute().as_posix() for config in used_master_configs
+    )
+    error_lines = [
+        "The following flat process_overrides keys could not be resolved uniquely "
+        "against the loaded OrcaSlicer master settings."
+    ]
+
+    if missing_keys:
+        error_lines.append(
+            "Missing keys (would be silently dropped): "
+            + ", ".join(sorted(missing_keys))
+        )
+        error_lines.append(
+            "Add each missing key to the correct master YAML before overriding it."
+        )
+
+    if ambiguous_keys:
+        error_lines.append("Ambiguous keys (match more than one master YAML):")
+        for key in sorted(ambiguous_keys):
+            error_lines.append(f"{key}:")
+            for config_file in ambiguous_keys[key]:
+                error_lines.append(config_file)
+
+    error_lines.append("Loaded master settings:")
+    error_lines.append(used_files)
+    raise ValueError("\n".join(error_lines))
+
+
 def generate_settings(
     process_data_file: Path, output_dir: Path, master_settings_dir: Path
 ) -> None:
@@ -30,6 +85,7 @@ def generate_settings(
     )
 
     filament = process_data["filament"]
+    process_overrides = dict(process_data.get("process_overrides", {}))
 
     if not output_dir.exists():
         raise FileNotFoundError(f"Directory {output_dir} does not exist.")
@@ -45,7 +101,8 @@ def generate_settings(
     filament_found = False
     filament_filename = None
     settings_files_used = []
-    for config_file in master_settings_dir.glob("*.yaml"):
+    used_master_configs = []
+    for config_file in sorted(master_settings_dir.glob("*.yaml")):
         with config_file.open("r", encoding="utf-8") as file_handle:
             master_data = yaml.safe_load(file_handle)
 
@@ -64,6 +121,28 @@ def generate_settings(
             filament_filename = config_file.absolute().as_posix()
 
         settings_files_used.append(config_file.absolute().as_posix())
+        used_master_configs.append(
+            {
+                "config_file": config_file,
+                "master_data": master_data,
+                "path_part": path_part,
+            }
+        )
+
+    if not filament_found:
+        raise ValueError(f"Filament {filament} not found in {master_settings_dir}.")
+    else:
+        _logger.info(f"Filament {filament} found in {filament_filename} and processed.")
+
+    override_targets = _resolve_process_override_targets(
+        process_overrides, used_master_configs
+    )
+
+    for config in used_master_configs:
+        master_data = config["master_data"]
+        path_part = config["path_part"]
+        name = master_data["name"]
+
         if master_data["type"] == "machine":
             print_host = master_data.get("print_host")
             if print_host is not None:
@@ -74,11 +153,12 @@ def generate_settings(
                     file_handle.write(print_host)
                 _logger.info(f"Saved print host to {output_dir / 'print_host.txt'}")
 
-        for key, value in process_data["process_overrides"].items():
-            if key in master_data:
+        for key, value in process_overrides.items():
+            if override_targets.get(key) != config:
+                continue
 
-                _logger.info(f"Overriding {key} with {value}")
-                master_data[key] = str(value)
+            _logger.info(f"Overriding {key} in {name} with {value}")
+            master_data[key] = str(value)
 
         with (output_dir / f"{path_part}{name}.json").open(
             "w", encoding="utf-8"
@@ -100,11 +180,6 @@ def generate_settings(
         ) as file_handle:
             file_handle.write(info_text)
         _logger.info(f"Saved {name} config to {path_part}{name}.info")
-
-    if not filament_found:
-        raise ValueError(f"Filament {filament} not found in {master_settings_dir}.")
-    else:
-        _logger.info(f"Filament {filament} found in {filament_filename} and processed.")
 
     _logger.info(
         f"Used the following master settings files:\n{'\n'.join(settings_files_used)}"
