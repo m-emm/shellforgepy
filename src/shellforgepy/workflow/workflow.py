@@ -19,8 +19,6 @@ from typing import Dict, Iterable, List, Optional
 
 from shellforgepy.simple import LOGGING_FORMAT
 from shellforgepy.slicing.orca_slicer_settings_generator import generate_settings
-from shellforgepy.workflow import upload_to_printer
-from shellforgepy.workflow.preview_generator import render_stl_to_png
 
 _logger = logging.getLogger(__name__)
 
@@ -684,6 +682,8 @@ def run_workflow(args: argparse.Namespace) -> int:
 
     if not preview_generated and part_path.suffix.lower() == ".stl":
         try:
+            from shellforgepy.workflow.preview_generator import render_stl_to_png
+
             render_stl_to_png(
                 stl_path=part_path,
                 out_path=preview_path,
@@ -722,6 +722,8 @@ def run_workflow(args: argparse.Namespace) -> int:
         for gcode_file in gcode_files:
             _logger.info("Uploading %s", gcode_file)
             try:
+                from shellforgepy.workflow import upload_to_printer
+
                 upload_to_printer.upload_to_printer(gcode_file, printer)
             except Exception as exc:
                 raise WorkflowError(f"Failed to upload {gcode_file}: {exc}") from exc
@@ -876,6 +878,28 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Arguments forwarded to the target (precede with -- to separate)",
     )
 
+    build_parser = subparsers.add_parser(
+        "build", help="Execute declarative assembly builds from YAML"
+    )
+    build_parser.add_argument(
+        "config_file",
+        help="Path to assemblies YAML file",
+    )
+    build_parser.add_argument(
+        "--assembly",
+        action="append",
+        help="Build only the named assembly. Repeat for multiple assemblies.",
+    )
+    build_parser.add_argument(
+        "--repository-dir",
+        help="Override the repository directory used for cached STEP artifacts.",
+    )
+    build_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Rebuild even when a matching hashed metadata file already exists.",
+    )
+
     args = parser.parse_args(argv)
     configure_logging(args.verbose)
 
@@ -917,6 +941,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.upload and not args.slice:
             args.slice = True
         return run_workflow(args)
+
+    if args.command == "build":
+        from shellforgepy.builder.builder import run_builder
+
+        return run_builder(args)
 
     raise AssertionError("Unhandled command")
 
