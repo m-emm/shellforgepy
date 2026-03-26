@@ -276,6 +276,35 @@ def test_build_from_file_injects_dependency_part_and_hashes_dependency(
     )
 
 
+def test_dependency_step_path_supports_dotted_named_artifacts():
+    metadata = {
+        "assembly_name": "print_bed_assembly",
+        "artifacts": {
+            "leader_step": "/tmp/leader.step",
+            "followers": [{"name": "front_left_uc", "path": "/tmp/follower.step"}],
+            "cutters": [{"name": "belt_path_cutter_front", "path": "/tmp/cutter.step"}],
+            "non_production_parts": [
+                {"name": "damper_left_front", "path": "/tmp/damper.step"}
+            ],
+        },
+    }
+
+    assert (
+        builder._dependency_step_path(
+            metadata, "non_production_parts.damper_left_front"
+        )
+        == Path("/tmp/damper.step").resolve()
+    )
+    assert (
+        builder._dependency_step_path(metadata, "followers.front_left_uc")
+        == Path("/tmp/follower.step").resolve()
+    )
+    assert (
+        builder._dependency_step_path(metadata, "cutters.belt_path_cutter_front")
+        == Path("/tmp/cutter.step").resolve()
+    )
+
+
 def test_run_builder_invokes_build_from_file(monkeypatch, tmp_path):
     captured = {}
 
@@ -377,8 +406,9 @@ def test_run_builder_visualization_expands_dependents_and_exports_scene(
         ]
 
     def fake_export_scene_for_assembly(
-        *, args, build_results, selected_assembly, scene_assembly_names
+        *, args, config_data, build_results, selected_assembly, scene_assembly_names
     ):
+        captured["config_data"] = config_data
         captured["selected_assembly"] = selected_assembly
         captured["scene_assembly_names"] = scene_assembly_names
         return 0
@@ -415,6 +445,12 @@ def test_run_builder_visualization_expands_dependents_and_exports_scene(
 
     assert result == 0
     assert captured["assembly_names"] == ["feet", "frame"]
+    assert captured["config_data"] == {
+        "assemblies": [
+            {"name": "frame", "depends_on": []},
+            {"name": "feet", "depends_on": ["frame"]},
+        ]
+    }
     assert captured["selected_assembly"] == "frame"
     assert captured["scene_assembly_names"] == ["frame", "feet"]
 
@@ -482,4 +518,42 @@ def test_resolve_process_data_applies_overrides(monkeypatch):
             "speed": "100",
             "brim_type": "no_brim",
         },
+    }
+
+
+def test_resolve_export_options_merges_top_level_builder_defaults():
+    resolved = builder._resolve_export_options(
+        {
+            "Builder": {
+                "Production": {
+                    "arrange": {
+                        "export_obj": False,
+                    }
+                }
+            }
+        },
+        "production",
+        {
+            "builder_defaults": {
+                "Production": {
+                    "arrange": {
+                        "bed_width": 220,
+                        "export_step": True,
+                        "export_obj": True,
+                        "export_stl": True,
+                        "export_individual_parts": True,
+                    }
+                }
+            }
+        },
+    )
+
+    assert resolved == {
+        "prod_gap": 1.0,
+        "bed_width": 220,
+        "max_build_height": None,
+        "export_step": True,
+        "export_obj": False,
+        "export_individual_parts": True,
+        "export_stl": True,
     }

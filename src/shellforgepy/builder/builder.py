@@ -838,10 +838,12 @@ def _dependency_step_path(metadata: Mapping[str, Any], artifact: str) -> Path:
         step_path = artifacts.get("leader_step")
     elif artifact == "fused":
         step_path = artifacts.get("fused_step")
-    elif artifact.startswith("non_production:"):
-        target_name = artifact.split(":", 1)[1]
+    elif "." in artifact:
+        artifact_group, target_name = artifact.split(".", 1)
+        if artifact_group not in {"followers", "cutters", "non_production_parts"}:
+            raise BuilderError(f"Unsupported dependency artifact selector '{artifact}'")
         step_path = None
-        for item in artifacts.get("non_production_parts", []):
+        for item in artifacts.get(artifact_group, []):
             if item.get("name") == target_name:
                 step_path = item.get("path")
                 break
@@ -970,20 +972,56 @@ def _load_attribute(dotted_path: str) -> Any:
         ) from exc
 
 
-def _builder_section(
-    resource_data: Mapping[str, Any], section_name: str
+def _merge_mapping(
+    base: Mapping[str, Any], override: Mapping[str, Any]
 ) -> Dict[str, Any]:
-    builder_data = resource_data.get("Builder", {})
-    if builder_data is None:
+    merged = dict(base)
+    for key, value in override.items():
+        existing = merged.get(key)
+        if isinstance(existing, Mapping) and isinstance(value, Mapping):
+            merged[key] = _merge_mapping(existing, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _builder_defaults(config_data: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    if not config_data:
         return {}
-    if not isinstance(builder_data, Mapping):
+
+    raw_defaults = config_data.get("builder_defaults")
+    if raw_defaults is None:
+        raw_defaults = config_data.get("BuilderDefaults", {})
+    if raw_defaults is None:
+        return {}
+    if not isinstance(raw_defaults, Mapping):
+        raise BuilderError("builder_defaults must be a mapping")
+    return dict(raw_defaults)
+
+
+def _builder_section(
+    resource_data: Mapping[str, Any],
+    section_name: str,
+    config_data: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    defaults = _builder_defaults(config_data)
+    default_section = defaults.get(section_name, {})
+    if default_section is None:
+        default_section = {}
+    if not isinstance(default_section, Mapping):
+        raise BuilderError(f"builder_defaults.{section_name} must be a mapping")
+
+    resource_builder_data = resource_data.get("Builder", {})
+    if resource_builder_data is None:
+        resource_builder_data = {}
+    if not isinstance(resource_builder_data, Mapping):
         raise BuilderError("Builder section must be a mapping")
-    section = builder_data.get(section_name, {})
+    section = resource_builder_data.get(section_name, {})
     if section is None:
-        return {}
+        section = {}
     if not isinstance(section, Mapping):
         raise BuilderError(f"Builder.{section_name} must be a mapping")
-    return dict(section)
+    return _merge_mapping(default_section, section)
 
 
 def _default_scene_rules(
@@ -1005,9 +1043,10 @@ def _scene_rules_for_mode(
     metadata: Mapping[str, Any],
     resource_data: Mapping[str, Any],
     mode: str,
+    config_data: Optional[Mapping[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     section_name = "Visualization" if mode == "visualization" else "Production"
-    section = _builder_section(resource_data, section_name)
+    section = _builder_section(resource_data, section_name, config_data)
     parts = section.get("parts")
     if parts is None:
         return _default_scene_rules(metadata, mode)
@@ -1142,8 +1181,9 @@ def _materialize_rule_parts(
     mode: str,
     built_results_by_name: Mapping[str, Dict[str, Any]],
     repository_dir: Path,
+    config_data: Optional[Mapping[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    rules = _scene_rules_for_mode(metadata, resource_data, mode)
+    rules = _scene_rules_for_mode(metadata, resource_data, mode, config_data)
     dependency_metadata = _dependency_metadata_map(
         metadata, built_results_by_name, repository_dir
     )
@@ -1210,8 +1250,9 @@ def _materialize_rule_parts(
 def _resolve_process_data(
     metadata: Mapping[str, Any],
     resource_data: Mapping[str, Any],
+    config_data: Optional[Mapping[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
-    production_section = _builder_section(resource_data, "Production")
+    production_section = _builder_section(resource_data, "Production", config_data)
     process_data_spec = production_section.get("process_data")
     if process_data_spec is None:
         return None
@@ -1249,9 +1290,10 @@ def _resolve_process_data(
 def _resolve_export_options(
     resource_data: Mapping[str, Any],
     mode: str,
+    config_data: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     section_name = "Visualization" if mode == "visualization" else "Production"
-    section = _builder_section(resource_data, section_name)
+    section = _builder_section(resource_data, section_name, config_data)
     arrange = section.get("arrange", {})
     if arrange is None:
         arrange = {}
@@ -1429,6 +1471,7 @@ def _resolve_runs_base_dir(args: argparse.Namespace, config: Mapping[str, Any]) 
 def _export_scene_for_assembly(
     *,
     args: argparse.Namespace,
+    config_data: Mapping[str, Any],
     build_results: Sequence[Dict[str, Any]],
     selected_assembly: str,
     scene_assembly_names: Sequence[str],
@@ -1496,6 +1539,7 @@ def _export_scene_for_assembly(
             mode,
             built_results_by_name,
             repository_dir,
+            config_data,
         ):
             source_path = str(part.get("source_path") or "")
             if source_path and source_path in seen_source_paths:
@@ -1515,7 +1559,11 @@ def _export_scene_for_assembly(
         selected_resource_data = _load_yaml(
             Path(selected_metadata["resource_file"]).expanduser().resolve()
         )
-        process_data = _resolve_process_data(selected_metadata, selected_resource_data)
+        process_data = _resolve_process_data(
+            selected_metadata,
+            selected_resource_data,
+            config_data,
+        )
         if process_data is None:
             raise BuilderError(
                 f"Assembly '{selected_assembly}' does not declare Builder.Production.process_data"
@@ -1524,6 +1572,7 @@ def _export_scene_for_assembly(
     export_options = _resolve_export_options(
         _load_yaml(Path(selected_metadata["resource_file"]).expanduser().resolve()),
         mode,
+        config_data,
     )
     env = {
         RUN_ID_ENV: run_id,
@@ -1619,6 +1668,7 @@ def run_builder(args: argparse.Namespace) -> int:
 
     return _export_scene_for_assembly(
         args=args,
+        config_data=config_data,
         build_results=results,
         selected_assembly=requested_assemblies[0],
         scene_assembly_names=scene_assemblies,
