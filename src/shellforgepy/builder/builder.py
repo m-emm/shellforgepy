@@ -288,6 +288,17 @@ def _resolve_inline_mapping(
     return resolved
 
 
+def _resolve_inline_value(value: Any, context: Mapping[str, Any]) -> Any:
+    local = dict(context)
+
+    def resolver(name: str) -> Any:
+        if name in local:
+            return local[name]
+        raise BuilderError(f"Unknown reference '{name}'")
+
+    return _resolve_value(value, resolver)
+
+
 def _normalize_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -909,6 +920,27 @@ def _dependency_metadata_for_assembly(
     return _find_latest_metadata_for_assembly(repository_dir, assembly_name)
 
 
+def _declared_dependency_names_for_metadata(
+    metadata: Mapping[str, Any],
+    config_data: Optional[Mapping[str, Any]] = None,
+) -> List[str]:
+    declared = metadata.get("declared_dependencies")
+    if isinstance(declared, list):
+        return [str(item) for item in declared]
+
+    if config_data is None:
+        return []
+
+    assembly_name = metadata.get("assembly_name")
+    if not assembly_name:
+        return []
+
+    for entry in _get_assemblies(config_data):
+        if str(entry.get("name")) == str(assembly_name):
+            return _dependency_names(entry)
+    return []
+
+
 def _dependency_step_path(metadata: Mapping[str, Any], artifact: str) -> Path:
     artifacts = metadata.get("artifacts", {})
     if artifact == "leader":
@@ -1205,17 +1237,200 @@ def _artifact_entries_for_selector(
             }
             for item in artifacts.get(artifact, [])
         ]
+    if "." in artifact:
+        artifact_group, target_name = artifact.split(".", 1)
+        if artifact_group not in {"followers", "cutters", "non_production_parts"}:
+            raise BuilderError(f"Unsupported scene artifact selector '{artifact}'")
+        for item in artifacts.get(artifact_group, []):
+            if item.get("name") == target_name:
+                return [
+                    {
+                        "assembly_name": assembly_name,
+                        "artifact": artifact_group,
+                        "path": str(item["path"]),
+                        "name": item.get("name"),
+                        "index": item.get("index"),
+                    }
+                ]
+        return []
     raise BuilderError(f"Unsupported scene artifact selector '{artifact}'")
+
+
+def _filter_artifact_entries(
+    entries: Sequence[Mapping[str, Any]], rule: Mapping[str, Any]
+) -> List[Dict[str, Any]]:
+    include_names = rule.get("names")
+    exclude_names = rule.get("exclude_names")
+    if include_names is not None:
+        if not isinstance(include_names, list):
+            raise BuilderError("Scene rule names must be a list")
+        include_set = {str(item) for item in include_names}
+    else:
+        include_set = None
+
+    if exclude_names is not None:
+        if not isinstance(exclude_names, list):
+            raise BuilderError("Scene rule exclude_names must be a list")
+        exclude_set = {str(item) for item in exclude_names}
+    else:
+        exclude_set = set()
+
+    filtered: List[Dict[str, Any]] = []
+    for entry in entries:
+        name = entry.get("name")
+        if include_set is not None and str(name) not in include_set:
+            continue
+        if name is not None and str(name) in exclude_set:
+            continue
+        filtered.append(dict(entry))
+    return filtered
+
+
+def _placement_section(resource_data: Mapping[str, Any]) -> Dict[str, Any]:
+    placement = resource_data.get("placement")
+    if placement is None:
+        placement = resource_data.get("Placement", {})
+    if placement is None:
+        return {}
+    if not isinstance(placement, Mapping):
+        raise BuilderError("placement section must be a mapping")
+    return dict(placement)
+
+
+def _placement_alignments(resource_data: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    placement = _placement_section(resource_data)
+    alignments = placement.get("alignments", [])
+    if alignments is None:
+        return []
+    if not isinstance(alignments, list):
+        raise BuilderError("placement.alignments must be a list")
+    return [dict(item) for item in alignments]
+
+
+def _known_assembly_names(
+    config_data: Optional[Mapping[str, Any]],
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+) -> List[str]:
+    names = set(str(name) for name in built_results_by_name)
+    if config_data is not None:
+        names.update(str(entry["name"]) for entry in _get_assemblies(config_data))
+    return sorted(names, key=len, reverse=True)
+
+
+def _parse_part_reference(
+    reference: str,
+    known_assembly_names: Sequence[str],
+) -> tuple[str, str]:
+    normalized = str(reference).strip()
+    if not normalized:
+        raise BuilderError("Placement part reference must not be empty")
+    for assembly_name in known_assembly_names:
+        prefix = f"{assembly_name}."
+        if normalized == assembly_name:
+            return assembly_name, "leader"
+        if normalized.startswith(prefix):
+            selector = normalized[len(prefix) :]
+            if not selector:
+                return assembly_name, "leader"
+            return assembly_name, selector
+    raise BuilderError(f"Unknown assembly reference '{reference}' in placement")
+
+
+def _resolve_alignment_enum(raw_alignment: Any) -> Any:
+    from shellforgepy.construct.alignment import Alignment
+
+    if isinstance(raw_alignment, Alignment):
+        return raw_alignment
+
+    try:
+        return getattr(Alignment, str(raw_alignment))
+    except AttributeError as exc:
+        raise BuilderError(f"Unknown placement alignment '{raw_alignment}'") from exc
+
+
+def _make_placement_translation(
+    moving_anchor: Any,
+    target_anchor: Any,
+    *,
+    alignment: Any,
+    axes: Optional[Sequence[int]] = None,
+    stack_gap: float = 0,
+) -> Callable[[Any], Any]:
+    from shellforgepy.construct.alignment_operations import align_translation
+
+    return align_translation(
+        moving_anchor,
+        target_anchor,
+        alignment,
+        axes=axes,
+        stack_gap=stack_gap,
+    )
+
+
+def _placement_reference_names(
+    resource_data: Mapping[str, Any],
+    config_data: Optional[Mapping[str, Any]],
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+) -> List[str]:
+    known_assembly_names = _known_assembly_names(config_data, built_results_by_name)
+    referenced: set[str] = set()
+    for alignment in _placement_alignments(resource_data):
+        moving_reference = alignment.get("part")
+        target_reference = alignment.get("to")
+        if not moving_reference or not target_reference:
+            raise BuilderError("Each placement alignment requires 'part' and 'to'")
+        moving_assembly, _ = _parse_part_reference(
+            str(moving_reference), known_assembly_names
+        )
+        target_assembly, _ = _parse_part_reference(
+            str(target_reference), known_assembly_names
+        )
+        referenced.add(moving_assembly)
+        referenced.add(target_assembly)
+    return sorted(referenced)
+
+
+def _scene_dependency_names(
+    resource_data: Mapping[str, Any],
+    mode: str,
+    config_data: Optional[Mapping[str, Any]],
+) -> List[str]:
+    section_name = "Visualization" if mode == "visualization" else "Production"
+    section = _builder_section(resource_data, section_name, config_data)
+    parts = section.get("parts")
+    if not isinstance(parts, list):
+        return []
+
+    dependency_names: set[str] = set()
+    for rule in parts:
+        if not isinstance(rule, Mapping):
+            raise BuilderError(f"Builder.{section_name}.parts items must be mappings")
+        source = str(rule.get("source", "self"))
+        if source not in {"dependencies", "dependency"}:
+            continue
+        dependency_name = rule.get("assembly")
+        if dependency_name:
+            dependency_names.add(str(dependency_name))
+    return sorted(dependency_names)
 
 
 def _dependency_metadata_map(
     metadata: Mapping[str, Any],
     built_results_by_name: Mapping[str, Dict[str, Any]],
     repository_dir: Path,
+    config_data: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     resolved: Dict[str, Dict[str, Any]] = {}
     for dependency in metadata.get("dependencies", []):
         assembly_name = str(dependency["assembly_name"])
+        if assembly_name in resolved:
+            continue
+        resolved[assembly_name] = _dependency_metadata_for_assembly(
+            assembly_name,
+            built_results_by_name,
+            repository_dir,
+        )
+    for assembly_name in _declared_dependency_names_for_metadata(metadata, config_data):
         if assembly_name in resolved:
             continue
         resolved[assembly_name] = _dependency_metadata_for_assembly(
@@ -1287,7 +1502,7 @@ def _materialize_rule_parts(
 ) -> List[Dict[str, Any]]:
     rules = _scene_rules_for_mode(metadata, resource_data, mode, config_data)
     dependency_metadata = _dependency_metadata_map(
-        metadata, built_results_by_name, repository_dir
+        metadata, built_results_by_name, repository_dir, config_data
     )
     parameter_context = _metadata_resolution_context(metadata)
 
@@ -1302,11 +1517,15 @@ def _materialize_rule_parts(
             dependency_name = rule.get("assembly")
             if dependency_name:
                 dependency_key = str(dependency_name)
-                if dependency_key not in dependency_metadata:
-                    raise BuilderError(
-                        f"Assembly '{metadata.get('assembly_name')}' has no dependency '{dependency_key}'"
+                dependency_target = dependency_metadata.get(dependency_key)
+                if dependency_target is None:
+                    dependency_target = _dependency_metadata_for_assembly(
+                        dependency_key,
+                        built_results_by_name,
+                        repository_dir,
                     )
-                targets = [dependency_metadata[dependency_key]]
+                    dependency_metadata[dependency_key] = dependency_target
+                targets = [dependency_target]
             else:
                 targets = [
                     dependency_metadata[name] for name in sorted(dependency_metadata)
@@ -1315,7 +1534,10 @@ def _materialize_rule_parts(
             raise BuilderError(f"Unsupported scene source '{source}'")
 
         for target in targets:
-            entries = _artifact_entries_for_selector(target, artifact)
+            entries = _filter_artifact_entries(
+                _artifact_entries_for_selector(target, artifact),
+                rule,
+            )
             for entry in entries:
                 part = _import_dependency_part(
                     Path(entry["path"]).expanduser().resolve()
@@ -1334,6 +1556,7 @@ def _materialize_rule_parts(
                     {
                         "name": _format_scene_name(entry, rule),
                         "part": part,
+                        "assembly_name": entry["assembly_name"],
                         "source_path": entry["path"],
                         "flip": bool(rule.get("flip", False)),
                         "skip_in_production": bool(
@@ -1342,9 +1565,118 @@ def _materialize_rule_parts(
                         "prod_rotation_angle": rule.get("prod_rotation_angle"),
                         "prod_rotation_axis": rule.get("prod_rotation_axis"),
                         "color": rule.get("color"),
-                        "animation": rule.get("animation"),
+                        "animation": (
+                            _resolve_inline_value(rule.get("animation"), part_context)
+                            if rule.get("animation") is not None
+                            else None
+                        ),
                     }
                 )
+    return scene_parts
+
+
+def _apply_translation_to_scene_parts(
+    scene_parts: List[Dict[str, Any]],
+    assembly_name: str,
+    translation: Callable[[Any], Any],
+) -> None:
+    for item in scene_parts:
+        if str(item.get("assembly_name")) != assembly_name:
+            continue
+        item["part"] = translation(item["part"])
+
+
+def _apply_placement_alignments(
+    scene_parts: List[Dict[str, Any]],
+    *,
+    selected_metadata: Mapping[str, Any],
+    resource_data: Mapping[str, Any],
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+    repository_dir: Path,
+    config_data: Optional[Mapping[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    alignments = _placement_alignments(resource_data)
+    if not alignments:
+        return scene_parts
+
+    known_assembly_names = _known_assembly_names(config_data, built_results_by_name)
+    placement_context = (
+        resolve_globals(config_data.get("globals", {})) if config_data else {}
+    )
+    placement_context.update(_metadata_resolution_context(selected_metadata))
+
+    metadata_by_name: Dict[str, Dict[str, Any]] = {
+        str(name): dict(value) for name, value in built_results_by_name.items()
+    }
+    metadata_by_name.setdefault(
+        str(selected_metadata["assembly_name"]), dict(selected_metadata)
+    )
+
+    anchor_cache: Dict[tuple[str, str], Any] = {}
+
+    def resolve_metadata(assembly_name: str) -> Dict[str, Any]:
+        metadata = metadata_by_name.get(assembly_name)
+        if metadata is None:
+            metadata = _dependency_metadata_for_assembly(
+                assembly_name,
+                built_results_by_name,
+                repository_dir,
+            )
+            metadata_by_name[assembly_name] = metadata
+        return metadata
+
+    def resolve_anchor(reference: str) -> tuple[str, str, Any]:
+        assembly_name, selector = _parse_part_reference(reference, known_assembly_names)
+        cache_key = (assembly_name, selector)
+        if cache_key not in anchor_cache:
+            metadata = resolve_metadata(assembly_name)
+            entries = _artifact_entries_for_selector(metadata, selector)
+            if len(entries) != 1:
+                raise BuilderError(
+                    f"Placement reference '{reference}' did not resolve to exactly one artifact"
+                )
+            anchor_cache[cache_key] = _import_dependency_part(
+                Path(entries[0]["path"]).expanduser().resolve()
+            )
+        return assembly_name, selector, anchor_cache[cache_key]
+
+    for alignment_spec in alignments:
+        moving_reference = alignment_spec.get("part")
+        target_reference = alignment_spec.get("to")
+        if not moving_reference or not target_reference:
+            raise BuilderError("Each placement alignment requires 'part' and 'to'")
+
+        moving_assembly_name, _, moving_anchor = resolve_anchor(str(moving_reference))
+        _, _, target_anchor = resolve_anchor(str(target_reference))
+
+        resolved_alignment = _resolve_alignment_enum(alignment_spec.get("alignment"))
+        raw_axes = alignment_spec.get("axes")
+        axes = None
+        if raw_axes is not None:
+            resolved_axes = _resolve_inline_value(raw_axes, placement_context)
+            if not isinstance(resolved_axes, list):
+                raise BuilderError("placement alignment axes must resolve to a list")
+            axes = [int(axis) for axis in resolved_axes]
+
+        stack_gap = alignment_spec.get("stack_gap", 0)
+        resolved_stack_gap = _resolve_inline_value(stack_gap, placement_context)
+
+        translation = _make_placement_translation(
+            moving_anchor,
+            target_anchor,
+            alignment=resolved_alignment,
+            axes=axes,
+            stack_gap=resolved_stack_gap,
+        )
+
+        _apply_translation_to_scene_parts(
+            scene_parts, moving_assembly_name, translation
+        )
+        for (assembly_name, selector), anchor_part in list(anchor_cache.items()):
+            if assembly_name != moving_assembly_name:
+                continue
+            anchor_cache[(assembly_name, selector)] = translation(anchor_part)
+
     return scene_parts
 
 
@@ -1547,6 +1879,7 @@ def build_from_file(
                 "version_inputs": version_inputs,
                 "generation": generation_index,
                 "assembly_in_generation": assembly_index,
+                "declared_dependencies": _dependency_names(entry),
                 "dependencies": [
                     {
                         "kwarg_name": injection.kwarg_name,
@@ -1637,6 +1970,9 @@ def _export_scene_for_assembly(
     )
     mode = "production" if production_mode else "visualization"
     selected_metadata = built_results_by_name[selected_assembly]
+    selected_resource_data = _load_yaml(
+        Path(selected_metadata["resource_file"]).expanduser().resolve()
+    )
 
     scene_parts: List[Dict[str, Any]] = []
     seen_source_paths: set[str] = set()
@@ -1667,6 +2003,15 @@ def _export_scene_for_assembly(
             part.pop("source_path", None)
             scene_parts.append(part)
 
+    scene_parts = _apply_placement_alignments(
+        scene_parts,
+        selected_metadata=selected_metadata,
+        resource_data=selected_resource_data,
+        built_results_by_name=built_results_by_name,
+        repository_dir=repository_dir,
+        config_data=config_data,
+    )
+
     if not scene_parts:
         raise BuilderError(
             f"No scene parts resolved for assembly '{selected_assembly}' in {mode} mode"
@@ -1674,9 +2019,6 @@ def _export_scene_for_assembly(
 
     process_data = None
     if production_mode:
-        selected_resource_data = _load_yaml(
-            Path(selected_metadata["resource_file"]).expanduser().resolve()
-        )
         process_data = _resolve_process_data(
             selected_metadata,
             selected_resource_data,
@@ -1688,7 +2030,7 @@ def _export_scene_for_assembly(
             )
 
     export_options = _resolve_export_options(
-        _load_yaml(Path(selected_metadata["resource_file"]).expanduser().resolve()),
+        selected_resource_data,
         mode,
         config_data,
     )
@@ -1704,8 +2046,13 @@ def _export_scene_for_assembly(
         env["SHELLFORGEPY_PRODUCTION"] = "1"
 
     with _temporary_environment(env):
+        exportable_scene_parts: List[Dict[str, Any]] = []
+        for part in scene_parts:
+            export_part = dict(part)
+            export_part.pop("assembly_name", None)
+            exportable_scene_parts.append(export_part)
         arrange_and_export_parts(
-            scene_parts,
+            exportable_scene_parts,
             prod_gap=float(export_options["prod_gap"]),
             bed_width=float(export_options["bed_width"]),
             script_file=str(Path(selected_metadata["resource_file"]).resolve()),
@@ -1738,11 +2085,44 @@ def run_builder(args: argparse.Namespace) -> int:
     config_file = Path(args.config_file).expanduser().resolve()
     config_data = _load_yaml(config_file)
     assemblies = _get_assemblies(config_data)
+    assemblies_by_name = _assemblies_by_name(assemblies)
 
     requested_assemblies = list(args.assembly or [])
     build_assemblies: Optional[List[str]] = requested_assemblies or None
     if requested_assemblies and getattr(args, "with_dependents", False):
         build_assemblies = _expand_with_dependents(assemblies, requested_assemblies)
+
+    production_mode = bool(
+        getattr(args, "production", False)
+        or getattr(args, "slice", False)
+        or getattr(args, "upload", False)
+    )
+    visualization_mode = bool(getattr(args, "visualize", False) or production_mode)
+
+    if visualization_mode and len(requested_assemblies) == 1:
+        selected_assembly = requested_assemblies[0]
+        selected_entry = assemblies_by_name.get(selected_assembly)
+        if selected_entry is None:
+            raise BuilderError(f"Unknown assembly name '{selected_assembly}'")
+        selected_resource_data = _load_yaml(
+            _discover_resource_file(config_file, selected_entry)
+        )
+        scene_mode = "production" if production_mode else "visualization"
+        implicit_scene_dependencies = set(
+            _scene_dependency_names(selected_resource_data, scene_mode, config_data)
+        )
+        implicit_scene_dependencies.update(
+            _placement_reference_names(
+                selected_resource_data,
+                config_data,
+                {selected_assembly: {"assembly_name": selected_assembly}},
+            )
+        )
+        if implicit_scene_dependencies:
+            build_selection = set(build_assemblies or [])
+            build_selection.update(requested_assemblies)
+            build_selection.update(implicit_scene_dependencies)
+            build_assemblies = sorted(build_selection)
 
     results = build_from_file(
         config_file,
@@ -1759,12 +2139,6 @@ def run_builder(args: argparse.Namespace) -> int:
             result["artifact_dir"],
         )
 
-    production_mode = bool(
-        getattr(args, "production", False)
-        or getattr(args, "slice", False)
-        or getattr(args, "upload", False)
-    )
-    visualization_mode = bool(getattr(args, "visualize", False) or production_mode)
     if not visualization_mode:
         return 0
 

@@ -599,6 +599,7 @@ def test_run_builder_visualization_expands_dependents_and_exports_scene(
     monkeypatch, tmp_path
 ):
     config_path = tmp_path / "assemblies.yaml"
+    (tmp_path / "frame.yaml").write_text("Builder: {}\n", encoding="utf-8")
     config_path.write_text(
         "\n".join(
             [
@@ -686,6 +687,105 @@ def test_run_builder_visualization_expands_dependents_and_exports_scene(
     assert captured["scene_assembly_names"] == ["frame", "feet"]
 
 
+def test_run_builder_visualization_builds_implicit_placement_dependencies(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / "assemblies.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: y_axis",
+                "    depends_on: []",
+                "  - name: printer_frame",
+                "    depends_on: []",
+                "  - name: print_bed",
+                "    depends_on: []",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "y_axis.yaml").write_text(
+        "\n".join(
+            [
+                "placement:",
+                "  alignments:",
+                "    - part: y_axis.non_production_parts.anchor",
+                "      to: print_bed.non_production_parts.buffer_1",
+                "      alignment: CENTER",
+                "Builder:",
+                "  Visualization:",
+                "    parts:",
+                "      - source: dependencies",
+                "        assembly: printer_frame",
+                "        artifact: leader",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    captured = {}
+
+    def fake_build_from_file(
+        config_file, *, assembly_names=None, repository_dir=None, force=False
+    ):
+        captured["assembly_names"] = assembly_names
+        return [
+            {
+                "assembly_name": "y_axis",
+                "artifact_dir": str(tmp_path / "repo" / "y_axis"),
+                "repository_dir": str(tmp_path / "repo"),
+                "resource_file": str(tmp_path / "y_axis.yaml"),
+                "cache_hit": False,
+            },
+            {
+                "assembly_name": "printer_frame",
+                "artifact_dir": str(tmp_path / "repo" / "printer_frame"),
+                "repository_dir": str(tmp_path / "repo"),
+                "resource_file": str(tmp_path / "printer_frame.yaml"),
+                "cache_hit": False,
+            },
+            {
+                "assembly_name": "print_bed",
+                "artifact_dir": str(tmp_path / "repo" / "print_bed"),
+                "repository_dir": str(tmp_path / "repo"),
+                "resource_file": str(tmp_path / "print_bed.yaml"),
+                "cache_hit": False,
+            },
+        ]
+
+    monkeypatch.setattr(builder, "build_from_file", fake_build_from_file)
+    monkeypatch.setattr(builder, "_export_scene_for_assembly", lambda **kwargs: 0)
+
+    result = builder.run_builder(
+        argparse.Namespace(
+            config_file=str(config_path),
+            assembly=["y_axis"],
+            repository_dir=str(tmp_path / "repo"),
+            force=False,
+            visualize=True,
+            with_dependents=False,
+            production=False,
+            slice=False,
+            upload=False,
+            open=False,
+            run_id=None,
+            runs_dir=None,
+            master_settings_dir=None,
+            orca_executable=None,
+            orca_debug=None,
+            printer=None,
+            part_file=None,
+            process_file=None,
+            config=None,
+            verbose=False,
+        )
+    )
+
+    assert result == 0
+    assert captured["assembly_names"] == ["print_bed", "printer_frame", "y_axis"]
+
+
 def test_resolve_build_generations_returns_topological_generations():
     generations = builder._resolve_build_generations(
         [
@@ -750,6 +850,196 @@ def test_resolve_process_data_applies_overrides(monkeypatch):
             "brim_type": "no_brim",
         },
     }
+
+
+def test_materialize_rule_parts_resolves_declared_scene_dependencies_from_config(
+    monkeypatch, tmp_path
+):
+    dependency_step = tmp_path / "print_bed__leader.step"
+    dependency_step.write_text("print-bed", encoding="utf-8")
+
+    metadata = {
+        "assembly_name": "y_axis",
+        "resource_file": str(tmp_path / "y_axis.yaml"),
+        "public_parameters": {},
+        "generator_kwargs": {},
+        "dependencies": [],
+    }
+    resource_data = {
+        "Builder": {
+            "Visualization": {
+                "parts": [
+                    {
+                        "source": "dependencies",
+                        "assembly": "print_bed",
+                        "artifact": "leader",
+                        "name": "print_bed",
+                    }
+                ]
+            }
+        }
+    }
+    built_results_by_name = {
+        "print_bed": {
+            "assembly_name": "print_bed",
+            "artifacts": {"leader_step": str(dependency_step)},
+        }
+    }
+    config_data = {
+        "assemblies": [
+            {"name": "print_bed", "depends_on": []},
+            {"name": "y_axis", "depends_on": ["print_bed"]},
+        ]
+    }
+
+    monkeypatch.setattr(builder, "_import_dependency_part", lambda path: f"part:{path}")
+
+    parts = builder._materialize_rule_parts(
+        metadata,
+        resource_data,
+        "visualization",
+        built_results_by_name,
+        tmp_path,
+        config_data,
+    )
+
+    assert len(parts) == 1
+    assert parts[0]["name"] == "print_bed"
+    assert parts[0]["part"] == f"part:{dependency_step}"
+
+
+def test_materialize_rule_parts_resolves_animation_from_metadata_context(
+    monkeypatch, tmp_path
+):
+    leader_step = tmp_path / "bed.step"
+    leader_step.write_text("bed", encoding="utf-8")
+
+    metadata = {
+        "assembly_name": "print_bed",
+        "public_parameters": {"print_bed_y_travel": 325},
+        "generator_kwargs": {},
+        "generator_context": {"BIG_THING": 500},
+        "artifacts": {"leader_step": str(leader_step)},
+    }
+    resource_data = {
+        "Builder": {
+            "Visualization": {
+                "parts": [
+                    {
+                        "source": "self",
+                        "artifact": "leader",
+                        "name": "print_bed",
+                        "animation": {"bed_y": [0, {"$ref": "print_bed_y_travel"}, 0]},
+                    }
+                ]
+            }
+        }
+    }
+
+    monkeypatch.setattr(builder, "_import_dependency_part", lambda path: f"part:{path}")
+
+    parts = builder._materialize_rule_parts(
+        metadata,
+        resource_data,
+        "visualization",
+        {"print_bed": metadata},
+        tmp_path,
+        None,
+    )
+
+    assert len(parts) == 1
+    assert parts[0]["animation"] == {"bed_y": [0, 325, 0]}
+
+
+def test_apply_placement_alignments_moves_only_the_owning_assembly(
+    monkeypatch, tmp_path
+):
+    y_axis_leader = tmp_path / "y_axis_leader.step"
+    y_axis_leader.write_text("y-leader", encoding="utf-8")
+    y_axis_anchor = tmp_path / "y_axis_anchor.step"
+    y_axis_anchor.write_text("y-anchor", encoding="utf-8")
+    print_bed_leader = tmp_path / "print_bed_leader.step"
+    print_bed_leader.write_text("bed-leader", encoding="utf-8")
+    print_bed_target = tmp_path / "print_bed_target.step"
+    print_bed_target.write_text("bed-target", encoding="utf-8")
+
+    scene_parts = [
+        {"assembly_name": "y_axis", "part": "scene-y-axis"},
+        {"assembly_name": "print_bed", "part": "scene-print-bed"},
+    ]
+    selected_metadata = {
+        "assembly_name": "y_axis",
+        "public_parameters": {"gap": 12},
+        "generator_kwargs": {},
+    }
+    resource_data = {
+        "placement": {
+            "alignments": [
+                {
+                    "part": "y_axis.non_production_parts.anchor",
+                    "to": "print_bed.non_production_parts.buffer_1",
+                    "alignment": "CENTER",
+                    "axes": [0, 1],
+                },
+                {
+                    "part": "y_axis",
+                    "to": "print_bed",
+                    "alignment": "STACK_TOP",
+                    "stack_gap": {"$ref": "gap"},
+                },
+            ]
+        }
+    }
+    built_results_by_name = {
+        "y_axis": {
+            "assembly_name": "y_axis",
+            "artifacts": {
+                "leader_step": str(y_axis_leader),
+                "non_production_parts": [
+                    {"name": "anchor", "path": str(y_axis_anchor)},
+                ],
+            },
+        },
+        "print_bed": {
+            "assembly_name": "print_bed",
+            "artifacts": {
+                "leader_step": str(print_bed_leader),
+                "non_production_parts": [
+                    {"name": "buffer_1", "path": str(print_bed_target)},
+                ],
+            },
+        },
+    }
+
+    monkeypatch.setattr(
+        builder,
+        "_import_dependency_part",
+        lambda path: Path(path).read_text(encoding="utf-8"),
+    )
+
+    def fake_make_translation(
+        moving_anchor, target_anchor, *, alignment, axes=None, stack_gap=0
+    ):
+        label = f"{alignment.name}:{moving_anchor}->{target_anchor}:{axes}:{stack_gap}"
+        return lambda part: f"{part}|{label}"
+
+    monkeypatch.setattr(builder, "_make_placement_translation", fake_make_translation)
+
+    placed_parts = builder._apply_placement_alignments(
+        scene_parts,
+        selected_metadata=selected_metadata,
+        resource_data=resource_data,
+        built_results_by_name=built_results_by_name,
+        repository_dir=tmp_path,
+        config_data={"assemblies": [{"name": "y_axis"}, {"name": "print_bed"}]},
+    )
+
+    assert placed_parts[0]["part"] == (
+        "scene-y-axis"
+        "|CENTER:y-anchor->bed-target:[0, 1]:0"
+        "|STACK_TOP:y-leader->bed-leader:None:12"
+    )
+    assert placed_parts[1]["part"] == "scene-print-bed"
 
 
 def test_resolve_export_options_merges_top_level_builder_defaults():
