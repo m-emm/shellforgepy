@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import importlib
+import inspect
 import json
 import logging
 import os
@@ -82,6 +84,7 @@ class _DependencyInjection:
     assembly_name: str
     artifact: str
     source_parameter_hash: str
+    source_version_inputs: Dict[str, Any]
     step_path: Path
     part: Any
 
@@ -105,6 +108,14 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
             f"Expected YAML mapping at {path}, got {type(loaded).__name__}"
         )
     return loaded
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _find_project_root(start: Path) -> Path:
@@ -626,8 +637,6 @@ def _resolve_assembly(
         )
 
     generator_kwargs = _resolve_inline_mapping(generator_properties, public_parameters)
-    parameter_hash = PartParameters(generator_kwargs).parameters_hash()
-
     return _ResolvedAssembly(
         name=str(entry["name"]),
         entry=dict(entry),
@@ -637,7 +646,7 @@ def _resolve_assembly(
         generator_kwargs=generator_kwargs,
         generator_path=str(generator_path),
         logical_part_name=logical_part_name,
-        parameter_hash=parameter_hash,
+        parameter_hash="",
     )
 
 
@@ -649,6 +658,12 @@ def _load_generator_callable(generator_path: str) -> Callable[..., Any]:
 
     module_name, function_name = generator_path.rsplit(".", 1)
     try:
+        importlib.invalidate_caches()
+        module_spec = importlib.util.find_spec(module_name)
+        if module_spec and module_spec.origin and module_spec.origin.endswith(".py"):
+            pyc_path = Path(importlib.util.cache_from_source(module_spec.origin))
+            pyc_path.unlink(missing_ok=True)
+        sys.modules.pop(module_name, None)
         module = importlib.import_module(module_name)
     except ImportError as exc:
         raise BuilderError(
@@ -665,6 +680,68 @@ def _load_generator_callable(generator_path: str) -> Callable[..., Any]:
     if not callable(generator):
         raise BuilderError(f"Resolved generator '{generator_path}' is not callable")
     return generator
+
+
+def _generator_accepts_keyword_argument(
+    generator: Callable[..., Any], argument_name: str
+) -> bool:
+    try:
+        signature = inspect.signature(generator)
+    except (TypeError, ValueError):
+        return False
+
+    if argument_name in signature.parameters:
+        return True
+
+    return any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+
+
+def _generator_context_payload(global_context: Mapping[str, Any]) -> Dict[str, Any]:
+    return deepcopy(dict(global_context))
+
+
+def _generator_source_path(
+    generator: Callable[..., Any], generator_path: str
+) -> Optional[Path]:
+    source_file = inspect.getsourcefile(generator)
+    if source_file is None:
+        try:
+            source_file = inspect.getfile(generator)
+        except TypeError:
+            source_file = None
+    if source_file is None:
+        module_name = generator_path.rsplit(".", 1)[0]
+        module = sys.modules.get(module_name)
+        module_file = getattr(module, "__file__", None)
+        if module_file:
+            source_file = module_file
+    if not source_file:
+        return None
+    candidate = Path(source_file).expanduser().resolve()
+    if not candidate.exists():
+        return None
+    return candidate
+
+
+def _version_inputs(
+    *,
+    generator: Callable[..., Any],
+    generator_path: str,
+    resource_path: Path,
+) -> Dict[str, Any]:
+    inputs: Dict[str, Any] = {
+        "generator_path": generator_path,
+        "resource_path": str(resource_path.resolve()),
+        "resource_sha256": _file_sha256(resource_path.resolve()),
+    }
+    generator_source_path = _generator_source_path(generator, generator_path)
+    if generator_source_path is not None:
+        inputs["generator_source_path"] = str(generator_source_path)
+        inputs["generator_source_sha256"] = _file_sha256(generator_source_path)
+    return inputs
 
 
 def _group_named_parts(
@@ -877,6 +954,7 @@ def _resolve_dependency_injections(
                 assembly_name=assembly_name,
                 artifact=spec["artifact"],
                 source_parameter_hash=str(metadata["parameter_hash"]),
+                source_version_inputs=dict(metadata.get("version_inputs", {})),
                 step_path=step_path,
                 part=_import_dependency_part(step_path),
             )
@@ -887,13 +965,37 @@ def _resolve_dependency_injections(
 def _hash_with_dependencies(
     generator_kwargs: Mapping[str, Any],
     injections: Sequence[_DependencyInjection],
+    generator_context: Optional[Mapping[str, Any]] = None,
+    version_inputs: Optional[Mapping[str, Any]] = None,
 ) -> str:
     hash_inputs = dict(generator_kwargs)
+    if generator_context:
+        for key, value in generator_context.items():
+            hash_key = f"__context__{key}"
+            if isinstance(value, (int, float, str, bool)):
+                hash_inputs[hash_key] = value
+            else:
+                hash_inputs[hash_key] = json.dumps(
+                    value,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                )
+    if version_inputs:
+        for key, value in version_inputs.items():
+            hash_inputs[f"__version__{key}"] = value
     for injection in injections:
         hash_inputs[f"__dependency__{injection.kwarg_name}"] = (
             f"{injection.assembly_name}:{injection.artifact}:{injection.source_parameter_hash}"
         )
     return PartParameters(hash_inputs).parameters_hash()
+
+
+def _metadata_resolution_context(metadata: Mapping[str, Any]) -> Dict[str, Any]:
+    context = dict(metadata.get("public_parameters", {}))
+    context.update(metadata.get("generator_kwargs", {}))
+    context.update(metadata.get("generator_context", {}))
+    return context
 
 
 def _export_artifacts(
@@ -1187,8 +1289,7 @@ def _materialize_rule_parts(
     dependency_metadata = _dependency_metadata_map(
         metadata, built_results_by_name, repository_dir
     )
-    parameter_context = dict(metadata.get("public_parameters", {}))
-    parameter_context.update(metadata.get("generator_kwargs", {}))
+    parameter_context = _metadata_resolution_context(metadata)
 
     scene_parts: List[Dict[str, Any]] = []
     for rule in rules:
@@ -1274,8 +1375,7 @@ def _resolve_process_data(
             raise BuilderError(
                 "Builder.Production.process_data.overrides must be a mapping"
             )
-        context = dict(metadata.get("public_parameters", {}))
-        context.update(metadata.get("generator_kwargs", {}))
+        context = _metadata_resolution_context(metadata)
         resolved_overrides = _resolve_inline_mapping(overrides, context)
         for key, value in resolved_overrides.items():
             if isinstance(value, Mapping) and isinstance(resolved.get(key), Mapping):
@@ -1377,9 +1477,22 @@ def build_from_file(
                 built_results_by_name,
                 repository_path,
             )
+            generator = _load_generator_callable(resolved.generator_path)
+            generator_context = (
+                _generator_context_payload(global_context)
+                if _generator_accepts_keyword_argument(generator, "context")
+                else None
+            )
+            version_inputs = _version_inputs(
+                generator=generator,
+                generator_path=resolved.generator_path,
+                resource_path=resolved.resource_path,
+            )
             parameter_hash = _hash_with_dependencies(
                 resolved.generator_kwargs,
                 dependency_injections,
+                generator_context,
+                version_inputs,
             )
             artifact_dir = (
                 repository_path / resolved.name / f"{resolved.name}__{parameter_hash}"
@@ -1398,7 +1511,6 @@ def build_from_file(
                 )
                 continue
 
-            generator = _load_generator_callable(resolved.generator_path)
             _logger.info(
                 "Building assembly '%s' with %s",
                 resolved.name,
@@ -1407,6 +1519,8 @@ def build_from_file(
             generator_kwargs = deepcopy(resolved.generator_kwargs)
             for injection in dependency_injections:
                 generator_kwargs[injection.kwarg_name] = injection.part
+            if generator_context is not None:
+                generator_kwargs["context"] = deepcopy(generator_context)
             generated_part = generator(**generator_kwargs)
             artifacts = _export_artifacts(
                 resolved.name,
@@ -1429,6 +1543,8 @@ def build_from_file(
                 "parameter_hash": parameter_hash,
                 "public_parameters": resolved.public_parameters,
                 "generator_kwargs": resolved.generator_kwargs,
+                "generator_context": generator_context,
+                "version_inputs": version_inputs,
                 "generation": generation_index,
                 "assembly_in_generation": assembly_index,
                 "dependencies": [
@@ -1437,6 +1553,8 @@ def build_from_file(
                         "assembly_name": injection.assembly_name,
                         "artifact": injection.artifact,
                         "source_parameter_hash": injection.source_parameter_hash,
+                        "source_assembly_hash": injection.source_parameter_hash,
+                        "source_version_inputs": injection.source_version_inputs,
                         "step_path": str(injection.step_path),
                     }
                     for injection in dependency_injections

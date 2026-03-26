@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 from shellforgepy.builder import builder
-from shellforgepy.construct.part_parameters import PartParameters
 
 
 def _write_file(path: Path, content: str) -> None:
@@ -122,9 +121,12 @@ def test_build_from_file_writes_hashed_metadata_and_reuses_cache(monkeypatch, tm
 
     assert len(results) == 1
     result = results[0]
-    expected_hash = PartParameters(
-        {"width": 10.0, "height": 20.0, "label": "v10"}
-    ).parameters_hash()
+    expected_hash = builder._hash_with_dependencies(
+        {"width": 10.0, "height": 20.0, "label": "v10"},
+        [],
+        None,
+        result["version_inputs"],
+    )
     assert result["parameter_hash"] == expected_hash
     assert result["cache_hit"] is False
     assert Path(result["artifacts"]["leader_step"]).exists()
@@ -140,18 +142,99 @@ def test_build_from_file_writes_hashed_metadata_and_reuses_cache(monkeypatch, tm
     saved_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     assert saved_metadata["parameter_hash"] == expected_hash
     assert len(exported) == 5
+    assert saved_metadata["version_inputs"]["resource_sha256"]
+    assert saved_metadata["version_inputs"]["generator_source_sha256"]
 
     monkeypatch.setattr(
         builder,
-        "_load_generator_callable",
-        lambda path: pytest.fail(
-            f"generator should not be reloaded for cache hit: {path}"
+        "_export_part_to_step",
+        lambda part, destination: pytest.fail(
+            f"cache hit should not export artifacts again: {destination}"
         ),
     )
 
     cached_results = builder.build_from_file(config_path)
     assert cached_results[0]["cache_hit"] is True
     assert cached_results[0]["parameter_hash"] == expected_hash
+
+
+def test_build_from_file_injects_global_context_when_generator_accepts_it(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / "demo_pkg"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "context_generators.py",
+        "\n".join(
+            [
+                "def make_widget(*, width, context=None):",
+                "    return f\"widget-{width}-{context.get('BIG_THING', 'missing')}\"",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(
+        assemblies_dir / "context_assembly.yaml",
+        "\n".join(
+            [
+                "Parameters:",
+                "  width:",
+                "    Type: Float",
+                "Parts:",
+                "  ContextWidget:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.context_generators.make_widget",
+                "      Properties:",
+                "        width:",
+                "          $ref: width",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "globals:",
+                "  BIG_THING: 500",
+                "assemblies:",
+                "  - name: context_assembly",
+                "    parameters:",
+                "      width: 10",
+            ]
+        ),
+    )
+
+    def fake_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+
+    monkeypatch.setattr(
+        builder,
+        "_export_part_to_step",
+        fake_export,
+    )
+    monkeypatch.delitem(sys.modules, "demo_pkg", raising=False)
+    monkeypatch.delitem(sys.modules, "demo_pkg.context_generators", raising=False)
+
+    results = builder.build_from_file(config_path)
+
+    assert results[0]["generator_context"] == {"BIG_THING": 500}
+    expected_hash = builder._hash_with_dependencies(
+        {"width": 10.0},
+        [],
+        {"BIG_THING": 500},
+        results[0]["version_inputs"],
+    )
+    assert results[0]["parameter_hash"] == expected_hash
+    assert (
+        Path(results[0]["artifacts"]["leader_step"]).read_text(encoding="utf-8")
+        == "widget-10.0-500"
+    )
 
 
 def test_build_from_file_injects_dependency_part_and_hashes_dependency(
@@ -260,19 +343,167 @@ def test_build_from_file_injects_dependency_part_and_hashes_dependency(
             "assembly_name": "frame_assembly",
             "artifact": "leader",
             "source_parameter_hash": frame_result["parameter_hash"],
+            "source_assembly_hash": frame_result["parameter_hash"],
+            "source_version_inputs": frame_result["version_inputs"],
             "step_path": frame_result["artifacts"]["leader_step"],
         }
     ]
-    expected_feet_hash = PartParameters(
-        {
-            "height": 9.0,
-            "__dependency__frame": f"frame_assembly:leader:{frame_result['parameter_hash']}",
-        }
-    ).parameters_hash()
+    expected_feet_hash = builder._hash_with_dependencies(
+        {"height": 9.0},
+        [
+            builder._DependencyInjection(
+                kwarg_name="frame",
+                assembly_name="frame_assembly",
+                artifact="leader",
+                source_parameter_hash=frame_result["parameter_hash"],
+                source_version_inputs=frame_result["version_inputs"],
+                step_path=Path(frame_result["artifacts"]["leader_step"]),
+                part=None,
+            )
+        ],
+        None,
+        feet_result["version_inputs"],
+    )
     assert feet_result["parameter_hash"] == expected_feet_hash
+    assert (
+        feet_result["dependencies"][0]["source_assembly_hash"]
+        == frame_result["parameter_hash"]
+    )
+    assert (
+        feet_result["dependencies"][0]["source_version_inputs"]
+        == frame_result["version_inputs"]
+    )
     assert (
         Path(feet_result["artifacts"]["leader_step"]).read_text(encoding="utf-8")
         == "feet-on-frame-42.0-h9.0"
+    )
+
+
+def test_build_from_file_rebuilds_assembly_and_dependents_when_generator_code_changes(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / "demo_pkg"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+
+    generator_path = src_dir / "dependency_generators.py"
+    _write_file(
+        generator_path,
+        "\n".join(
+            [
+                "def make_frame(*, width):",
+                "    return f'frame-v1-{width}'",
+                "def make_feet(*, frame, height):",
+                "    return f'feet-on-{frame}-h{height}'",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(
+        assemblies_dir / "frame_assembly.yaml",
+        "\n".join(
+            [
+                "Parameters:",
+                "  width:",
+                "    Type: Float",
+                "Parts:",
+                "  Frame:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.dependency_generators.make_frame",
+                "      Properties:",
+                "        width:",
+                "          $ref: width",
+            ]
+        ),
+    )
+    _write_file(
+        assemblies_dir / "feet_assembly.yaml",
+        "\n".join(
+            [
+                "Parameters:",
+                "  height:",
+                "    Type: Float",
+                "Parts:",
+                "  Feet:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.dependency_generators.make_feet",
+                "      Properties:",
+                "        height:",
+                "          $ref: height",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: frame_assembly",
+                "    parameters:",
+                "      width: 42",
+                "  - name: feet_assembly",
+                "    depends_on:",
+                "      - frame_assembly",
+                "    inject_parts:",
+                "      frame:",
+                "        assembly: frame_assembly",
+                "        artifact: leader",
+                "    parameters:",
+                "      height: 9",
+            ]
+        ),
+    )
+
+    def fake_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+
+    def fake_import(step_path):
+        return Path(step_path).read_text(encoding="utf-8")
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+    monkeypatch.setattr(builder, "_import_dependency_part", fake_import)
+    monkeypatch.delitem(sys.modules, "demo_pkg", raising=False)
+    monkeypatch.delitem(sys.modules, "demo_pkg.dependency_generators", raising=False)
+
+    initial_results = builder.build_from_file(config_path)
+    initial_frame, initial_feet = initial_results
+
+    _write_file(
+        generator_path,
+        "\n".join(
+            [
+                "def make_frame(*, width):",
+                "    return f'frame-v2-{width}'",
+                "def make_feet(*, frame, height):",
+                "    return f'feet-on-{frame}-h{height}'",
+            ]
+        ),
+    )
+
+    rebuilt_results = builder.build_from_file(config_path)
+    rebuilt_frame, rebuilt_feet = rebuilt_results
+
+    assert rebuilt_frame["cache_hit"] is False
+    assert rebuilt_feet["cache_hit"] is False
+    assert rebuilt_frame["parameter_hash"] != initial_frame["parameter_hash"]
+    assert rebuilt_feet["parameter_hash"] != initial_feet["parameter_hash"]
+    assert (
+        rebuilt_feet["dependencies"][0]["source_assembly_hash"]
+        == rebuilt_frame["parameter_hash"]
+    )
+    assert (
+        Path(rebuilt_frame["artifacts"]["leader_step"]).read_text(encoding="utf-8")
+        == "frame-v2-42.0"
+    )
+    assert (
+        Path(rebuilt_feet["artifacts"]["leader_step"]).read_text(encoding="utf-8")
+        == "feet-on-frame-v2-42.0-h9.0"
     )
 
 
