@@ -361,105 +361,19 @@ def _upload_file_to_viewer(file_path: Path, upload_url: str) -> None:
         return response_data
 
 
-def run_workflow(args: argparse.Namespace) -> int:
-    config_path = get_config_path(args.config)
-    config = load_config(config_path)
-
-    runs_base = Path(
-        args.runs_dir
-        or _resolve_config_key_value(config, "runs_dir")
-        or (Path.cwd() / DEFAULT_RUNS_DIR_NAME)
-    ).expanduser()
-    if not runs_base.is_absolute():
-        runs_base = Path.cwd() / runs_base
-    runs_base = runs_base.resolve()
-    runs_base.mkdir(parents=True, exist_ok=True)
-
-    target_path = Path(args.target).expanduser()
-    if not target_path.exists():
-        raise WorkflowError(f"Target file does not exist: {target_path}")
-
-    if target_path.suffix.lower() != ".py":
-        raise WorkflowError(
-            "Only Python scripts (.py) are supported by the workflow tool."
-        )
-
-    run_id = args.run_id or datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    production_mode = bool(args.production or args.slice or args.upload)
-
-    run_directory = (runs_base / f"{target_path.stem}_run_{run_id}").resolve()
-    run_directory.mkdir(parents=True, exist_ok=True)
-
-    manifest_path = run_directory / MANIFEST_FILENAME
-    if manifest_path.exists():
-        manifest_path.unlink()
-
-    _logger.info("Run ID: %s", run_id)
-    _logger.info("Run directory: %s", run_directory)
-    _logger.info("Production mode: %s", "yes" if production_mode else "no")
-
-    forwarded_args = list(args.target_args or [])
-    if forwarded_args and forwarded_args[0] == "--":
-        forwarded_args = forwarded_args[1:]
-
-    env = os.environ.copy()
-    env[RUN_ID_ENV] = run_id
-    # Only override PROD setting when slicing, to allow scripts to control production mode otherwise
-    if args.slice or args.upload:
-        env["SHELLFORGEPY_PRODUCTION"] = "1"
-    env[RUN_DIR_ENV] = str(run_directory)
-    env[EXPORT_DIR_ENV] = str(run_directory)
-    env[MANIFEST_ENV] = str(manifest_path)
-
-    # Set viewer base URL if configured
-    viewer_base_url = _resolve_config_key_value(config, "viewer_base_url")
-    if viewer_base_url:
-        env["SHELLFORGEPY_VIEWER_BASE_URL"] = str(viewer_base_url)
-
-    default_runner = Path(__file__).resolve().parents[3] / "freecad_python.sh"
-    _logger.info(
-        f"Default Python runner: {default_runner} exists: {default_runner.exists()}"
-    )
-
-    if args.python:
-        _logger.info(f"Using args.python for the runner: {args.python}")
-        runner = args.python
-    elif _resolve_config_key_value(config, "python_runner"):
-        _logger.info(
-            f"Using config python_runner for the runner: {_resolve_config_key_value(config, 'python_runner')}"
-        )
-        runner = _resolve_config_key_value(config, "python_runner")
-    elif default_runner.exists():
-        _logger.info(
-            f"Using default freecad_python.sh for the runner: {default_runner}"
-        )
-        runner = str(default_runner)
-    else:
-        _logger.info(f"Using sys.executable for the runner: {sys.executable}")
-        runner = sys.executable
-
-    runner_path = Path(runner).expanduser()
-    if not runner_path.exists():
-        raise WorkflowError(f"Configured runner does not exist: {runner_path}")
-
-    cmd = [str(runner_path), str(target_path)] + forwarded_args
-    _logger.info("Running target via: %s", format_command(cmd))
-    execute_subprocess(cmd, env=env)
-
-    if not manifest_path.exists():
-        raise WorkflowError(
-            f"No workflow manifest produced at {manifest_path}. "
-            "Ensure the target script uses shellforgepy.produce.arrange_and_export_parts."
-        )
-
-    with manifest_path.open("r", encoding="utf-8") as handle:
-        manifest = json.load(handle)
-
+def complete_workflow_run(
+    args: argparse.Namespace,
+    *,
+    config: Dict[str, object],
+    run_directory: Path,
+    manifest: Dict[str, object],
+    target_label: str,
+) -> int:
     slice_requested = bool(args.slice or args.upload)
 
     part_path = (
         Path(args.part_file).expanduser()
-        if args.part_file
+        if getattr(args, "part_file", None)
         else _resolve_manifest_path(run_directory, manifest.get("assembly_path"))
     )
     if slice_requested:
@@ -483,7 +397,6 @@ def run_workflow(args: argparse.Namespace) -> int:
                 "No assembly STL/OBJ/STEP artifact path found in workflow manifest."
             )
 
-    # Log viewer URL if available in manifest
     viewer_url = manifest.get("viewer_url")
     if viewer_url:
         _logger.info("3D Viewer URL: %s", viewer_url)
@@ -501,11 +414,9 @@ def run_workflow(args: argparse.Namespace) -> int:
     elif viewer_default and not slice_requested:
         _logger.info("Skipping viewer STL update because no STL was generated")
 
-    # Upload OBJ and MTL files to viewer backend if configured
     upload_url = _resolve_config_key_value(config, "model_viewer_upload_url")
     if upload_url:
         try:
-            # Find OBJ and MTL files in the run directory
             obj_files = list(run_directory.glob("*.obj"))
             mtl_files = list(run_directory.glob("*.mtl"))
 
@@ -543,7 +454,7 @@ def run_workflow(args: argparse.Namespace) -> int:
 
     process_path = (
         Path(args.process_file).expanduser()
-        if args.process_file
+        if getattr(args, "process_file", None)
         else _resolve_manifest_path(run_directory, manifest.get("process_data_path"))
     )
     process_path = _ensure_path(process_path, "generated process data JSON")
@@ -600,7 +511,7 @@ def run_workflow(args: argparse.Namespace) -> int:
     debug_level = str(
         args.orca_debug or _resolve_config_key_value(config, "orca_debug_level") or 6
     )
-    project_filename = f"{target_path.stem}.3mf"
+    project_filename = f"{Path(target_label).stem}.3mf"
     project_path = run_directory / project_filename
 
     settings_arg = ";".join(str(path) for path in settings_files)
@@ -709,8 +620,8 @@ def run_workflow(args: argparse.Namespace) -> int:
                         elif "estimated printing time" in line:
                             run_info["print_time"] = line.strip()
 
-        for k, v in run_info.items():
-            _logger.info("  %s: %s", k, v)
+        for key, value in run_info.items():
+            _logger.info("  %s: %s", key, value)
 
     if args.upload:
         gcode_files = sorted(run_directory.glob("*.gcode"))
@@ -730,7 +641,6 @@ def run_workflow(args: argparse.Namespace) -> int:
 
     _logger.info("Workflow completed successfully. Run directory: %s", run_directory)
 
-    # Open Orca GUI if requested
     if args.open and slice_requested:
         if project_path.exists():
             open_cmd = [str(orca_exec_path), str(project_path)]
@@ -740,13 +650,11 @@ def run_workflow(args: argparse.Namespace) -> int:
                 open_cmd,
             )
             try:
-                # Start OrcaSlicer in the background
-
                 subprocess.Popen(
                     open_cmd,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    start_new_session=True,  # Detach from parent process
+                    start_new_session=True,
                 )
                 _logger.info("OrcaSlicer GUI started in background")
             except Exception as exc:
@@ -759,6 +667,108 @@ def run_workflow(args: argparse.Namespace) -> int:
         _logger.warning("--open option requires slicing (use --slice or --upload)")
 
     return 0
+
+
+def run_workflow(args: argparse.Namespace) -> int:
+    config_path = get_config_path(args.config)
+    config = load_config(config_path)
+
+    runs_base = Path(
+        args.runs_dir
+        or _resolve_config_key_value(config, "runs_dir")
+        or (Path.cwd() / DEFAULT_RUNS_DIR_NAME)
+    ).expanduser()
+    if not runs_base.is_absolute():
+        runs_base = Path.cwd() / runs_base
+    runs_base = runs_base.resolve()
+    runs_base.mkdir(parents=True, exist_ok=True)
+
+    target_path = Path(args.target).expanduser()
+    if not target_path.exists():
+        raise WorkflowError(f"Target file does not exist: {target_path}")
+
+    if target_path.suffix.lower() != ".py":
+        raise WorkflowError(
+            "Only Python scripts (.py) are supported by the workflow tool."
+        )
+
+    run_id = args.run_id or datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    production_mode = bool(args.production or args.slice or args.upload)
+
+    run_directory = (runs_base / f"{target_path.stem}_run_{run_id}").resolve()
+    run_directory.mkdir(parents=True, exist_ok=True)
+
+    manifest_path = run_directory / MANIFEST_FILENAME
+    if manifest_path.exists():
+        manifest_path.unlink()
+
+    _logger.info("Run ID: %s", run_id)
+    _logger.info("Run directory: %s", run_directory)
+    _logger.info("Production mode: %s", "yes" if production_mode else "no")
+
+    forwarded_args = list(args.target_args or [])
+    if forwarded_args and forwarded_args[0] == "--":
+        forwarded_args = forwarded_args[1:]
+
+    env = os.environ.copy()
+    env[RUN_ID_ENV] = run_id
+    # Only override PROD setting when slicing, to allow scripts to control production mode otherwise
+    if args.slice or args.upload:
+        env["SHELLFORGEPY_PRODUCTION"] = "1"
+    env[RUN_DIR_ENV] = str(run_directory)
+    env[EXPORT_DIR_ENV] = str(run_directory)
+    env[MANIFEST_ENV] = str(manifest_path)
+
+    # Set viewer base URL if configured
+    viewer_base_url = _resolve_config_key_value(config, "viewer_base_url")
+    if viewer_base_url:
+        env["SHELLFORGEPY_VIEWER_BASE_URL"] = str(viewer_base_url)
+
+    default_runner = Path(__file__).resolve().parents[3] / "freecad_python.sh"
+    _logger.info(
+        f"Default Python runner: {default_runner} exists: {default_runner.exists()}"
+    )
+
+    if args.python:
+        _logger.info(f"Using args.python for the runner: {args.python}")
+        runner = args.python
+    elif _resolve_config_key_value(config, "python_runner"):
+        _logger.info(
+            f"Using config python_runner for the runner: {_resolve_config_key_value(config, 'python_runner')}"
+        )
+        runner = _resolve_config_key_value(config, "python_runner")
+    elif default_runner.exists():
+        _logger.info(
+            f"Using default freecad_python.sh for the runner: {default_runner}"
+        )
+        runner = str(default_runner)
+    else:
+        _logger.info(f"Using sys.executable for the runner: {sys.executable}")
+        runner = sys.executable
+
+    runner_path = Path(runner).expanduser()
+    if not runner_path.exists():
+        raise WorkflowError(f"Configured runner does not exist: {runner_path}")
+
+    cmd = [str(runner_path), str(target_path)] + forwarded_args
+    _logger.info("Running target via: %s", format_command(cmd))
+    execute_subprocess(cmd, env=env)
+
+    if not manifest_path.exists():
+        raise WorkflowError(
+            f"No workflow manifest produced at {manifest_path}. "
+            "Ensure the target script uses shellforgepy.produce.arrange_and_export_parts."
+        )
+
+    with manifest_path.open("r", encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    return complete_workflow_run(
+        args,
+        config=config,
+        run_directory=run_directory,
+        manifest=manifest,
+        target_label=target_path.stem,
+    )
 
 
 def show_config(config: Dict[str, object]) -> None:
@@ -898,6 +908,65 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--force",
         action="store_true",
         help="Rebuild even when a matching hashed metadata file already exists.",
+    )
+    build_parser.add_argument(
+        "--visualize",
+        action="store_true",
+        help="Export a visualization scene for the selected assembly.",
+    )
+    build_parser.add_argument(
+        "--with-dependents",
+        action="store_true",
+        help="Include downstream dependent assemblies in the build and exported scene.",
+    )
+    build_parser.add_argument(
+        "--production",
+        action="store_true",
+        help="Export a production scene for the selected assembly.",
+    )
+    build_parser.add_argument(
+        "--slice",
+        action="store_true",
+        help="Run OrcaSlicer after exporting a production scene.",
+    )
+    build_parser.add_argument(
+        "--upload",
+        action="store_true",
+        help="Upload generated G-code files (implies --slice).",
+    )
+    build_parser.add_argument(
+        "--open",
+        action="store_true",
+        help="Open the generated 3MF file in OrcaSlicer GUI after slicing.",
+    )
+    build_parser.add_argument(
+        "--run-id", help="Override automatically generated run identifier"
+    )
+    build_parser.add_argument("--runs-dir", help="Directory to store run artifacts")
+    build_parser.add_argument(
+        "--master-settings-dir",
+        help="Path to Orca master settings directory",
+    )
+    build_parser.add_argument(
+        "--orca-executable",
+        help="Path to the OrcaSlicer executable",
+    )
+    build_parser.add_argument(
+        "--orca-debug",
+        type=int,
+        help="Debug level for OrcaSlicer",
+    )
+    build_parser.add_argument(
+        "--part-file",
+        help="Path to the generated STL (override manifest)",
+    )
+    build_parser.add_argument(
+        "--process-file",
+        help="Path to the generated process JSON (override manifest)",
+    )
+    build_parser.add_argument(
+        "--printer",
+        help="Printer host (ip[:port]) to use for uploads",
     )
 
     args = parser.parse_args(argv)

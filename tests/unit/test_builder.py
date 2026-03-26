@@ -1,9 +1,10 @@
 import argparse
+import importlib
 import json
+import sys
 from pathlib import Path
 
 import pytest
-
 from shellforgepy.builder import builder
 from shellforgepy.construct.part_parameters import PartParameters
 
@@ -52,7 +53,7 @@ def test_build_from_file_writes_hashed_metadata_and_reuses_cache(monkeypatch, tm
                 "    def leaders_followers_fused(self):",
                 "        return 'fused-shape'",
                 "def make_widget(*, width, height, label):",
-                "    return FakeComposite(f\"{width}-{height}-{label}\")",
+                '    return FakeComposite(f"{width}-{height}-{label}")',
             ]
         ),
     )
@@ -143,7 +144,9 @@ def test_build_from_file_writes_hashed_metadata_and_reuses_cache(monkeypatch, tm
     monkeypatch.setattr(
         builder,
         "_load_generator_callable",
-        lambda path: pytest.fail(f"generator should not be reloaded for cache hit: {path}"),
+        lambda path: pytest.fail(
+            f"generator should not be reloaded for cache hit: {path}"
+        ),
     )
 
     cached_results = builder.build_from_file(config_path)
@@ -151,10 +154,134 @@ def test_build_from_file_writes_hashed_metadata_and_reuses_cache(monkeypatch, tm
     assert cached_results[0]["parameter_hash"] == expected_hash
 
 
+def test_build_from_file_injects_dependency_part_and_hashes_dependency(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / "demo_pkg"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "dependency_generators.py",
+        "\n".join(
+            [
+                "def make_frame(*, width):",
+                "    return f'frame-{width}'",
+                "def make_feet(*, frame, height):",
+                "    return f'feet-on-{frame}-h{height}'",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(
+        assemblies_dir / "frame_assembly.yaml",
+        "\n".join(
+            [
+                "Parameters:",
+                "  width:",
+                "    Type: Float",
+                "Parts:",
+                "  Frame:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.dependency_generators.make_frame",
+                "      Properties:",
+                "        width:",
+                "          $ref: width",
+            ]
+        ),
+    )
+    _write_file(
+        assemblies_dir / "feet_assembly.yaml",
+        "\n".join(
+            [
+                "Parameters:",
+                "  height:",
+                "    Type: Float",
+                "Parts:",
+                "  Feet:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.dependency_generators.make_feet",
+                "      Properties:",
+                "        height:",
+                "          $ref: height",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: frame_assembly",
+                "    parameters:",
+                "      width: 42",
+                "  - name: feet_assembly",
+                "    depends_on:",
+                "      - frame_assembly",
+                "    inject_parts:",
+                "      frame:",
+                "        assembly: frame_assembly",
+                "        artifact: leader",
+                "    parameters:",
+                "      height: 9",
+            ]
+        ),
+    )
+
+    exported_parts = {}
+
+    def fake_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+        exported_parts[str(destination)] = str(part)
+
+    def fake_import(step_path):
+        return Path(step_path).read_text(encoding="utf-8")
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+    monkeypatch.setattr(builder, "_import_dependency_part", fake_import)
+    monkeypatch.delitem(sys.modules, "demo_pkg", raising=False)
+    monkeypatch.delitem(sys.modules, "demo_pkg.dependency_generators", raising=False)
+
+    results = builder.build_from_file(config_path)
+
+    assert [result["assembly_name"] for result in results] == [
+        "frame_assembly",
+        "feet_assembly",
+    ]
+    frame_result, feet_result = results
+    assert feet_result["dependencies"] == [
+        {
+            "kwarg_name": "frame",
+            "assembly_name": "frame_assembly",
+            "artifact": "leader",
+            "source_parameter_hash": frame_result["parameter_hash"],
+            "step_path": frame_result["artifacts"]["leader_step"],
+        }
+    ]
+    expected_feet_hash = PartParameters(
+        {
+            "height": 9.0,
+            "__dependency__frame": f"frame_assembly:leader:{frame_result['parameter_hash']}",
+        }
+    ).parameters_hash()
+    assert feet_result["parameter_hash"] == expected_feet_hash
+    assert (
+        Path(feet_result["artifacts"]["leader_step"]).read_text(encoding="utf-8")
+        == "feet-on-frame-42.0-h9.0"
+    )
+
+
 def test_run_builder_invokes_build_from_file(monkeypatch, tmp_path):
     captured = {}
 
-    def fake_build_from_file(config_file, *, assembly_names=None, repository_dir=None, force=False):
+    def fake_build_from_file(
+        config_file, *, assembly_names=None, repository_dir=None, force=False
+    ):
         captured["config_file"] = config_file
         captured["assembly"] = assembly_names
         captured["repository_dir"] = repository_dir
@@ -170,7 +297,9 @@ def test_run_builder_invokes_build_from_file(monkeypatch, tmp_path):
     monkeypatch.setattr(builder, "build_from_file", fake_build_from_file)
 
     config_path = tmp_path / "assemblies.yaml"
-    config_path.write_text("assemblies: []\n", encoding="utf-8")
+    config_path.write_text(
+        "assemblies:\n  - name: frame\n    depends_on: []\n", encoding="utf-8"
+    )
 
     result = builder.run_builder(
         argparse.Namespace(
@@ -178,13 +307,179 @@ def test_run_builder_invokes_build_from_file(monkeypatch, tmp_path):
             assembly=["frame"],
             repository_dir=str(tmp_path / "repo"),
             force=True,
+            visualize=False,
+            with_dependents=False,
+            production=False,
+            slice=False,
+            upload=False,
+            open=False,
+            run_id=None,
+            runs_dir=None,
+            master_settings_dir=None,
+            orca_executable=None,
+            orca_debug=None,
+            printer=None,
+            part_file=None,
+            process_file=None,
+            config=None,
+            verbose=False,
         )
     )
 
     assert result == 0
     assert captured == {
-        "config_file": str(config_path),
+        "config_file": config_path.resolve(),
         "assembly": ["frame"],
         "repository_dir": str(tmp_path / "repo"),
         "force": True,
+    }
+
+
+def test_run_builder_visualization_expands_dependents_and_exports_scene(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / "assemblies.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: frame",
+                "    depends_on: []",
+                "  - name: feet",
+                "    depends_on:",
+                "      - frame",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    captured = {}
+
+    def fake_build_from_file(
+        config_file, *, assembly_names=None, repository_dir=None, force=False
+    ):
+        captured["assembly_names"] = assembly_names
+        return [
+            {
+                "assembly_name": "frame",
+                "artifact_dir": str(tmp_path / "repo" / "frame"),
+                "repository_dir": str(tmp_path / "repo"),
+                "resource_file": str(tmp_path / "frame.yaml"),
+                "cache_hit": False,
+            },
+            {
+                "assembly_name": "feet",
+                "artifact_dir": str(tmp_path / "repo" / "feet"),
+                "repository_dir": str(tmp_path / "repo"),
+                "resource_file": str(tmp_path / "feet.yaml"),
+                "cache_hit": False,
+            },
+        ]
+
+    def fake_export_scene_for_assembly(
+        *, args, build_results, selected_assembly, scene_assembly_names
+    ):
+        captured["selected_assembly"] = selected_assembly
+        captured["scene_assembly_names"] = scene_assembly_names
+        return 0
+
+    monkeypatch.setattr(builder, "build_from_file", fake_build_from_file)
+    monkeypatch.setattr(
+        builder, "_export_scene_for_assembly", fake_export_scene_for_assembly
+    )
+
+    result = builder.run_builder(
+        argparse.Namespace(
+            config_file=str(config_path),
+            assembly=["frame"],
+            repository_dir=str(tmp_path / "repo"),
+            force=False,
+            visualize=True,
+            with_dependents=True,
+            production=False,
+            slice=False,
+            upload=False,
+            open=False,
+            run_id=None,
+            runs_dir=None,
+            master_settings_dir=None,
+            orca_executable=None,
+            orca_debug=None,
+            printer=None,
+            part_file=None,
+            process_file=None,
+            config=None,
+            verbose=False,
+        )
+    )
+
+    assert result == 0
+    assert captured["assembly_names"] == ["feet", "frame"]
+    assert captured["selected_assembly"] == "frame"
+    assert captured["scene_assembly_names"] == ["frame", "feet"]
+
+
+def test_resolve_build_generations_returns_topological_generations():
+    generations = builder._resolve_build_generations(
+        [
+            {"name": "frame", "depends_on": []},
+            {"name": "feet", "depends_on": ["frame"]},
+            {"name": "gantry", "depends_on": ["frame"]},
+            {"name": "printer", "depends_on": ["feet", "gantry"]},
+        ],
+        ["printer"],
+    )
+
+    assert [[entry["name"] for entry in generation] for generation in generations] == [
+        ["frame"],
+        ["feet", "gantry"],
+        ["printer"],
+    ]
+
+
+def test_resolve_process_data_applies_overrides(monkeypatch):
+    class ProcessModule:
+        PROCESS_DATA = {
+            "filament": "TPU",
+            "process_overrides": {"speed": "100"},
+        }
+
+    real_import_module = importlib.import_module
+    monkeypatch.setattr(
+        builder.importlib,
+        "import_module",
+        lambda module_name: (
+            ProcessModule
+            if module_name == "demo.process"
+            else real_import_module(module_name)
+        ),
+    )
+
+    resolved = builder._resolve_process_data(
+        {
+            "public_parameters": {"bed_temp": 55},
+            "generator_kwargs": {"assembly_name": "feet"},
+        },
+        {
+            "Builder": {
+                "Production": {
+                    "process_data": {
+                        "source": "demo.process.PROCESS_DATA",
+                        "overrides": {
+                            "bed_temperature": {"$ref": "bed_temp"},
+                            "process_overrides": {"brim_type": "no_brim"},
+                        },
+                    }
+                }
+            }
+        },
+    )
+
+    assert resolved == {
+        "filament": "TPU",
+        "bed_temperature": 55,
+        "process_overrides": {
+            "speed": "100",
+            "brim_type": "no_brim",
+        },
     }
