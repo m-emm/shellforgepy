@@ -407,55 +407,17 @@ def _placement_build_dependencies(
     assemblies: Sequence[Mapping[str, Any]],
     config_data: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, List[str]]:
-    """Derive conservative build-order edges from the global placement script.
-
-    The builder does not use a second imperative scheduler that reorders builds
-    outside the dependency graph. Instead, it augments the explicit
-    ``depends_on`` graph with implicit edges inferred from the ordered placement
-    prefix that must have executed before a consumer assembly can safely build
-    against injected upstream geometry.
-
-    Rule:
-    - inspect the global placement script in order
-    - for each assembly that injects upstream assemblies, find the last
-      placement step before that assembly's own first moving step that moves any
-      injected assembly
-    - require the consumer assembly to wait for every assembly referenced in
-      that prefix
-
-    This is intentionally conservative. It treats the placement prefix as a
-    whole-ordering requirement and does not try to prove that some apparently
-    cyclic arrangements would still be solvable on selected axes only.
-    """
+    """Derive build-order edges from the placement steps that actually matter."""
     by_name = _assemblies_by_name(assemblies)
     alignments = _placement_alignments(config_data)
     if not alignments:
         return {name: [] for name in by_name}
 
     known_assembly_names = sorted(by_name)
-    alignment_references: List[tuple[str, str]] = []
-    cumulative_prefix_dependencies: List[set[str]] = []
     first_moving_alignment_index: Dict[str, int] = {}
-    referenced_so_far: set[str] = set()
-
-    for index, alignment in enumerate(alignments):
-        moving_reference = alignment.get("part")
-        target_reference = alignment.get("to")
-        if not moving_reference or not target_reference:
-            raise BuilderError("Each placement alignment requires 'part' and 'to'")
-
-        moving_assembly_name, _ = _parse_part_reference(
-            str(moving_reference), known_assembly_names
-        )
-        target_assembly_name, _ = _parse_part_reference(
-            str(target_reference), known_assembly_names
-        )
-
-        alignment_references.append((moving_assembly_name, target_assembly_name))
-        referenced_so_far = set(referenced_so_far)
-        referenced_so_far.add(moving_assembly_name)
-        referenced_so_far.add(target_assembly_name)
-        cumulative_prefix_dependencies.append(referenced_so_far)
+    for index, (moving_assembly_name, _) in enumerate(
+        _placement_alignment_references(config_data, known_assembly_names)
+    ):
         first_moving_alignment_index.setdefault(moving_assembly_name, index)
 
     implicit_dependencies: Dict[str, List[str]] = {name: [] for name in by_name}
@@ -469,19 +431,16 @@ def _placement_build_dependencies(
             continue
 
         boundary_index = first_moving_alignment_index.get(
-            assembly_name, len(alignment_references)
+            assembly_name, len(alignments)
         )
-        last_relevant_index = -1
-        for index, (moving_assembly_name, _) in enumerate(alignment_references):
-            if index >= boundary_index:
-                break
-            if moving_assembly_name in injected_assemblies:
-                last_relevant_index = index
-
-        if last_relevant_index < 0:
+        required = _placement_dependency_closure(
+            config_data,
+            known_assembly_names,
+            injected_assemblies,
+            stop_index=boundary_index,
+        )
+        if not required:
             continue
-
-        required = set(cumulative_prefix_dependencies[last_relevant_index])
         required.discard(assembly_name)
         implicit_dependencies[assembly_name] = sorted(required)
 
@@ -1580,20 +1539,91 @@ def _placement_reference_names(
 ) -> List[str]:
     known_assembly_names = _known_assembly_names(config_data, built_results_by_name)
     referenced: set[str] = set()
+    for moving_assembly, target_assembly in _placement_alignment_references(
+        config_data, known_assembly_names
+    ):
+        referenced.add(moving_assembly)
+        referenced.add(target_assembly)
+    return sorted(referenced)
+
+
+def _placement_alignment_references(
+    config_data: Optional[Mapping[str, Any]],
+    known_assembly_names: Sequence[str],
+) -> List[tuple[str, str]]:
+    references: List[tuple[str, str]] = []
     for alignment in _placement_alignments(config_data):
         moving_reference = alignment.get("part")
         target_reference = alignment.get("to")
         if not moving_reference or not target_reference:
             raise BuilderError("Each placement alignment requires 'part' and 'to'")
-        moving_assembly, _ = _parse_part_reference(
+        moving_assembly_name, _ = _parse_part_reference(
             str(moving_reference), known_assembly_names
         )
-        target_assembly, _ = _parse_part_reference(
+        target_assembly_name, _ = _parse_part_reference(
             str(target_reference), known_assembly_names
         )
-        referenced.add(moving_assembly)
-        referenced.add(target_assembly)
-    return sorted(referenced)
+        references.append((moving_assembly_name, target_assembly_name))
+    return references
+
+
+def _placement_dependency_closure(
+    config_data: Optional[Mapping[str, Any]],
+    known_assembly_names: Sequence[str],
+    root_assemblies: Iterable[str],
+    *,
+    stop_index: Optional[int] = None,
+) -> set[str]:
+    references = _placement_alignment_references(config_data, known_assembly_names)
+    limit = (
+        len(references)
+        if stop_index is None
+        else max(0, min(stop_index, len(references)))
+    )
+    needed = {str(name) for name in root_assemblies}
+    if not needed or limit == 0:
+        return needed
+
+    for index in _relevant_placement_alignment_indices(
+        config_data,
+        known_assembly_names,
+        needed,
+        stop_index=stop_index,
+    ):
+        moving_assembly_name, target_assembly_name = references[index]
+        needed.add(moving_assembly_name)
+        needed.add(target_assembly_name)
+
+    return needed
+
+
+def _relevant_placement_alignment_indices(
+    config_data: Optional[Mapping[str, Any]],
+    known_assembly_names: Sequence[str],
+    root_assemblies: Iterable[str],
+    *,
+    stop_index: Optional[int] = None,
+) -> List[int]:
+    references = _placement_alignment_references(config_data, known_assembly_names)
+    limit = (
+        len(references)
+        if stop_index is None
+        else max(0, min(stop_index, len(references)))
+    )
+    needed = {str(name) for name in root_assemblies}
+    if not needed or limit == 0:
+        return []
+
+    relevant_indices: List[int] = []
+    for index in range(limit - 1, -1, -1):
+        moving_assembly_name, target_assembly_name = references[index]
+        if moving_assembly_name not in needed:
+            continue
+        relevant_indices.append(index)
+        needed.add(target_assembly_name)
+
+    relevant_indices.reverse()
+    return relevant_indices
 
 
 def _scene_dependency_names(
@@ -2054,6 +2084,18 @@ def _apply_placement_alignments(
     placement_context = (
         resolve_globals(config_data.get("globals", {})) if config_data else {}
     )
+    relevant_assemblies = {
+        str(item["assembly_name"])
+        for item in scene_parts
+        if item.get("assembly_name") is not None
+    }
+    relevant_alignment_indices = set(
+        _relevant_placement_alignment_indices(
+            config_data,
+            known_assembly_names,
+            relevant_assemblies,
+        )
+    )
 
     metadata_by_name: Dict[str, Dict[str, Any]] = {
         str(name): dict(value) for name, value in built_results_by_name.items()
@@ -2092,6 +2134,8 @@ def _apply_placement_alignments(
         return assembly_name, selector, anchor_cache[cache_key]
 
     for placement_index, alignment_spec in enumerate(alignments):
+        if placement_index not in relevant_alignment_indices:
+            continue
         moving_reference = alignment_spec.get("part")
         target_reference = alignment_spec.get("to")
         if not moving_reference or not target_reference:
@@ -2634,9 +2678,10 @@ def run_builder(args: argparse.Namespace) -> int:
             _scene_dependency_names(selected_resource_data, scene_mode, config_data)
         )
         implicit_scene_dependencies.update(
-            _placement_reference_names(
+            _placement_dependency_closure(
                 config_data,
-                {selected_assembly: {"assembly_name": selected_assembly}},
+                sorted(assemblies_by_name),
+                set(requested_assemblies) | implicit_scene_dependencies,
             )
         )
         if implicit_scene_dependencies:

@@ -964,7 +964,7 @@ def test_run_builder_visualization_expands_dependents_and_exports_scene(
     assert captured["scene_assembly_names"] == ["frame", "feet"]
 
 
-def test_run_builder_visualization_builds_implicit_placement_dependencies(
+def test_run_builder_visualization_builds_only_relevant_placement_dependencies(
     monkeypatch, tmp_path
 ):
     config_path = tmp_path / "assemblies.yaml"
@@ -978,10 +978,18 @@ def test_run_builder_visualization_builds_implicit_placement_dependencies(
                 "    depends_on: []",
                 "  - name: print_bed",
                 "    depends_on: []",
+                "  - name: gantry",
+                "    depends_on: []",
                 "placement:",
                 "  alignments:",
+                "    - part: printer_frame",
+                "      to: gantry",
+                "      alignment: CENTER",
                 "    - part: y_axis.non_production_parts.anchor",
-                "      to: print_bed.non_production_parts.buffer_1",
+                "      to: printer_frame.non_production_parts.buffer_1",
+                "      alignment: CENTER",
+                "    - part: print_bed.non_production_parts.anchor",
+                "      to: gantry.non_production_parts.buffer_1",
                 "      alignment: CENTER",
             ]
         ),
@@ -1029,6 +1037,13 @@ def test_run_builder_visualization_builds_implicit_placement_dependencies(
                 "resource_file": str(tmp_path / "print_bed.yaml"),
                 "cache_hit": False,
             },
+            {
+                "assembly_name": "gantry",
+                "artifact_dir": str(tmp_path / "repo" / "gantry"),
+                "repository_dir": str(tmp_path / "repo"),
+                "resource_file": str(tmp_path / "gantry.yaml"),
+                "cache_hit": False,
+            },
         ]
 
     monkeypatch.setattr(builder, "build_from_file", fake_build_from_file)
@@ -1060,7 +1075,121 @@ def test_run_builder_visualization_builds_implicit_placement_dependencies(
     )
 
     assert result == 0
-    assert captured["assembly_names"] == ["print_bed", "printer_frame", "y_axis"]
+    assert captured["assembly_names"] == ["gantry", "printer_frame", "y_axis"]
+
+
+def test_run_builder_visualization_builds_transitive_anchor_dependencies(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / "assemblies.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: bracket",
+                "    depends_on: []",
+                "  - name: y_axis",
+                "    depends_on: []",
+                "  - name: printer_frame",
+                "    depends_on: []",
+                "  - name: base",
+                "    depends_on: []",
+                "  - name: unrelated",
+                "    depends_on: []",
+                "placement:",
+                "  alignments:",
+                "    - part: printer_frame",
+                "      to: base",
+                "      alignment: CENTER",
+                "    - part: y_axis",
+                "      to: printer_frame",
+                "      alignment: CENTER",
+                "    - part: bracket.non_production_parts.mount",
+                "      to: y_axis.non_production_parts.profile_left",
+                "      alignment: CENTER",
+                "    - part: unrelated",
+                "      to: base",
+                "      alignment: CENTER",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "bracket.yaml").write_text("Builder: {}\n", encoding="utf-8")
+
+    captured = {}
+
+    def fake_build_from_file(
+        config_file, *, assembly_names=None, repository_dir=None, force=False
+    ):
+        captured["assembly_names"] = assembly_names
+        return [
+            {
+                "assembly_name": "bracket",
+                "artifact_dir": str(tmp_path / "repo" / "bracket"),
+                "repository_dir": str(tmp_path / "repo"),
+                "resource_file": str(tmp_path / "bracket.yaml"),
+                "cache_hit": False,
+            },
+            {
+                "assembly_name": "y_axis",
+                "artifact_dir": str(tmp_path / "repo" / "y_axis"),
+                "repository_dir": str(tmp_path / "repo"),
+                "resource_file": str(tmp_path / "y_axis.yaml"),
+                "cache_hit": False,
+            },
+            {
+                "assembly_name": "printer_frame",
+                "artifact_dir": str(tmp_path / "repo" / "printer_frame"),
+                "repository_dir": str(tmp_path / "repo"),
+                "resource_file": str(tmp_path / "printer_frame.yaml"),
+                "cache_hit": False,
+            },
+            {
+                "assembly_name": "base",
+                "artifact_dir": str(tmp_path / "repo" / "base"),
+                "repository_dir": str(tmp_path / "repo"),
+                "resource_file": str(tmp_path / "base.yaml"),
+                "cache_hit": False,
+            },
+            {
+                "assembly_name": "unrelated",
+                "artifact_dir": str(tmp_path / "repo" / "unrelated"),
+                "repository_dir": str(tmp_path / "repo"),
+                "resource_file": str(tmp_path / "unrelated.yaml"),
+                "cache_hit": False,
+            },
+        ]
+
+    monkeypatch.setattr(builder, "build_from_file", fake_build_from_file)
+    monkeypatch.setattr(builder, "_export_scene_for_assembly", lambda **kwargs: 0)
+
+    result = builder.run_builder(
+        argparse.Namespace(
+            config_file=str(config_path),
+            assembly=["bracket"],
+            repository_dir=str(tmp_path / "repo"),
+            force=False,
+            visualize=True,
+            with_dependents=False,
+            production=False,
+            slice=False,
+            upload=False,
+            open=False,
+            run_id=None,
+            runs_dir=None,
+            master_settings_dir=None,
+            orca_executable=None,
+            orca_debug=None,
+            printer=None,
+            part_file=None,
+            process_file=None,
+            config=None,
+            verbose=False,
+        )
+    )
+
+    assert result == 0
+    assert captured["assembly_names"] == ["base", "bracket", "printer_frame", "y_axis"]
 
 
 def test_resolve_build_generations_returns_topological_generations():
