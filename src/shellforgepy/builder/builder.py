@@ -1022,7 +1022,7 @@ def _resolve_injected_parts_config(
                     raise BuilderError(
                         f"inject_parts.{kwarg_name} for assembly '{entry.get('name')}' must specify an assembly"
                     )
-            artifact = raw_spec.get("artifact", "leader")
+            artifact = raw_spec.get("artifact", "assembly")
         else:
             raise BuilderError(
                 f"inject_parts.{kwarg_name} for assembly '{entry.get('name')}' must be a string or mapping"
@@ -1675,13 +1675,23 @@ def _format_scene_name(
     return str(rule.get("name") or default_name)
 
 
+def _scene_transform_record(
+    function_name: str, resolved_kwargs: Mapping[str, Any]
+) -> Dict[str, Any]:
+    return {
+        "kind": "scene_transform",
+        "function": function_name,
+        "kwargs": deepcopy(dict(resolved_kwargs)),
+    }
+
+
 def _apply_scene_transform(
     part: Any,
     transform: Optional[Mapping[str, Any]],
     context: Mapping[str, Any],
-) -> Any:
+) -> tuple[Any, Optional[Dict[str, Any]]]:
     if not transform:
-        return part
+        return part, None
     if not isinstance(transform, Mapping):
         raise BuilderError("Scene transform must be a mapping")
     function_path = transform.get("function")
@@ -1697,7 +1707,9 @@ def _apply_scene_transform(
     if not isinstance(kwargs, Mapping):
         raise BuilderError("Scene transform kwargs must be a mapping")
     resolved_kwargs = _resolve_inline_mapping(kwargs, context)
-    return function(part, **resolved_kwargs)
+    return function(part, **resolved_kwargs), _scene_transform_record(
+        function_name, resolved_kwargs
+    )
 
 
 def _materialize_rule_parts(
@@ -1750,6 +1762,7 @@ def _materialize_rule_parts(
                 part = _import_dependency_part(
                     Path(entry["path"]).expanduser().resolve()
                 )
+                transform_history: List[Dict[str, Any]] = []
                 part_context = dict(parameter_context)
                 part_context.update(
                     {
@@ -1759,13 +1772,22 @@ def _materialize_rule_parts(
                         "part_index": entry.get("index"),
                     }
                 )
-                part = _apply_scene_transform(part, rule.get("transform"), part_context)
+                part, transform_record = _apply_scene_transform(
+                    part, rule.get("transform"), part_context
+                )
+                if transform_record is not None:
+                    transform_history.append(transform_record)
                 scene_parts.append(
                     {
                         "name": _format_scene_name(entry, rule),
                         "part": part,
                         "assembly_name": entry["assembly_name"],
                         "source_path": entry["path"],
+                        "source_parameter_hash": target.get("parameter_hash"),
+                        "source_version_inputs": deepcopy(
+                            dict(target.get("version_inputs", {}))
+                        ),
+                        "transform_history": transform_history,
                         "flip": bool(rule.get("flip", False)),
                         "skip_in_production": bool(
                             rule.get("skip_in_production", False)
@@ -1787,11 +1809,16 @@ def _apply_translation_to_scene_parts(
     scene_parts: List[Dict[str, Any]],
     assembly_name: str,
     translation: Callable[[Any], Any],
+    transform_record: Optional[Mapping[str, Any]] = None,
 ) -> None:
     for item in scene_parts:
         if str(item.get("assembly_name")) != assembly_name:
             continue
         item["part"] = translation(item["part"])
+        if transform_record is not None:
+            history = list(item.get("transform_history") or [])
+            history.append(deepcopy(dict(transform_record)))
+            item["transform_history"] = history
 
 
 def _part_center(part: Any) -> tuple[float, float, float]:
@@ -2066,7 +2093,7 @@ def _apply_placement_alignments(
             anchor_cache[cache_key] = imported_anchor
         return assembly_name, selector, anchor_cache[cache_key]
 
-    for alignment_spec in alignments:
+    for placement_index, alignment_spec in enumerate(alignments):
         moving_reference = alignment_spec.get("part")
         target_reference = alignment_spec.get("to")
         if not moving_reference or not target_reference:
@@ -2133,7 +2160,14 @@ def _apply_placement_alignments(
         )
 
         _apply_translation_to_scene_parts(
-            scene_parts, moving_assembly_name, translation
+            scene_parts,
+            moving_assembly_name,
+            translation,
+            transform_record={
+                "kind": "translate",
+                "vector": [float(value) for value in translation_delta],
+                "placement_step": placement_index,
+            },
         )
         translation_history.setdefault(moving_assembly_name, []).append(translation)
         for (assembly_name, selector), anchor_part in list(anchor_cache.items()):
@@ -2492,7 +2526,6 @@ def _export_scene_for_assembly(
                 continue
             if source_path:
                 seen_source_paths.add(source_path)
-            part.pop("source_path", None)
             scene_parts.append(part)
 
     scene_parts = _apply_placement_alignments(
@@ -2557,6 +2590,7 @@ def _export_scene_for_assembly(
                 export_options.get("export_individual_parts", True)
             ),
             export_stl=bool(export_options.get("export_stl", True)),
+            mesh_cache_dir=repository_dir / "__mesh_cache__" / "obj",
         )
 
     if not manifest_path.exists():

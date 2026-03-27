@@ -2,6 +2,7 @@ import json
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import pytest
 from shellforgepy.adapters._adapter import get_volume
 from shellforgepy.simple import *
@@ -336,6 +337,85 @@ def test_arrange_and_export_obj_only_skips_fusion(monkeypatch):
         assert result_path.name == "test_obj_only.obj"
         assert not (Path(temp_dir) / "test_obj_only.stl").exists()
         assert not (Path(temp_dir) / "test_obj_only_box.stl").exists()
+
+
+@pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
+def test_arrange_and_export_obj_mesh_cache_reuses_cached_meshes(monkeypatch):
+    import shellforgepy.produce.arrange_and_export as arrange_and_export_module
+
+    tessellated_parts = []
+
+    def fake_tessellate(part, tolerance=0.1, angular_tolerance=0.1):
+        tessellated_parts.append(part)
+        return (
+            np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            np.asarray([[0, 1, 2]], dtype=np.int64),
+        )
+
+    def fake_export(meshes, destination):
+        destination_path = Path(destination)
+        destination_path.write_text("obj", encoding="utf-8")
+        destination_path.with_suffix(".mtl").write_text("mtl", encoding="utf-8")
+
+    monkeypatch.setattr(arrange_and_export_module, "adapter_tesellate", fake_tessellate)
+    monkeypatch.setattr(
+        arrange_and_export_module, "adapter_get_adapter_id", lambda: "test-adapter"
+    )
+    monkeypatch.setattr(
+        arrange_and_export_module, "export_colored_meshes_to_obj", fake_export
+    )
+
+    parts_list = [
+        {
+            "name": "box",
+            "part": "shape-1",
+            "source_path": "/tmp/source.step",
+            "source_parameter_hash": "abc123",
+            "source_version_inputs": {"resource_sha256": "deadbeef"},
+            "transform_history": [{"kind": "translate", "vector": [1.0, 2.0, 3.0]}],
+        }
+    ]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        mesh_cache_dir = Path(temp_dir) / "mesh_cache"
+        first_result = arrange_and_export_parts(
+            parts_list,
+            prod_gap=2.0,
+            bed_width=50.0,
+            script_file="test_mesh_cache.py",
+            export_directory=temp_dir,
+            export_stl=False,
+            export_step=False,
+            export_obj=True,
+            mesh_cache_dir=mesh_cache_dir,
+        )
+
+        assert first_result.exists()
+        assert tessellated_parts == ["shape-1"]
+        assert any(mesh_cache_dir.glob("*.npz"))
+
+        monkeypatch.setattr(
+            arrange_and_export_module,
+            "adapter_tesellate",
+            lambda *args, **kwargs: pytest.fail(
+                "cached mesh should avoid tessellation"
+            ),
+        )
+
+        second_export_dir = Path(temp_dir) / "second"
+        second_result = arrange_and_export_parts(
+            parts_list,
+            prod_gap=2.0,
+            bed_width=50.0,
+            script_file="test_mesh_cache_again.py",
+            export_directory=second_export_dir,
+            export_stl=False,
+            export_step=False,
+            export_obj=True,
+            mesh_cache_dir=mesh_cache_dir,
+        )
+
+        assert second_result.exists()
 
 
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")

@@ -481,6 +481,105 @@ def test_build_from_file_injects_dependency_assembly(monkeypatch, tmp_path):
     )
 
 
+def test_build_from_file_defaults_mapping_injected_part_to_assembly_artifact(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / "demo_pkg"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "assembly_generators.py",
+        "\n".join(
+            [
+                "class FakeComposite:",
+                "    def __init__(self, label):",
+                "        self.leader = f'leader-{label}'",
+                "        self.followers = [f'follower-{label}']",
+                "        self.cutters = [f'cutter-{label}']",
+                "        self.non_production_parts = [f'np-{label}']",
+                "        self.follower_indices_by_name = {'brace': 0}",
+                "        self.cutter_indices_by_name = {'hole': 0}",
+                "        self.non_production_indices_by_name = {'visual': 0}",
+                "    def leaders_followers_fused(self):",
+                "        return 'fused-frame'",
+                "def make_frame():",
+                "    return FakeComposite('frame')",
+                "def make_tool(*, frame):",
+                "    return '|'.join([",
+                "        frame.leader,",
+                "        frame.get_named_follower('brace'),",
+                "        frame.get_named_cutter('hole'),",
+                "        frame.get_named_non_production_part('visual'),",
+                "    ])",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(
+        assemblies_dir / "frame_assembly.yaml",
+        "\n".join(
+            [
+                "Parts:",
+                "  Frame:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.assembly_generators.make_frame",
+            ]
+        ),
+    )
+    _write_file(
+        assemblies_dir / "tool_assembly.yaml",
+        "\n".join(
+            [
+                "Parts:",
+                "  Tool:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.assembly_generators.make_tool",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: frame_assembly",
+                "  - name: tool_assembly",
+                "    depends_on:",
+                "      - frame_assembly",
+                "    inject_parts:",
+                "      frame:",
+                "        assembly: frame_assembly",
+            ]
+        ),
+    )
+
+    def fake_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+
+    def fake_import(step_path):
+        return Path(step_path).read_text(encoding="utf-8")
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+    monkeypatch.setattr(builder, "_import_dependency_part", fake_import)
+    monkeypatch.delitem(sys.modules, "demo_pkg", raising=False)
+    monkeypatch.delitem(sys.modules, "demo_pkg.assembly_generators", raising=False)
+
+    results = builder.build_from_file(config_path)
+
+    _, tool_result = results
+    assert tool_result["dependencies"][0]["artifact"] == "assembly"
+    assert (
+        Path(tool_result["artifacts"]["leader_step"]).read_text(encoding="utf-8")
+        == "leader-frame|follower-frame|cutter-frame|np-frame"
+    )
+
+
 def test_build_from_file_rebuilds_assembly_and_dependents_when_generator_code_changes(
     monkeypatch, tmp_path
 ):
@@ -1124,8 +1223,12 @@ def test_apply_placement_alignments_moves_only_the_owning_assembly(
     print_bed_target.write_text("bed-target", encoding="utf-8")
 
     scene_parts = [
-        {"assembly_name": "y_axis", "part": "scene-y-axis"},
-        {"assembly_name": "print_bed", "part": "scene-print-bed"},
+        {"assembly_name": "y_axis", "part": "scene-y-axis", "transform_history": []},
+        {
+            "assembly_name": "print_bed",
+            "part": "scene-print-bed",
+            "transform_history": [],
+        },
     ]
     built_results_by_name = {
         "y_axis": {
@@ -1215,6 +1318,11 @@ def test_apply_placement_alignments_moves_only_the_owning_assembly(
         "|STACK_TOP:y-leader|CENTER:y-anchor->bed-target:[0, 1]:0->bed-leader:None:12"
     )
     assert placed_parts[1]["part"] == "scene-print-bed"
+    assert placed_parts[0]["transform_history"] == [
+        {"kind": "translate", "vector": [9.0, 18.0, 0.0], "placement_step": 0},
+        {"kind": "translate", "vector": [0.0, 0.0, 66.0], "placement_step": 1},
+    ]
+    assert placed_parts[1]["transform_history"] == []
     assert captured_logs == [
         "Placement step: y_axis.non_production_parts.anchor aligned to print_bed.non_production_parts.buffer_1 via CENTER; moving_anchor_center=(1.0,2.0,3.0); target_anchor_center=(10.0,20.0,30.0); moving_part_position=(4.0,5.0,6.0); target_part_position=(40.0,50.0,60.0); shift=(9.0,18.0,0.0)",
         "Placement step: y_axis aligned to print_bed via STACK_TOP; moving_anchor_center=(13.0,23.0,6.0); target_anchor_center=(40.0,50.0,60.0); moving_part_position=(13.0,23.0,6.0); target_part_position=(40.0,50.0,60.0); shift=(0.0,0.0,66.0)",

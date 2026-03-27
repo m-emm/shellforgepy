@@ -2,23 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+from copy import deepcopy
+from os import PathLike
 from pathlib import Path
 
-from shellforgepy.adapters._adapter import (
-    export_colored_parts_to_obj as adapter_export_colored_parts_to_obj,
-)
+import numpy as np
 from shellforgepy.adapters._adapter import (
     export_solid_to_step as adapter_export_solid_to_step,
 )
 from shellforgepy.adapters._adapter import (
     export_solid_to_stl as adapter_export_solid_to_stl,
 )
+from shellforgepy.adapters._adapter import get_adapter_id as adapter_get_adapter_id
 from shellforgepy.adapters._adapter import get_bounding_box
+from shellforgepy.adapters._adapter import tesellate as adapter_tesellate
 from shellforgepy.construct.alignment_operations import rotate_part, translate
 from shellforgepy.construct.part_collector import PartCollector
+from shellforgepy.produce.obj_file_export import export_colored_meshes_to_obj
 from shellforgepy.produce.production_parts_model import PartList
 
 _logger = logging.getLogger(__name__)
@@ -95,6 +99,173 @@ def _safe_name(name):
     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in name)
 
 
+def _copy_transform_history(entry):
+    return [deepcopy(dict(item)) for item in entry.get("transform_history", [])]
+
+
+def _append_transform_record(entry, record):
+    history = _copy_transform_history(entry)
+    history.append(deepcopy(dict(record)))
+    entry["transform_history"] = history
+
+
+def _quantize_float(value, places=6):
+    return round(float(value), places)
+
+
+def _normalize_signature_value(value, *, key=None):
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        places = 8 if key in {"axis", "normal"} else 6
+        return _quantize_float(value, places=places)
+    if isinstance(value, PathLike):
+        return str(value)
+    if isinstance(value, dict):
+        return {
+            str(item_key): _normalize_signature_value(item_value, key=str(item_key))
+            for item_key, item_value in sorted(
+                value.items(), key=lambda item: str(item[0])
+            )
+        }
+    if isinstance(value, (list, tuple)):
+        return [_normalize_signature_value(item, key=key) for item in value]
+    return str(value)
+
+
+def _canonical_transform_history(history):
+    return [_normalize_signature_value(record) for record in history or []]
+
+
+def _mesh_cache_root(mesh_cache_dir=None):
+    raw_value = mesh_cache_dir or os.environ.get("SHELLFORGEPY_MESH_CACHE_DIR")
+    if not raw_value:
+        return None
+    cache_root = Path(raw_value).expanduser().resolve()
+    cache_root.mkdir(parents=True, exist_ok=True)
+    return cache_root
+
+
+def _render_signature_payload(part_entry, *, tolerance, angular_tolerance):
+    source_path = part_entry.get("source_path")
+    source_parameter_hash = part_entry.get("source_parameter_hash")
+    if not source_path and not source_parameter_hash:
+        return None
+    return {
+        "adapter_id": adapter_get_adapter_id(),
+        "export_format": "obj_mesh",
+        "tolerance": _normalize_signature_value(tolerance),
+        "angular_tolerance": _normalize_signature_value(angular_tolerance),
+        "source_path": str(source_path) if source_path else None,
+        "source_parameter_hash": source_parameter_hash,
+        "source_version_inputs": _normalize_signature_value(
+            part_entry.get("source_version_inputs", {})
+        ),
+        "transform_history": _canonical_transform_history(
+            part_entry.get("transform_history", [])
+        ),
+    }
+
+
+def _render_signature(part_entry, *, tolerance, angular_tolerance):
+    payload = _render_signature_payload(
+        part_entry, tolerance=tolerance, angular_tolerance=angular_tolerance
+    )
+    if payload is None:
+        return None, None
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest(), payload
+
+
+def _mesh_cache_paths(cache_root: Path, signature: str):
+    return cache_root / f"{signature}.npz", cache_root / f"{signature}.json"
+
+
+def _load_cached_mesh(cache_root: Path, signature: str):
+    mesh_path, metadata_path = _mesh_cache_paths(cache_root, signature)
+    if not mesh_path.exists():
+        return None
+    with np.load(mesh_path) as data:
+        vertices = np.asarray(data["vertices"], dtype=float)
+        triangles = np.asarray(data["triangles"], dtype=np.int64)
+    metadata = None
+    if metadata_path.exists():
+        with metadata_path.open("r", encoding="utf-8") as handle:
+            metadata = json.load(handle)
+    return vertices, triangles, metadata
+
+
+def _store_cached_mesh(cache_root: Path, signature: str, vertices, triangles, payload):
+    mesh_path, metadata_path = _mesh_cache_paths(cache_root, signature)
+    np.savez_compressed(mesh_path, vertices=vertices, triangles=triangles)
+    with metadata_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+
+
+def _build_colored_meshes(
+    arranged_parts,
+    *,
+    tolerance=0.1,
+    angular_tolerance=0.1,
+    mesh_cache_dir=None,
+):
+    cache_root = _mesh_cache_root(mesh_cache_dir)
+    total_parts = len(arranged_parts)
+    _logger.info("Preparing colored OBJ export for %d part(s)", total_parts)
+
+    meshes = []
+    cache_hits = 0
+    for index, entry in enumerate(arranged_parts, start=1):
+        name = entry["name"]
+        color = entry.get("color")
+        animation = entry.get("animation")
+        if color is None:
+            color = DEFAULT_PART_COLORS[(index - 1) % len(DEFAULT_PART_COLORS)]
+
+        signature = None
+        payload = None
+        cached_mesh = None
+        if cache_root is not None:
+            signature, payload = _render_signature(
+                entry,
+                tolerance=tolerance,
+                angular_tolerance=angular_tolerance,
+            )
+            if signature is not None:
+                cached_mesh = _load_cached_mesh(cache_root, signature)
+
+        if cached_mesh is not None:
+            vertices, triangles, _ = cached_mesh
+            cache_hits += 1
+        else:
+            if (
+                total_parts <= 10
+                or index == 1
+                or index == total_parts
+                or index % 5 == 0
+            ):
+                _logger.info(
+                    "OBJ export progress %d/%d: tessellating %s",
+                    index,
+                    total_parts,
+                    name,
+                )
+            vertices, triangles = adapter_tesellate(
+                entry["part"],
+                tolerance=tolerance,
+                angular_tolerance=angular_tolerance,
+            )
+            if cache_root is not None and signature is not None and payload is not None:
+                _store_cached_mesh(cache_root, signature, vertices, triangles, payload)
+
+        meshes.append((vertices, triangles, name, tuple(color), animation))
+
+    if cache_hits:
+        _logger.info("Reused %d cached OBJ mesh(es)", cache_hits)
+    return meshes
+
+
 def _arrange_parts_for_production(
     parts_list,
     *,
@@ -115,12 +286,21 @@ def _arrange_parts_for_production(
     rects = []
     for part_entry in parts_list:
         shape = part_entry["part"]
+        transform_history = _copy_transform_history(part_entry)
 
         # Apply flip transformation if needed (180° rotation around Y-axis)
         if part_entry.get("flip", False):
             _logger.info(f"Flipping part '{part_entry['name']}'")
             # Rotate 180° around Y-axis to flip for printing
             shape = rotate_part(shape, angle=180, axis=(0, 1, 0))
+            transform_history.append(
+                {
+                    "kind": "rotate",
+                    "angle_deg": 180.0,
+                    "axis": [0.0, 1.0, 0.0],
+                    "center": [0.0, 0.0, 0.0],
+                }
+            )
 
         # Apply production rotation if specified
         if (
@@ -133,6 +313,14 @@ def _arrange_parts_for_production(
                 f"Rotating part '{part_entry['name']}' by {angle}° around axis {axis}"
             )
             shape = rotate_part(shape, angle=angle, axis=axis)
+            transform_history.append(
+                {
+                    "kind": "rotate",
+                    "angle_deg": float(angle),
+                    "axis": [float(value) for value in axis],
+                    "center": [0.0, 0.0, 0.0],
+                }
+            )
         else:
             _logger.info(f"No production rotation for part '{part_entry['name']}'")
 
@@ -158,6 +346,12 @@ def _arrange_parts_for_production(
                 "min_point": min_point,
                 "max_point": max_point,
                 "original": part_entry,
+                "source_path": part_entry.get("source_path"),
+                "source_parameter_hash": part_entry.get("source_parameter_hash"),
+                "source_version_inputs": deepcopy(
+                    part_entry.get("source_version_inputs", {})
+                ),
+                "transform_history": transform_history,
             }
         )
 
@@ -206,9 +400,27 @@ def _arrange_parts_for_production(
 
         # Move so bottom-left-back corner is at origin
         shape = translate(-min_point[0], -min_point[1], -min_point[2])(shape)
+        _append_transform_record(
+            rect,
+            {
+                "kind": "translate",
+                "vector": [
+                    float(-min_point[0]),
+                    float(-min_point[1]),
+                    float(-min_point[2]),
+                ],
+            },
+        )
 
         # Move to final position on the bed
         shape = translate(x_cursor, y_cursor, 0)(shape)
+        _append_transform_record(
+            rect,
+            {
+                "kind": "translate",
+                "vector": [float(x_cursor), float(y_cursor), 0.0],
+            },
+        )
 
         arranged.append(
             {
@@ -220,6 +432,12 @@ def _arrange_parts_for_production(
                 "height": height,
                 "color": rect["original"].get("color"),
                 "animation": rect["original"].get("animation"),
+                "source_path": rect.get("source_path"),
+                "source_parameter_hash": rect.get("source_parameter_hash"),
+                "source_version_inputs": deepcopy(
+                    rect.get("source_version_inputs", {})
+                ),
+                "transform_history": _copy_transform_history(rect),
             }
         )
 
@@ -244,6 +462,13 @@ def _arrange_parts_for_production(
         # Apply centering offset to all parts
         for item in arranged:
             item["shape"] = translate(offset_x, offset_y, 0)(item["shape"])
+            _append_transform_record(
+                item,
+                {
+                    "kind": "translate",
+                    "vector": [float(offset_x), float(offset_y), 0.0],
+                },
+            )
 
     _logger.info(f"Arranged {len(arranged)} parts for production")
     return [
@@ -252,6 +477,10 @@ def _arrange_parts_for_production(
             "part": item["shape"],
             "color": item.get("color"),
             "animation": item.get("animation"),
+            "source_path": item.get("source_path"),
+            "source_parameter_hash": item.get("source_parameter_hash"),
+            "source_version_inputs": deepcopy(item.get("source_version_inputs", {})),
+            "transform_history": _copy_transform_history(item),
         }
         for item in arranged
     ]
@@ -273,6 +502,7 @@ def arrange_and_export_parts(
     viewer_base_url=None,
     export_individual_parts=True,
     export_stl=True,
+    mesh_cache_dir=None,
 ):
     """Arrange named parts with production support and export requested formats.
 
@@ -345,27 +575,28 @@ def arrange_and_export_parts(
             max_build_height=max_build_height,
             verbose=verbose,
         )
-        arranged_shapes = [item["part"] for item in arranged_parts]
-        names = [item["name"] for item in arranged_parts]
-        # Colors are preserved through arrangement
-        colors = [item.get("color") for item in arranged_parts]
-        animations = [item.get("animation") for item in arranged_parts]
     else:
-        # Simple arrangement - just extract shapes and export metadata
-        shapes = []
-        names = []
-        colors = []
-        animations = []
+        arranged_parts = []
         for entry in parts_list:
             if "name" not in entry or "part" not in entry:
                 raise KeyError("Each part mapping must include 'name' and 'part'")
-            shape = entry["part"]
-            shapes.append(shape)
-            names.append(str(entry["name"]))
-            colors.append(entry.get("color"))
-            animations.append(entry.get("animation"))
+            arranged_parts.append(
+                {
+                    "name": str(entry["name"]),
+                    "part": entry["part"],
+                    "color": entry.get("color"),
+                    "animation": entry.get("animation"),
+                    "source_path": entry.get("source_path"),
+                    "source_parameter_hash": entry.get("source_parameter_hash"),
+                    "source_version_inputs": deepcopy(
+                        entry.get("source_version_inputs", {})
+                    ),
+                    "transform_history": _copy_transform_history(entry),
+                }
+            )
 
-        arranged_shapes = shapes
+    arranged_shapes = [item["part"] for item in arranged_parts]
+    names = [item["name"] for item in arranged_parts]
 
     export_dir = Path(export_directory) if export_directory is not None else Path.home()
     export_dir = export_dir.expanduser()
@@ -439,18 +670,12 @@ def arrange_and_export_parts(
     # Export colored OBJ file
     if export_obj:
         obj_path = export_dir / f"{base_name}.obj"
-        # Build parts list with colors (assign default colors if not specified)
-        colored_parts = []
-        for i, (name, shape, color, animation) in enumerate(
-            zip(names, arranged_shapes, colors, animations)
-        ):
-            if color is None:
-                # Assign a default color from the palette
-                color = DEFAULT_PART_COLORS[i % len(DEFAULT_PART_COLORS)]
-            colored_parts.append((shape, name, tuple(color), animation))
-
         _logger.info("Exporting colored OBJ to %s", obj_path)
-        adapter_export_colored_parts_to_obj(colored_parts, str(obj_path))
+        colored_meshes = _build_colored_meshes(
+            arranged_parts,
+            mesh_cache_dir=mesh_cache_dir,
+        )
+        export_colored_meshes_to_obj(colored_meshes, str(obj_path))
         _logger.info("Exported colored OBJ to %s", obj_path)
 
         if manifest_data is not None:
@@ -513,6 +738,7 @@ def arrange_and_export(
     viewer_base_url=None,
     export_individual_parts=True,
     export_stl=True,
+    mesh_cache_dir=None,
 ):
     """Arrange and export a single part with production support.
 
@@ -553,4 +779,5 @@ def arrange_and_export(
         viewer_base_url=viewer_base_url,
         export_individual_parts=export_individual_parts,
         export_stl=export_stl,
+        mesh_cache_dir=mesh_cache_dir,
     )
