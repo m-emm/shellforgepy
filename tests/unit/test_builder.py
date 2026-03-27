@@ -1265,6 +1265,58 @@ def test_resolve_build_generations_waits_for_placement_prerequisites_of_injected
     ]
 
 
+def test_resolve_build_generations_uses_only_reachable_placement_dependencies():
+    generations = builder._resolve_build_generations(
+        [
+            {"name": "printer_frame", "depends_on": []},
+            {"name": "y_axis", "depends_on": ["printer_frame"]},
+            {
+                "name": "y_axis_rail_carrier_brackets",
+                "depends_on": ["printer_frame", "y_axis"],
+            },
+            {
+                "name": "left_z_axis_profile",
+                "depends_on": ["printer_frame"],
+            },
+            {
+                "name": "left_z_axis",
+                "depends_on": ["left_z_axis_profile"],
+                "inject_parts": {
+                    "z_axis_profile": "left_z_axis_profile",
+                },
+            },
+        ],
+        ["left_z_axis"],
+        {
+            "placement": {
+                "alignments": [
+                    {
+                        "part": "y_axis",
+                        "to": "printer_frame",
+                        "alignment": "CENTER",
+                    },
+                    {
+                        "part": "y_axis_rail_carrier_brackets.non_production_parts.mount",
+                        "to": "y_axis.non_production_parts.profile_left",
+                        "alignment": "CENTER",
+                    },
+                    {
+                        "part": "left_z_axis_profile",
+                        "to": "printer_frame",
+                        "alignment": "CENTER",
+                    },
+                ]
+            }
+        },
+    )
+
+    assert [[entry["name"] for entry in generation] for generation in generations] == [
+        ["printer_frame"],
+        ["left_z_axis_profile"],
+        ["left_z_axis"],
+    ]
+
+
 def test_resolve_process_data_applies_overrides(monkeypatch):
     class ProcessModule:
         PROCESS_DATA = {
@@ -1716,6 +1768,82 @@ def test_advance_placement_execution_stops_until_missing_assembly_is_built(
         "profile_b": (-10.0, 0.0, 0.0),
         "profile_c": (-20.0, 0.0, 0.0),
     }
+
+
+def test_advance_placement_execution_runs_ready_steps_without_waiting_for_unrelated_prefix(
+    monkeypatch, tmp_path
+):
+    profile_a_leader = tmp_path / "profile_a.step"
+    profile_a_leader.write_text("profile-a", encoding="utf-8")
+    profile_b_leader = tmp_path / "profile_b.step"
+    profile_b_leader.write_text("profile-b", encoding="utf-8")
+
+    built_results_by_name = {
+        "profile_a": {
+            "assembly_name": "profile_a",
+            "artifacts": {"leader_step": str(profile_a_leader)},
+        },
+        "profile_b": {
+            "assembly_name": "profile_b",
+            "artifacts": {"leader_step": str(profile_b_leader)},
+        },
+    }
+    config_data = {
+        "assemblies": [
+            {"name": "profile_a"},
+            {"name": "profile_b"},
+            {"name": "profile_c"},
+        ],
+        "placement": {
+            "alignments": [
+                {
+                    "part": "profile_c",
+                    "to": "profile_a",
+                    "alignment": "CENTER",
+                },
+                {
+                    "part": "profile_b",
+                    "to": "profile_a",
+                    "alignment": "CENTER",
+                },
+            ]
+        },
+    }
+
+    monkeypatch.setattr(
+        builder,
+        "_import_dependency_part",
+        lambda path: Path(path).read_text(encoding="utf-8"),
+    )
+    monkeypatch.setattr(
+        builder,
+        "_part_center",
+        lambda part: {
+            "profile-a": (0.0, 0.0, 0.0),
+            "profile-b": (10.0, 0.0, 0.0),
+            "profile-b|CENTER:profile-b->profile-a": (0.0, 0.0, 0.0),
+        }[part],
+    )
+    monkeypatch.setattr(
+        builder,
+        "_make_placement_translation",
+        lambda moving_anchor, target_anchor, *, alignment, axes=None, stack_gap=0: (
+            lambda part: f"{part}|{alignment.name}:{moving_anchor}->{target_anchor}"
+        ),
+    )
+
+    placement_state = builder._initialize_placement_execution_state(
+        config_data, built_results_by_name
+    )
+    placement_state = builder._advance_placement_execution(
+        placement_state,
+        built_results_by_name=built_results_by_name,
+        repository_dir=tmp_path,
+    )
+
+    assert placement_state.cursor == 1
+    assert placement_state.executed_alignment_indices == {1}
+    assert placement_state.placement_offsets == {"profile_b": (-10.0, 0.0, 0.0)}
 
 
 def test_advance_placement_execution_supports_post_translation(monkeypatch, tmp_path):

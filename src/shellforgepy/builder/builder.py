@@ -19,18 +19,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
-import networkx as nx
 import yaml
 from shellforgepy.construct.part_parameters import PartParameters
+
+from . import graph_model as builder_graph_model
+from .errors import BuilderError
 
 _logger = logging.getLogger(__name__)
 
 _REF_PATTERN = re.compile(r"\$\{([A-Za-z0-9_./:-]+)\}")
 _SAFE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
-
-
-class BuilderError(Exception):
-    """Raised when declarative build resolution or execution fails."""
 
 
 class _BuilderLoader(yaml.SafeLoader):
@@ -95,7 +93,9 @@ class _PlacementExecutionState:
     alignments: List[Dict[str, Any]]
     known_assembly_names: List[str]
     placement_context: Dict[str, Any]
+    graph_model: Optional[builder_graph_model.BuilderGraphModel] = None
     cursor: int = 0
+    executed_alignment_indices: set[int] = field(default_factory=set)
     translation_history: Dict[str, List[Callable[[Any], Any]]] = field(
         default_factory=dict
     )
@@ -391,115 +391,42 @@ def _get_assemblies(config: Mapping[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _dependency_names(entry: Mapping[str, Any]) -> List[str]:
-    dependencies = entry.get("depends_on")
-    if dependencies is None:
-        dependencies = entry.get("dependencies", [])
-    if dependencies is None:
-        return []
-    if not isinstance(dependencies, list):
-        raise BuilderError(
-            f"Dependencies for assembly '{entry.get('name')}' must be a list"
-        )
-    return [str(item) for item in dependencies]
+    return builder_graph_model.dependency_names(entry)
 
 
 def _placement_build_dependencies(
     assemblies: Sequence[Mapping[str, Any]],
     config_data: Optional[Mapping[str, Any]] = None,
+    *,
+    graph_model: Optional[builder_graph_model.BuilderGraphModel] = None,
 ) -> Dict[str, List[str]]:
-    """Derive build-order edges from the placement steps that actually matter."""
-    by_name = _assemblies_by_name(assemblies)
-    alignments = _placement_alignments(config_data)
-    if not alignments:
-        return {name: [] for name in by_name}
-
-    known_assembly_names = sorted(by_name)
-    first_moving_alignment_index: Dict[str, int] = {}
-    for index, (moving_assembly_name, _) in enumerate(
-        _placement_alignment_references(config_data, known_assembly_names)
-    ):
-        first_moving_alignment_index.setdefault(moving_assembly_name, index)
-
-    implicit_dependencies: Dict[str, List[str]] = {name: [] for name in by_name}
-    for assembly_name, entry in by_name.items():
-        injected_assemblies = {
-            spec["assembly"]
-            for spec in _resolve_injected_parts_config(entry).values()
-            if spec.get("assembly")
-        }
-        if not injected_assemblies:
-            continue
-
-        boundary_index = first_moving_alignment_index.get(
-            assembly_name, len(alignments)
-        )
-        required = _placement_dependency_closure(
-            config_data,
-            known_assembly_names,
-            injected_assemblies,
-            stop_index=boundary_index,
-        )
-        if not required:
-            continue
-        required.discard(assembly_name)
-        implicit_dependencies[assembly_name] = sorted(required)
-
-    return implicit_dependencies
+    model = graph_model or builder_graph_model.build_graph_model(
+        assemblies, config_data
+    )
+    return {
+        name: list(dependencies)
+        for name, dependencies in model.placement_build_dependencies.items()
+    }
 
 
 def _resolve_build_generations(
     assemblies: Sequence[Mapping[str, Any]],
     selected_names: Optional[Iterable[str]] = None,
     config_data: Optional[Mapping[str, Any]] = None,
+    *,
+    graph_model: Optional[builder_graph_model.BuilderGraphModel] = None,
 ) -> List[List[Dict[str, Any]]]:
-    by_name = _assemblies_by_name(assemblies)
-    placement_dependencies = _placement_build_dependencies(assemblies, config_data)
-
-    requested = list(selected_names or by_name.keys())
-    missing = sorted(name for name in requested if name not in by_name)
-    if missing:
-        raise BuilderError(f"Unknown assembly name(s): {', '.join(missing)}")
-
-    required_names: set[str] = set()
-
-    def collect(name: str) -> None:
-        if name in required_names:
-            return
-        required_names.add(name)
-        entry = by_name[name]
-        dependencies = list(_dependency_names(entry)) + placement_dependencies.get(
-            name, []
-        )
-        for dependency in dependencies:
-            if dependency not in by_name:
-                raise BuilderError(
-                    f"Assembly '{name}' depends on unknown assembly '{dependency}'"
-                )
-            collect(dependency)
-
-    for name in requested:
-        collect(name)
-
-    dependency_graph = nx.DiGraph()
-    for name in sorted(required_names):
-        dependency_graph.add_node(name)
-
-    for name in sorted(required_names):
-        dependencies = list(
-            _dependency_names(by_name[name])
-        ) + placement_dependencies.get(name, [])
-        for dependency in dependencies:
-            dependency_graph.add_edge(dependency, name)
-
-    try:
-        generations = list(nx.topological_generations(dependency_graph))
-    except nx.NetworkXUnfeasible as exc:
-        raise BuilderError("Cyclic dependency detected in assembly graph") from exc
-
+    model = graph_model or builder_graph_model.build_graph_model(
+        assemblies, config_data
+    )
+    by_name = model.assemblies_by_name
+    generations = builder_graph_model.resolve_build_generation_names(
+        model, selected_names
+    )
     resolved_generations: List[List[Dict[str, Any]]] = []
     for generation_index, generation_names in enumerate(generations):
         entries_in_generation: List[Dict[str, Any]] = []
-        for assembly_name in sorted(generation_names):
+        for assembly_name in generation_names:
             entry = by_name[assembly_name]
             if entry.get("disabled"):
                 _logger.info("Skipping disabled assembly '%s'", assembly_name)
@@ -519,45 +446,17 @@ def _resolve_build_generations(
 def _assemblies_by_name(
     assemblies: Sequence[Mapping[str, Any]],
 ) -> Dict[str, Dict[str, Any]]:
-    by_name: Dict[str, Dict[str, Any]] = {}
-    for entry in assemblies:
-        name = entry.get("name")
-        if not name:
-            raise BuilderError("Each assembly entry must define a name")
-        if name in by_name:
-            raise BuilderError(f"Duplicate assembly name '{name}'")
-        by_name[str(name)] = dict(entry)
-    return by_name
+    return builder_graph_model.assemblies_by_name(assemblies)
 
 
 def _expand_with_dependents(
     assemblies: Sequence[Mapping[str, Any]],
     selected_names: Sequence[str],
+    *,
+    graph_model: Optional[builder_graph_model.BuilderGraphModel] = None,
 ) -> List[str]:
-    by_name = _assemblies_by_name(assemblies)
-    missing = sorted(name for name in selected_names if name not in by_name)
-    if missing:
-        raise BuilderError(f"Unknown assembly name(s): {', '.join(missing)}")
-
-    reverse_dependencies: Dict[str, set[str]] = {name: set() for name in by_name}
-    for name, entry in by_name.items():
-        for dependency in _dependency_names(entry):
-            if dependency not in by_name:
-                raise BuilderError(
-                    f"Assembly '{name}' depends on unknown assembly '{dependency}'"
-                )
-            reverse_dependencies[dependency].add(name)
-
-    expanded: set[str] = set()
-    pending = list(selected_names)
-    while pending:
-        current = pending.pop()
-        if current in expanded:
-            continue
-        expanded.add(current)
-        pending.extend(sorted(reverse_dependencies[current]))
-
-    return sorted(expanded)
+    model = graph_model or builder_graph_model.build_graph_model(assemblies)
+    return builder_graph_model.expand_with_dependents(model, selected_names)
 
 
 def _default_repository_dir(config_path: Path) -> Path:
@@ -1407,29 +1306,13 @@ def _filter_artifact_entries(
 
 
 def _placement_section(config_data: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
-    if not config_data:
-        return {}
-
-    placement = config_data.get("placement")
-    if placement is None:
-        placement = config_data.get("Placement", {})
-    if placement is None:
-        return {}
-    if not isinstance(placement, Mapping):
-        raise BuilderError("placement section must be a mapping")
-    return dict(placement)
+    return builder_graph_model.placement_section(config_data)
 
 
 def _placement_alignments(
     config_data: Optional[Mapping[str, Any]],
 ) -> List[Dict[str, Any]]:
-    placement = _placement_section(config_data)
-    alignments = placement.get("alignments", [])
-    if alignments is None:
-        return []
-    if not isinstance(alignments, list):
-        raise BuilderError("placement.alignments must be a list")
-    return [dict(item) for item in alignments]
+    return builder_graph_model.placement_alignments(config_data)
 
 
 def _known_assembly_names(
@@ -1446,19 +1329,7 @@ def _parse_part_reference(
     reference: str,
     known_assembly_names: Sequence[str],
 ) -> tuple[str, str]:
-    normalized = str(reference).strip()
-    if not normalized:
-        raise BuilderError("Placement part reference must not be empty")
-    for assembly_name in known_assembly_names:
-        prefix = f"{assembly_name}."
-        if normalized == assembly_name:
-            return assembly_name, "leader"
-        if normalized.startswith(prefix):
-            selector = normalized[len(prefix) :]
-            if not selector:
-                return assembly_name, "leader"
-            return assembly_name, selector
-    raise BuilderError(f"Unknown assembly reference '{reference}' in placement")
+    return builder_graph_model.parse_part_reference(reference, known_assembly_names)
 
 
 def _resolve_alignment_enum(raw_alignment: Any) -> Any:
@@ -1550,21 +1421,17 @@ def _placement_reference_names(
 def _placement_alignment_references(
     config_data: Optional[Mapping[str, Any]],
     known_assembly_names: Sequence[str],
+    *,
+    graph_model: Optional[builder_graph_model.BuilderGraphModel] = None,
 ) -> List[tuple[str, str]]:
-    references: List[tuple[str, str]] = []
-    for alignment in _placement_alignments(config_data):
-        moving_reference = alignment.get("part")
-        target_reference = alignment.get("to")
-        if not moving_reference or not target_reference:
-            raise BuilderError("Each placement alignment requires 'part' and 'to'")
-        moving_assembly_name, _ = _parse_part_reference(
-            str(moving_reference), known_assembly_names
-        )
-        target_assembly_name, _ = _parse_part_reference(
-            str(target_reference), known_assembly_names
-        )
-        references.append((moving_assembly_name, target_assembly_name))
-    return references
+    model = graph_model
+    if model is None:
+        assemblies = [{"name": name} for name in sorted(set(known_assembly_names))]
+        model = builder_graph_model.build_graph_model(assemblies, config_data)
+    return [
+        (step.moving_assembly_name, step.target_assembly_name)
+        for step in model.placement_steps
+    ]
 
 
 def _placement_dependency_closure(
@@ -1573,28 +1440,19 @@ def _placement_dependency_closure(
     root_assemblies: Iterable[str],
     *,
     stop_index: Optional[int] = None,
+    graph_model: Optional[builder_graph_model.BuilderGraphModel] = None,
 ) -> set[str]:
-    references = _placement_alignment_references(config_data, known_assembly_names)
-    limit = (
-        len(references)
-        if stop_index is None
-        else max(0, min(stop_index, len(references)))
+    model = graph_model
+    if model is None:
+        assemblies = [{"name": name} for name in sorted(set(known_assembly_names))]
+        model = builder_graph_model.build_graph_model(assemblies, config_data)
+    return set(
+        builder_graph_model.placement_dependency_closure(
+            model,
+            root_assemblies,
+            stop_index=stop_index,
+        )
     )
-    needed = {str(name) for name in root_assemblies}
-    if not needed or limit == 0:
-        return needed
-
-    for index in _relevant_placement_alignment_indices(
-        config_data,
-        known_assembly_names,
-        needed,
-        stop_index=stop_index,
-    ):
-        moving_assembly_name, target_assembly_name = references[index]
-        needed.add(moving_assembly_name)
-        needed.add(target_assembly_name)
-
-    return needed
 
 
 def _relevant_placement_alignment_indices(
@@ -1603,27 +1461,17 @@ def _relevant_placement_alignment_indices(
     root_assemblies: Iterable[str],
     *,
     stop_index: Optional[int] = None,
+    graph_model: Optional[builder_graph_model.BuilderGraphModel] = None,
 ) -> List[int]:
-    references = _placement_alignment_references(config_data, known_assembly_names)
-    limit = (
-        len(references)
-        if stop_index is None
-        else max(0, min(stop_index, len(references)))
+    model = graph_model
+    if model is None:
+        assemblies = [{"name": name} for name in sorted(set(known_assembly_names))]
+        model = builder_graph_model.build_graph_model(assemblies, config_data)
+    return builder_graph_model.relevant_placement_alignment_indices(
+        model,
+        root_assemblies,
+        stop_index=stop_index,
     )
-    needed = {str(name) for name in root_assemblies}
-    if not needed or limit == 0:
-        return []
-
-    relevant_indices: List[int] = []
-    for index in range(limit - 1, -1, -1):
-        moving_assembly_name, target_assembly_name = references[index]
-        if moving_assembly_name not in needed:
-            continue
-        relevant_indices.append(index)
-        needed.add(target_assembly_name)
-
-    relevant_indices.reverse()
-    return relevant_indices
 
 
 def _scene_dependency_names(
@@ -1631,23 +1479,7 @@ def _scene_dependency_names(
     mode: str,
     config_data: Optional[Mapping[str, Any]],
 ) -> List[str]:
-    section_name = "Visualization" if mode == "visualization" else "Production"
-    section = _builder_section(resource_data, section_name, config_data)
-    parts = section.get("parts")
-    if not isinstance(parts, list):
-        return []
-
-    dependency_names: set[str] = set()
-    for rule in parts:
-        if not isinstance(rule, Mapping):
-            raise BuilderError(f"Builder.{section_name}.parts items must be mappings")
-        source = str(rule.get("source", "self"))
-        if source not in {"dependencies", "dependency"}:
-            continue
-        dependency_name = rule.get("assembly")
-        if dependency_name:
-            dependency_names.add(str(dependency_name))
-    return sorted(dependency_names)
+    return builder_graph_model.scene_dependency_names(resource_data, mode, config_data)
 
 
 def _dependency_metadata_map(
@@ -1883,13 +1715,27 @@ def _add_translation_delta(
 def _initialize_placement_execution_state(
     config_data: Optional[Mapping[str, Any]],
     built_results_by_name: Mapping[str, Dict[str, Any]],
+    *,
+    graph_model: Optional[builder_graph_model.BuilderGraphModel] = None,
 ) -> _PlacementExecutionState:
+    if graph_model is None:
+        if config_data is not None and config_data.get("assemblies") is not None:
+            graph_model = builder_graph_model.build_graph_model(
+                _get_assemblies(config_data),
+                config_data,
+            )
+        else:
+            graph_model = builder_graph_model.build_graph_model(
+                [{"name": str(name)} for name in sorted(built_results_by_name)],
+                config_data,
+            )
     return _PlacementExecutionState(
         alignments=_placement_alignments(config_data),
         known_assembly_names=_known_assembly_names(config_data, built_results_by_name),
         placement_context=(
             resolve_globals(config_data.get("globals", {})) if config_data else {}
         ),
+        graph_model=graph_model,
     )
 
 
@@ -1955,116 +1801,153 @@ def _advance_placement_execution(
     built_results_by_name: Mapping[str, Dict[str, Any]],
     repository_dir: Path,
 ) -> _PlacementExecutionState:
-    while placement_state.cursor < len(placement_state.alignments):
-        alignment_spec = placement_state.alignments[placement_state.cursor]
-        moving_reference = alignment_spec.get("part")
-        target_reference = alignment_spec.get("to")
-        if not moving_reference or not target_reference:
-            raise BuilderError("Each placement alignment requires 'part' and 'to'")
+    placement_steps = (
+        placement_state.graph_model.placement_steps
+        if placement_state.graph_model is not None
+        else [
+            builder_graph_model.PlacementStep(
+                index=index,
+                spec=dict(alignment),
+                moving_reference=str(alignment["part"]),
+                target_reference=str(alignment["to"]),
+                moving_assembly_name=_parse_part_reference(
+                    str(alignment["part"]), placement_state.known_assembly_names
+                )[0],
+                target_assembly_name=_parse_part_reference(
+                    str(alignment["to"]), placement_state.known_assembly_names
+                )[0],
+            )
+            for index, alignment in enumerate(placement_state.alignments)
+        ]
+    )
+    placement_dag = (
+        placement_state.graph_model.placement_execution_dag
+        if placement_state.graph_model is not None
+        else builder_graph_model.build_graph_model(
+            [{"name": name} for name in placement_state.known_assembly_names],
+            {"placement": {"alignments": placement_state.alignments}},
+        ).placement_execution_dag
+    )
 
-        moving_reference_str = str(moving_reference)
-        target_reference_str = str(target_reference)
-        moving_assembly_name, _ = _parse_part_reference(
-            moving_reference_str, placement_state.known_assembly_names
-        )
-        target_assembly_name, _ = _parse_part_reference(
-            target_reference_str, placement_state.known_assembly_names
-        )
-        if moving_assembly_name not in built_results_by_name:
+    while True:
+        progress = False
+        for placement_step in placement_steps:
+            if placement_step.index in placement_state.executed_alignment_indices:
+                continue
+            predecessors = set(placement_dag.predecessors(placement_step.index))
+            if not predecessors.issubset(placement_state.executed_alignment_indices):
+                continue
+
+            alignment_spec = placement_step.spec
+            moving_reference_str = placement_step.moving_reference
+            target_reference_str = placement_step.target_reference
+            moving_assembly_name = placement_step.moving_assembly_name
+            target_assembly_name = placement_step.target_assembly_name
+
+            if moving_assembly_name not in built_results_by_name:
+                continue
+            if target_assembly_name not in built_results_by_name:
+                continue
+
+            _, _, moving_anchor = _resolve_placement_anchor(
+                moving_reference_str,
+                placement_state=placement_state,
+                built_results_by_name=built_results_by_name,
+                repository_dir=repository_dir,
+            )
+            _, _, target_anchor = _resolve_placement_anchor(
+                target_reference_str,
+                placement_state=placement_state,
+                built_results_by_name=built_results_by_name,
+                repository_dir=repository_dir,
+            )
+            _, _, moving_part = _resolve_placement_anchor(
+                moving_assembly_name,
+                placement_state=placement_state,
+                built_results_by_name=built_results_by_name,
+                repository_dir=repository_dir,
+            )
+            _, _, target_part = _resolve_placement_anchor(
+                target_assembly_name,
+                placement_state=placement_state,
+                built_results_by_name=built_results_by_name,
+                repository_dir=repository_dir,
+            )
+
+            resolved_alignment = _resolve_alignment_enum(
+                alignment_spec.get("alignment")
+            )
+            raw_axes = alignment_spec.get("axes")
+            axes = None
+            if raw_axes is not None:
+                resolved_axes = _resolve_inline_value(
+                    raw_axes, placement_state.placement_context
+                )
+                if not isinstance(resolved_axes, list):
+                    raise BuilderError(
+                        "placement alignment axes must resolve to a list"
+                    )
+                axes = [int(axis) for axis in resolved_axes]
+
+            stack_gap = alignment_spec.get("stack_gap", 0)
+            resolved_stack_gap = _resolve_inline_value(
+                stack_gap, placement_state.placement_context
+            )
+            resolved_post_translation = _resolve_post_translation(
+                alignment_spec,
+                placement_state.placement_context,
+            )
+
+            moving_center_before = _part_center(moving_anchor)
+            target_center_before = _part_center(target_anchor)
+            moving_part_center_before = _part_center(moving_part)
+            target_part_center_before = _part_center(target_part)
+
+            translation = _make_placement_translation(
+                moving_anchor,
+                target_anchor,
+                alignment=resolved_alignment,
+                axes=axes,
+                stack_gap=resolved_stack_gap,
+            )
+            if resolved_post_translation is not None:
+                translation = _compose_translations(
+                    translation,
+                    _make_post_translation(resolved_post_translation),
+                )
+            moved_anchor = translation(moving_anchor)
+            moving_center_after = _part_center(moved_anchor)
+            delta = _translation_delta(moving_center_before, moving_center_after)
+
+            _logger.info(
+                "Placement step: %s aligned to %s via %s; moving_anchor_center=%s; target_anchor_center=%s; moving_part_position=%s; target_part_position=%s; shift=%s",
+                moving_reference_str,
+                target_reference_str,
+                resolved_alignment.name,
+                _format_point(moving_center_before),
+                _format_point(target_center_before),
+                _format_point(moving_part_center_before),
+                _format_point(target_part_center_before),
+                _format_point(delta),
+            )
+
+            placement_state.translation_history.setdefault(
+                moving_assembly_name, []
+            ).append(translation)
+            placement_state.placement_offsets[moving_assembly_name] = (
+                _add_translation_delta(
+                    placement_state.placement_offsets.get(
+                        moving_assembly_name, (0.0, 0.0, 0.0)
+                    ),
+                    delta,
+                )
+            )
+            placement_state.executed_alignment_indices.add(placement_step.index)
+            placement_state.cursor = len(placement_state.executed_alignment_indices)
+            progress = True
+
+        if not progress:
             break
-        if target_assembly_name not in built_results_by_name:
-            break
-
-        _, _, moving_anchor = _resolve_placement_anchor(
-            moving_reference_str,
-            placement_state=placement_state,
-            built_results_by_name=built_results_by_name,
-            repository_dir=repository_dir,
-        )
-        _, _, target_anchor = _resolve_placement_anchor(
-            target_reference_str,
-            placement_state=placement_state,
-            built_results_by_name=built_results_by_name,
-            repository_dir=repository_dir,
-        )
-        _, _, moving_part = _resolve_placement_anchor(
-            moving_assembly_name,
-            placement_state=placement_state,
-            built_results_by_name=built_results_by_name,
-            repository_dir=repository_dir,
-        )
-        _, _, target_part = _resolve_placement_anchor(
-            target_assembly_name,
-            placement_state=placement_state,
-            built_results_by_name=built_results_by_name,
-            repository_dir=repository_dir,
-        )
-
-        resolved_alignment = _resolve_alignment_enum(alignment_spec.get("alignment"))
-        raw_axes = alignment_spec.get("axes")
-        axes = None
-        if raw_axes is not None:
-            resolved_axes = _resolve_inline_value(
-                raw_axes, placement_state.placement_context
-            )
-            if not isinstance(resolved_axes, list):
-                raise BuilderError("placement alignment axes must resolve to a list")
-            axes = [int(axis) for axis in resolved_axes]
-
-        stack_gap = alignment_spec.get("stack_gap", 0)
-        resolved_stack_gap = _resolve_inline_value(
-            stack_gap, placement_state.placement_context
-        )
-        resolved_post_translation = _resolve_post_translation(
-            alignment_spec,
-            placement_state.placement_context,
-        )
-
-        moving_center_before = _part_center(moving_anchor)
-        target_center_before = _part_center(target_anchor)
-        moving_part_center_before = _part_center(moving_part)
-        target_part_center_before = _part_center(target_part)
-
-        translation = _make_placement_translation(
-            moving_anchor,
-            target_anchor,
-            alignment=resolved_alignment,
-            axes=axes,
-            stack_gap=resolved_stack_gap,
-        )
-        if resolved_post_translation is not None:
-            translation = _compose_translations(
-                translation,
-                _make_post_translation(resolved_post_translation),
-            )
-        moved_anchor = translation(moving_anchor)
-        moving_center_after = _part_center(moved_anchor)
-        delta = _translation_delta(moving_center_before, moving_center_after)
-
-        _logger.info(
-            "Placement step: %s aligned to %s via %s; moving_anchor_center=%s; target_anchor_center=%s; moving_part_position=%s; target_part_position=%s; shift=%s",
-            moving_reference_str,
-            target_reference_str,
-            resolved_alignment.name,
-            _format_point(moving_center_before),
-            _format_point(target_center_before),
-            _format_point(moving_part_center_before),
-            _format_point(target_part_center_before),
-            _format_point(delta),
-        )
-
-        placement_state.translation_history.setdefault(moving_assembly_name, []).append(
-            translation
-        )
-        placement_state.placement_offsets[moving_assembly_name] = (
-            _add_translation_delta(
-                placement_state.placement_offsets.get(
-                    moving_assembly_name, (0.0, 0.0, 0.0)
-                ),
-                delta,
-            )
-        )
-        placement_state.cursor += 1
 
     return placement_state
 
@@ -2080,6 +1963,12 @@ def _apply_placement_alignments(
     if not alignments:
         return scene_parts
 
+    graph_model: Optional[builder_graph_model.BuilderGraphModel] = None
+    if config_data is not None and config_data.get("assemblies") is not None:
+        graph_model = builder_graph_model.build_graph_model(
+            _get_assemblies(config_data),
+            config_data,
+        )
     known_assembly_names = _known_assembly_names(config_data, built_results_by_name)
     placement_context = (
         resolve_globals(config_data.get("globals", {})) if config_data else {}
@@ -2094,6 +1983,7 @@ def _apply_placement_alignments(
             config_data,
             known_assembly_names,
             relevant_assemblies,
+            graph_model=graph_model,
         )
     )
 
@@ -2340,14 +2230,20 @@ def build_from_file(
     repository_path.mkdir(parents=True, exist_ok=True)
 
     assemblies = _get_assemblies(config_data)
+    graph_model = builder_graph_model.build_graph_model(assemblies, config_data)
     build_generations = _resolve_build_generations(
-        assemblies, assembly_names, config_data
+        assemblies,
+        assembly_names,
+        config_data,
+        graph_model=graph_model,
     )
 
     results: List[Dict[str, Any]] = []
     built_results_by_name: Dict[str, Dict[str, Any]] = {}
     placement_state = _initialize_placement_execution_state(
-        config_data, built_results_by_name
+        config_data,
+        built_results_by_name,
+        graph_model=graph_model,
     )
     for generation_index, generation_entries in enumerate(build_generations):
         for assembly_index, entry in enumerate(generation_entries):
@@ -2651,12 +2547,17 @@ def run_builder(args: argparse.Namespace) -> int:
     config_file = Path(args.config_file).expanduser().resolve()
     config_data = _load_yaml(config_file)
     assemblies = _get_assemblies(config_data)
-    assemblies_by_name = _assemblies_by_name(assemblies)
+    graph_model = builder_graph_model.build_graph_model(assemblies, config_data)
+    assemblies_by_name = graph_model.assemblies_by_name
 
     requested_assemblies = list(args.assembly or [])
     build_assemblies: Optional[List[str]] = requested_assemblies or None
     if requested_assemblies and getattr(args, "with_dependents", False):
-        build_assemblies = _expand_with_dependents(assemblies, requested_assemblies)
+        build_assemblies = _expand_with_dependents(
+            assemblies,
+            requested_assemblies,
+            graph_model=graph_model,
+        )
 
     production_mode = bool(
         getattr(args, "production", False)
@@ -2682,6 +2583,7 @@ def run_builder(args: argparse.Namespace) -> int:
                 config_data,
                 sorted(assemblies_by_name),
                 set(requested_assemblies) | implicit_scene_dependencies,
+                graph_model=graph_model,
             )
         )
         if implicit_scene_dependencies:
@@ -2716,7 +2618,11 @@ def run_builder(args: argparse.Namespace) -> int:
     scene_assemblies = list(requested_assemblies)
     if getattr(args, "with_dependents", False):
         expanded_scene_set = set(
-            _expand_with_dependents(assemblies, requested_assemblies)
+            _expand_with_dependents(
+                assemblies,
+                requested_assemblies,
+                graph_model=graph_model,
+            )
         )
         scene_assemblies = [
             result["assembly_name"]
