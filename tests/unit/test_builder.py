@@ -31,6 +31,89 @@ def test_resolve_globals_supports_refs_subs_and_exprs():
     }
 
 
+def test_build_from_file_falls_back_to_same_named_globals_for_missing_parameters(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / "fallback_demo_pkg"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "fallback_widget_generator.py",
+        "\n".join(
+            [
+                "def make_widget(*, width, height, label):",
+                "    return f'widget-{width}-{height}-{label}'",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(
+        assemblies_dir / "sample_assembly.yaml",
+        "\n".join(
+            [
+                'ShellforgepyBuilderVersion: "2026-03-27"',
+                "Parameters:",
+                "  width:",
+                "    Type: Float",
+                "  height:",
+                "    Type: Float",
+                "  label:",
+                "    Type: String",
+                "Parts:",
+                "  Sample:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: fallback_demo_pkg.fallback_widget_generator.make_widget",
+                "      Properties:",
+                "        width:",
+                "          $ref: width",
+                "        height:",
+                "          $ref: height",
+                "        label:",
+                "          $ref: label",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "globals:",
+                "  width: 10",
+                "  height: 20",
+                "  label: global-label",
+                "assemblies:",
+                "  - name: sample_assembly",
+                "    parameters:",
+                "      label: explicit-label",
+            ]
+        ),
+    )
+
+    def fake_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+
+    results = builder.build_from_file(config_path)
+
+    monkeypatch.delitem(sys.modules, "fallback_demo_pkg", raising=False)
+    monkeypatch.delitem(
+        sys.modules,
+        "fallback_demo_pkg.fallback_widget_generator",
+        raising=False,
+    )
+
+    assert (
+        Path(results[0]["artifacts"]["leader_step"]).read_text(encoding="utf-8")
+        == "widget-10.0-20.0-explicit-label"
+    )
+
+
 def test_build_from_file_writes_hashed_metadata_and_reuses_cache(monkeypatch, tmp_path):
     project_root = tmp_path / "project"
     src_dir = project_root / "src" / "demo_pkg"

@@ -362,6 +362,8 @@ def _resolve_public_parameters(
             definition = {}
         if parameter_name in resolved_overrides:
             raw_value = resolved_overrides[parameter_name]
+        elif parameter_name in context:
+            raw_value = context[parameter_name]
         elif "Default" in definition:
             raw_value = definition["Default"]
         else:
