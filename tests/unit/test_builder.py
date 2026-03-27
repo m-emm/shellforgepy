@@ -906,6 +906,64 @@ def test_resolve_build_generations_returns_topological_generations():
     ]
 
 
+def test_resolve_build_generations_waits_for_placement_prerequisites_of_injected_parts():
+    generations = builder._resolve_build_generations(
+        [
+            {"name": "printer_frame", "depends_on": []},
+            {"name": "print_bed", "depends_on": []},
+            {"name": "y_axis", "depends_on": ["printer_frame"]},
+            {
+                "name": "print_bed_undercarriage",
+                "depends_on": ["print_bed"],
+            },
+            {
+                "name": "bracket",
+                "depends_on": ["printer_frame", "y_axis"],
+                "inject_parts": {
+                    "frame": {
+                        "assembly": "printer_frame",
+                        "artifact": "assembly",
+                    },
+                    "y_axis": {"assembly": "y_axis", "artifact": "assembly"},
+                },
+            },
+        ],
+        ["bracket"],
+        {
+            "placement": {
+                "alignments": [
+                    {
+                        "part": "print_bed.non_production_parts.foil",
+                        "to": "printer_frame",
+                        "alignment": "TOP",
+                    },
+                    {
+                        "part": "y_axis",
+                        "to": "printer_frame",
+                        "alignment": "CENTER",
+                    },
+                    {
+                        "part": "y_axis.non_production_parts.carriages_fused",
+                        "to": "print_bed_undercarriage",
+                        "alignment": "STACK_BOTTOM",
+                    },
+                    {
+                        "part": "bracket.non_production_parts.mount",
+                        "to": "y_axis.non_production_parts.profile_left",
+                        "alignment": "CENTER",
+                    },
+                ]
+            }
+        },
+    )
+
+    assert [[entry["name"] for entry in generation] for generation in generations] == [
+        ["print_bed", "printer_frame"],
+        ["print_bed_undercarriage", "y_axis"],
+        ["bracket"],
+    ]
+
+
 def test_resolve_process_data_applies_overrides(monkeypatch):
     class ProcessModule:
         PROCESS_DATA = {
@@ -1163,6 +1221,98 @@ def test_apply_placement_alignments_moves_only_the_owning_assembly(
     ]
 
 
+def test_apply_placement_alignments_supports_post_translation(monkeypatch, tmp_path):
+    moving_leader = tmp_path / "moving_leader.step"
+    moving_leader.write_text("moving-leader", encoding="utf-8")
+    moving_anchor = tmp_path / "moving_anchor.step"
+    moving_anchor.write_text("moving-anchor", encoding="utf-8")
+    target_leader = tmp_path / "target_leader.step"
+    target_leader.write_text("target-leader", encoding="utf-8")
+    target_anchor = tmp_path / "target_anchor.step"
+    target_anchor.write_text("target-anchor", encoding="utf-8")
+
+    scene_parts = [
+        {"assembly_name": "moving", "part": "scene-moving"},
+        {"assembly_name": "target", "part": "scene-target"},
+    ]
+    built_results_by_name = {
+        "moving": {
+            "assembly_name": "moving",
+            "artifacts": {
+                "leader_step": str(moving_leader),
+                "non_production_parts": [
+                    {"name": "anchor", "path": str(moving_anchor)},
+                ],
+            },
+        },
+        "target": {
+            "assembly_name": "target",
+            "artifacts": {
+                "leader_step": str(target_leader),
+                "non_production_parts": [
+                    {"name": "anchor", "path": str(target_anchor)},
+                ],
+            },
+        },
+    }
+
+    monkeypatch.setattr(
+        builder,
+        "_import_dependency_part",
+        lambda path: Path(path).read_text(encoding="utf-8"),
+    )
+    monkeypatch.setattr(
+        builder,
+        "_part_center",
+        lambda part: {
+            "moving-anchor": (1.0, 2.0, 3.0),
+            "target-anchor": (10.0, 20.0, 30.0),
+            "moving-leader": (4.0, 5.0, 6.0),
+            "target-leader": (40.0, 50.0, 60.0),
+            "moving-anchor|ALIGN|POST": (11.0, 20.0, 37.0),
+        }[part],
+    )
+
+    monkeypatch.setattr(
+        builder,
+        "_make_placement_translation",
+        lambda moving_anchor, target_anchor, *, alignment, axes=None, stack_gap=0: (
+            lambda part: f"{part}|ALIGN"
+        ),
+    )
+    captured_post_translations = []
+    monkeypatch.setattr(
+        builder,
+        "_make_post_translation",
+        lambda delta: captured_post_translations.append(delta)
+        or (lambda part: f"{part}|POST"),
+    )
+
+    placed_parts = builder._apply_placement_alignments(
+        scene_parts,
+        built_results_by_name=built_results_by_name,
+        repository_dir=tmp_path,
+        config_data={
+            "globals": {"bed_gap": 7},
+            "assemblies": [{"name": "moving"}, {"name": "target"}],
+            "placement": {
+                "alignments": [
+                    {
+                        "part": "moving.non_production_parts.anchor",
+                        "to": "target.non_production_parts.anchor",
+                        "alignment": "TOP",
+                        "post_translation": [1, 0, {"$ref": "bed_gap"}],
+                    }
+                ]
+            },
+        },
+    )
+
+    assert captured_post_translations == [(1.0, 0.0, 7.0)]
+    assert placed_parts[0]["part"] == "scene-moving|ALIGN|POST"
+    assert placed_parts[1]["part"] == "scene-target"
+
+
 def test_advance_placement_execution_stops_until_missing_assembly_is_built(
     monkeypatch, tmp_path
 ):
@@ -1256,6 +1406,86 @@ def test_advance_placement_execution_stops_until_missing_assembly_is_built(
         "profile_b": (-10.0, 0.0, 0.0),
         "profile_c": (-20.0, 0.0, 0.0),
     }
+
+
+def test_advance_placement_execution_supports_post_translation(monkeypatch, tmp_path):
+    profile_a_leader = tmp_path / "profile_a.step"
+    profile_a_leader.write_text("profile-a", encoding="utf-8")
+    profile_b_leader = tmp_path / "profile_b.step"
+    profile_b_leader.write_text("profile-b", encoding="utf-8")
+
+    built_results_by_name = {
+        "profile_a": {
+            "assembly_name": "profile_a",
+            "artifacts": {"leader_step": str(profile_a_leader)},
+        },
+        "profile_b": {
+            "assembly_name": "profile_b",
+            "artifacts": {"leader_step": str(profile_b_leader)},
+        },
+    }
+    config_data = {
+        "globals": {"gap": 5},
+        "assemblies": [
+            {"name": "profile_a"},
+            {"name": "profile_b"},
+        ],
+        "placement": {
+            "alignments": [
+                {
+                    "part": "profile_b",
+                    "to": "profile_a",
+                    "alignment": "CENTER",
+                    "post_translation": [0, {"$ref": "gap"}, 0],
+                }
+            ]
+        },
+    }
+
+    monkeypatch.setattr(
+        builder,
+        "_import_dependency_part",
+        lambda path: Path(path).read_text(encoding="utf-8"),
+    )
+    monkeypatch.setattr(
+        builder,
+        "_part_center",
+        lambda part: {
+            "profile-a": (0.0, 0.0, 0.0),
+            "profile-b": (10.0, 0.0, 0.0),
+            "profile-b|ALIGN|POST": (0.0, 5.0, 0.0),
+        }[part],
+    )
+    monkeypatch.setattr(
+        builder,
+        "_make_placement_translation",
+        lambda moving_anchor, target_anchor, *, alignment, axes=None, stack_gap=0: (
+            lambda part: f"{part}|ALIGN"
+        ),
+    )
+    captured_post_translations = []
+    monkeypatch.setattr(
+        builder,
+        "_make_post_translation",
+        lambda delta: captured_post_translations.append(delta)
+        or (lambda part: f"{part}|POST"),
+    )
+
+    placement_state = builder._initialize_placement_execution_state(
+        config_data, built_results_by_name
+    )
+    placement_state = builder._advance_placement_execution(
+        placement_state,
+        built_results_by_name=built_results_by_name,
+        repository_dir=tmp_path,
+    )
+
+    assert captured_post_translations == [(0.0, 5.0, 0.0)]
+    assert placement_state.cursor == 1
+    assert placement_state.placement_offsets == {"profile_b": (-10.0, 5.0, 0.0)}
+    assert placement_state.translation_history["profile_b"][0]("profile-b") == (
+        "profile-b|ALIGN|POST"
+    )
 
 
 def test_build_from_file_injects_dependencies_after_eager_placement(
@@ -1420,6 +1650,223 @@ def test_build_from_file_injects_dependencies_after_eager_placement(
             "source_placement_offset": [-10.0, 0.0, 0.0],
         },
     ]
+
+
+def test_build_from_file_delays_injected_dependency_consumer_until_placement_prefix_is_ready(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / "demo_pkg"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "placement_generators.py",
+        "\n".join(
+            [
+                "def make_profile(*, label):",
+                "    return label",
+                "def make_bracket(*, y_axis):",
+                "    return f'bracket:{y_axis}'",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(
+        assemblies_dir / "printer_frame.yaml",
+        "\n".join(
+            [
+                "Parameters:",
+                "  label:",
+                "    Type: String",
+                "Parts:",
+                "  PrinterFrame:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.placement_generators.make_profile",
+                "      Properties:",
+                "        label:",
+                "          $ref: label",
+            ]
+        ),
+    )
+    _write_file(
+        assemblies_dir / "print_bed.yaml",
+        "\n".join(
+            [
+                "Parameters:",
+                "  label:",
+                "    Type: String",
+                "Parts:",
+                "  PrintBed:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.placement_generators.make_profile",
+                "      Properties:",
+                "        label:",
+                "          $ref: label",
+            ]
+        ),
+    )
+    _write_file(
+        assemblies_dir / "print_bed_undercarriage.yaml",
+        "\n".join(
+            [
+                "Parameters:",
+                "  label:",
+                "    Type: String",
+                "Parts:",
+                "  PrintBedUndercarriage:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.placement_generators.make_profile",
+                "      Properties:",
+                "        label:",
+                "          $ref: label",
+            ]
+        ),
+    )
+    _write_file(
+        assemblies_dir / "y_axis.yaml",
+        "\n".join(
+            [
+                "Parameters:",
+                "  label:",
+                "    Type: String",
+                "Parts:",
+                "  YAxis:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.placement_generators.make_profile",
+                "      Properties:",
+                "        label:",
+                "          $ref: label",
+            ]
+        ),
+    )
+    _write_file(
+        assemblies_dir / "bracket.yaml",
+        "\n".join(
+            [
+                "Parts:",
+                "  Bracket:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.placement_generators.make_bracket",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: printer_frame",
+                "    parameters:",
+                "      label: printer-frame",
+                "  - name: print_bed",
+                "    parameters:",
+                "      label: print-bed",
+                "  - name: y_axis",
+                "    depends_on:",
+                "      - printer_frame",
+                "    parameters:",
+                "      label: y-axis",
+                "  - name: print_bed_undercarriage",
+                "    depends_on:",
+                "      - print_bed",
+                "    parameters:",
+                "      label: print-bed-undercarriage",
+                "  - name: bracket",
+                "    depends_on:",
+                "      - printer_frame",
+                "      - y_axis",
+                "    inject_parts:",
+                "      y_axis:",
+                "        assembly: y_axis",
+                "        artifact: leader",
+                "placement:",
+                "  alignments:",
+                "    - part: print_bed",
+                "      to: printer_frame",
+                "      alignment: TOP",
+                "    - part: y_axis",
+                "      to: printer_frame",
+                "      alignment: CENTER",
+                "    - part: y_axis",
+                "      to: print_bed_undercarriage",
+                "      alignment: STACK_BOTTOM",
+                "    - part: bracket",
+                "      to: y_axis",
+                "      alignment: CENTER",
+            ]
+        ),
+    )
+
+    def fake_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+    monkeypatch.setattr(
+        builder,
+        "_import_dependency_part",
+        lambda path: Path(path).read_text(encoding="utf-8"),
+    )
+    monkeypatch.setattr(
+        builder,
+        "_part_center",
+        lambda part: {
+            "printer-frame": (0.0, 0.0, 0.0),
+            "print-bed": (5.0, 0.0, 0.0),
+            "print-bed|TOP:print-bed->printer-frame": (0.0, 0.0, 10.0),
+            "print-bed-undercarriage": (20.0, 0.0, 0.0),
+            "y-axis": (10.0, 0.0, 0.0),
+            "y-axis|CENTER:y-axis->printer-frame": (0.0, 0.0, 0.0),
+            "y-axis|CENTER:y-axis->printer-frame|STACK_BOTTOM:y-axis|CENTER:y-axis->printer-frame->print-bed-undercarriage": (
+                20.0,
+                0.0,
+                0.0,
+            ),
+            "bracket:y-axis|CENTER:y-axis->printer-frame|STACK_BOTTOM:y-axis|CENTER:y-axis->printer-frame->print-bed-undercarriage": (
+                30.0,
+                0.0,
+                0.0,
+            ),
+        }[part],
+    )
+
+    def fake_make_translation(
+        moving_anchor, target_anchor, *, alignment, axes=None, stack_gap=0
+    ):
+        if isinstance(moving_anchor, str) and moving_anchor.startswith("bracket:"):
+            return lambda part: part
+        return lambda part: f"{part}|{alignment.name}:{moving_anchor}->{target_anchor}"
+
+    monkeypatch.setattr(
+        builder,
+        "_make_placement_translation",
+        fake_make_translation,
+    )
+
+    monkeypatch.delitem(sys.modules, "demo_pkg", raising=False)
+    monkeypatch.delitem(sys.modules, "demo_pkg.placement_generators", raising=False)
+
+    results = builder.build_from_file(config_path)
+
+    assert [result["assembly_name"] for result in results] == [
+        "print_bed",
+        "printer_frame",
+        "print_bed_undercarriage",
+        "y_axis",
+        "bracket",
+    ]
+    assert Path(results[-1]["artifacts"]["leader_step"]).read_text(
+        encoding="utf-8"
+    ) == (
+        "bracket:y-axis|CENTER:y-axis->printer-frame|STACK_BOTTOM:y-axis|CENTER:y-axis->printer-frame->print-bed-undercarriage"
+    )
 
 
 def test_resolve_export_options_merges_top_level_builder_defaults():

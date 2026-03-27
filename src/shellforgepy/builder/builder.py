@@ -401,18 +401,98 @@ def _dependency_names(entry: Mapping[str, Any]) -> List[str]:
     return [str(item) for item in dependencies]
 
 
+def _placement_build_dependencies(
+    assemblies: Sequence[Mapping[str, Any]],
+    config_data: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, List[str]]:
+    """Derive conservative build-order edges from the global placement script.
+
+    The builder does not use a second imperative scheduler that reorders builds
+    outside the dependency graph. Instead, it augments the explicit
+    ``depends_on`` graph with implicit edges inferred from the ordered placement
+    prefix that must have executed before a consumer assembly can safely build
+    against injected upstream geometry.
+
+    Rule:
+    - inspect the global placement script in order
+    - for each assembly that injects upstream assemblies, find the last
+      placement step before that assembly's own first moving step that moves any
+      injected assembly
+    - require the consumer assembly to wait for every assembly referenced in
+      that prefix
+
+    This is intentionally conservative. It treats the placement prefix as a
+    whole-ordering requirement and does not try to prove that some apparently
+    cyclic arrangements would still be solvable on selected axes only.
+    """
+    by_name = _assemblies_by_name(assemblies)
+    alignments = _placement_alignments(config_data)
+    if not alignments:
+        return {name: [] for name in by_name}
+
+    known_assembly_names = sorted(by_name)
+    alignment_references: List[tuple[str, str]] = []
+    cumulative_prefix_dependencies: List[set[str]] = []
+    first_moving_alignment_index: Dict[str, int] = {}
+    referenced_so_far: set[str] = set()
+
+    for index, alignment in enumerate(alignments):
+        moving_reference = alignment.get("part")
+        target_reference = alignment.get("to")
+        if not moving_reference or not target_reference:
+            raise BuilderError("Each placement alignment requires 'part' and 'to'")
+
+        moving_assembly_name, _ = _parse_part_reference(
+            str(moving_reference), known_assembly_names
+        )
+        target_assembly_name, _ = _parse_part_reference(
+            str(target_reference), known_assembly_names
+        )
+
+        alignment_references.append((moving_assembly_name, target_assembly_name))
+        referenced_so_far = set(referenced_so_far)
+        referenced_so_far.add(moving_assembly_name)
+        referenced_so_far.add(target_assembly_name)
+        cumulative_prefix_dependencies.append(referenced_so_far)
+        first_moving_alignment_index.setdefault(moving_assembly_name, index)
+
+    implicit_dependencies: Dict[str, List[str]] = {name: [] for name in by_name}
+    for assembly_name, entry in by_name.items():
+        injected_assemblies = {
+            spec["assembly"]
+            for spec in _resolve_injected_parts_config(entry).values()
+            if spec.get("assembly")
+        }
+        if not injected_assemblies:
+            continue
+
+        boundary_index = first_moving_alignment_index.get(
+            assembly_name, len(alignment_references)
+        )
+        last_relevant_index = -1
+        for index, (moving_assembly_name, _) in enumerate(alignment_references):
+            if index >= boundary_index:
+                break
+            if moving_assembly_name in injected_assemblies:
+                last_relevant_index = index
+
+        if last_relevant_index < 0:
+            continue
+
+        required = set(cumulative_prefix_dependencies[last_relevant_index])
+        required.discard(assembly_name)
+        implicit_dependencies[assembly_name] = sorted(required)
+
+    return implicit_dependencies
+
+
 def _resolve_build_generations(
     assemblies: Sequence[Mapping[str, Any]],
     selected_names: Optional[Iterable[str]] = None,
+    config_data: Optional[Mapping[str, Any]] = None,
 ) -> List[List[Dict[str, Any]]]:
-    by_name: Dict[str, Dict[str, Any]] = {}
-    for entry in assemblies:
-        name = entry.get("name")
-        if not name:
-            raise BuilderError("Each assembly entry must define a name")
-        if name in by_name:
-            raise BuilderError(f"Duplicate assembly name '{name}'")
-        by_name[str(name)] = dict(entry)
+    by_name = _assemblies_by_name(assemblies)
+    placement_dependencies = _placement_build_dependencies(assemblies, config_data)
 
     requested = list(selected_names or by_name.keys())
     missing = sorted(name for name in requested if name not in by_name)
@@ -426,7 +506,10 @@ def _resolve_build_generations(
             return
         required_names.add(name)
         entry = by_name[name]
-        for dependency in _dependency_names(entry):
+        dependencies = list(_dependency_names(entry)) + placement_dependencies.get(
+            name, []
+        )
+        for dependency in dependencies:
             if dependency not in by_name:
                 raise BuilderError(
                     f"Assembly '{name}' depends on unknown assembly '{dependency}'"
@@ -441,7 +524,10 @@ def _resolve_build_generations(
         dependency_graph.add_node(name)
 
     for name in sorted(required_names):
-        for dependency in _dependency_names(by_name[name]):
+        dependencies = list(
+            _dependency_names(by_name[name])
+        ) + placement_dependencies.get(name, [])
+        for dependency in dependencies:
             dependency_graph.add_edge(dependency, name)
 
     try:
@@ -1449,6 +1535,47 @@ def _make_placement_translation(
     )
 
 
+def _resolve_post_translation(
+    alignment_spec: Mapping[str, Any],
+    placement_context: Mapping[str, Any],
+) -> Optional[tuple[float, float, float]]:
+    raw_post_translation = alignment_spec.get("post_translation")
+    if raw_post_translation is None:
+        return None
+
+    resolved_post_translation = _resolve_inline_value(
+        raw_post_translation,
+        placement_context,
+    )
+    if not isinstance(resolved_post_translation, (list, tuple)):
+        raise BuilderError(
+            "placement alignment post_translation must resolve to a 3-item list"
+        )
+    if len(resolved_post_translation) != 3:
+        raise BuilderError(
+            "placement alignment post_translation must resolve to exactly 3 values"
+        )
+    return tuple(float(value) for value in resolved_post_translation)
+
+
+def _make_post_translation(delta: Sequence[float]) -> Callable[[Any], Any]:
+    from shellforgepy.simple import translate
+
+    return translate(*delta)
+
+
+def _compose_translations(
+    *translations: Callable[[Any], Any],
+) -> Callable[[Any], Any]:
+    def apply(part: Any) -> Any:
+        transformed = part
+        for translation in translations:
+            transformed = translation(transformed)
+        return transformed
+
+    return apply
+
+
 def _placement_reference_names(
     config_data: Optional[Mapping[str, Any]],
     built_results_by_name: Mapping[str, Dict[str, Any]],
@@ -1833,6 +1960,10 @@ def _advance_placement_execution(
         resolved_stack_gap = _resolve_inline_value(
             stack_gap, placement_state.placement_context
         )
+        resolved_post_translation = _resolve_post_translation(
+            alignment_spec,
+            placement_state.placement_context,
+        )
 
         moving_center_before = _part_center(moving_anchor)
         target_center_before = _part_center(target_anchor)
@@ -1846,6 +1977,11 @@ def _advance_placement_execution(
             axes=axes,
             stack_gap=resolved_stack_gap,
         )
+        if resolved_post_translation is not None:
+            translation = _compose_translations(
+                translation,
+                _make_post_translation(resolved_post_translation),
+            )
         moved_anchor = translation(moving_anchor)
         moving_center_after = _part_center(moved_anchor)
         delta = _translation_delta(moving_center_before, moving_center_after)
@@ -1953,6 +2089,10 @@ def _apply_placement_alignments(
 
         stack_gap = alignment_spec.get("stack_gap", 0)
         resolved_stack_gap = _resolve_inline_value(stack_gap, placement_context)
+        resolved_post_translation = _resolve_post_translation(
+            alignment_spec,
+            placement_context,
+        )
 
         moving_center_before = _part_center(moving_anchor)
         target_center_before = _part_center(target_anchor)
@@ -1968,6 +2108,11 @@ def _apply_placement_alignments(
             axes=axes,
             stack_gap=resolved_stack_gap,
         )
+        if resolved_post_translation is not None:
+            translation = _compose_translations(
+                translation,
+                _make_post_translation(resolved_post_translation),
+            )
 
         moved_anchor = translation(moving_anchor)
         moving_center_after = _part_center(moved_anchor)
@@ -2119,7 +2264,9 @@ def build_from_file(
     repository_path.mkdir(parents=True, exist_ok=True)
 
     assemblies = _get_assemblies(config_data)
-    build_generations = _resolve_build_generations(assemblies, assembly_names)
+    build_generations = _resolve_build_generations(
+        assemblies, assembly_names, config_data
+    )
 
     results: List[Dict[str, Any]] = []
     built_results_by_name: Dict[str, Dict[str, Any]] = {}
