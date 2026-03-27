@@ -342,6 +342,32 @@ def test_arrange_and_export_obj_only_skips_fusion(monkeypatch):
 
 
 @pytest.mark.skipif(not freecad_available, reason="FreeCAD not available")
+def test_arrange_and_export_step_respects_export_individual_parts():
+    """STEP export should skip per-part files when export_individual_parts=False."""
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(5, 5, 5)
+    parts_list = [{"name": "box1", "part": box1}, {"name": "box2", "part": box2}]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        result_path = arrange_and_export_parts(
+            parts_list,
+            prod_gap=2.0,
+            bed_width=50.0,
+            script_file="test_step_only.py",
+            export_directory=temp_dir,
+            export_stl=False,
+            export_step=True,
+            export_obj=False,
+            export_individual_parts=False,
+        )
+
+        assert result_path.exists()
+        assert result_path.name == "test_step_only.step"
+        assert not (Path(temp_dir) / "test_step_only_box1.step").exists()
+        assert not (Path(temp_dir) / "test_step_only_box2.step").exists()
+
+
+@pytest.mark.skipif(not freecad_available, reason="FreeCAD not available")
 def test_arrange_and_export_skips_process_data_without_stl_in_non_prod():
     """Non-production OBJ-only runs may carry process_data without writing it."""
     box = create_box(10, 10, 10)

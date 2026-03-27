@@ -402,11 +402,16 @@ def arrange_and_export_parts(
                     name,
                 )
 
-            if export_step:
+            if export_step and export_individual_parts:
                 step_filename = export_dir / f"{base_name}_{_safe_name(name)}.step"
                 _logger.info("Exporting %s to %s", name, step_filename)
                 export_solid_to_step(arranged_shape, step_filename)
                 _logger.info("Exported %s to %s", name, step_filename)
+            elif export_step:
+                _logger.info(
+                    "Skipping individual STEP export for %s due to export_individual_parts=False",
+                    name,
+                )
 
             if manifest_data is not None and export_stl and export_individual_parts:
                 manifest_parts = manifest_data.setdefault("part_files", [])

@@ -14,7 +14,7 @@ import re
 import sys
 from contextlib import contextmanager
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
@@ -87,6 +87,21 @@ class _DependencyInjection:
     source_version_inputs: Dict[str, Any]
     step_path: Path
     part: Any
+    placement_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+
+@dataclass
+class _PlacementExecutionState:
+    alignments: List[Dict[str, Any]]
+    known_assembly_names: List[str]
+    placement_context: Dict[str, Any]
+    cursor: int = 0
+    translation_history: Dict[str, List[Callable[[Any], Any]]] = field(
+        default_factory=dict
+    )
+    placement_offsets: Dict[str, tuple[float, float, float]] = field(
+        default_factory=dict
+    )
 
 
 def _utc_now_iso() -> str:
@@ -850,6 +865,51 @@ def _import_dependency_part(step_path: Path) -> Any:
     return import_solid_from_step(str(step_path))
 
 
+def _import_dependency_assembly(metadata: Mapping[str, Any]) -> Any:
+    from shellforgepy.construct.leader_followers_cutters_part import (
+        LeaderFollowersCuttersPart,
+    )
+
+    artifacts = metadata.get("artifacts", {})
+    leader_path = artifacts.get("leader_step")
+    if not leader_path:
+        raise BuilderError(
+            f"Dependency assembly '{metadata.get('assembly_name')}' has no leader artifact"
+        )
+
+    assembly = LeaderFollowersCuttersPart(
+        _import_dependency_part(Path(leader_path).expanduser().resolve())
+    )
+
+    for item in artifacts.get("followers", []):
+        follower = _import_dependency_part(Path(item["path"]).expanduser().resolve())
+        name = item.get("name")
+        if name:
+            assembly.add_named_follower(follower, str(name))
+        else:
+            assembly.followers.append(follower)
+
+    for item in artifacts.get("cutters", []):
+        cutter = _import_dependency_part(Path(item["path"]).expanduser().resolve())
+        name = item.get("name")
+        if name:
+            assembly.add_named_cutter(cutter, str(name))
+        else:
+            assembly.cutters.append(cutter)
+
+    for item in artifacts.get("non_production_parts", []):
+        non_production_part = _import_dependency_part(
+            Path(item["path"]).expanduser().resolve()
+        )
+        name = item.get("name")
+        if name:
+            assembly.add_named_non_production_part(non_production_part, str(name))
+        else:
+            assembly.non_production_parts.append(non_production_part)
+
+    return assembly
+
+
 def _resolve_injected_parts_config(
     entry: Mapping[str, Any],
 ) -> Dict[str, Dict[str, str]]:
@@ -970,6 +1030,7 @@ def _resolve_dependency_injections(
     entry: Mapping[str, Any],
     built_results_by_name: Mapping[str, Dict[str, Any]],
     repository_dir: Path,
+    placement_state: Optional[_PlacementExecutionState] = None,
 ) -> List[_DependencyInjection]:
     injections: List[_DependencyInjection] = []
     for kwarg_name, spec in _resolve_injected_parts_config(entry).items():
@@ -979,7 +1040,17 @@ def _resolve_dependency_injections(
             built_results_by_name,
             repository_dir,
         )
-        step_path = _dependency_step_path(metadata, spec["artifact"])
+        if spec["artifact"] == "assembly":
+            step_path = (
+                Path(metadata["artifacts"]["leader_step"]).expanduser().resolve()
+            )
+            imported_part = _import_dependency_assembly(metadata)
+        else:
+            step_path = _dependency_step_path(metadata, spec["artifact"])
+            imported_part = _import_dependency_part(step_path)
+        imported_part = _apply_placement_state_to_part(
+            imported_part, assembly_name, placement_state
+        )
         injections.append(
             _DependencyInjection(
                 kwarg_name=kwarg_name,
@@ -988,7 +1059,10 @@ def _resolve_dependency_injections(
                 source_parameter_hash=str(metadata["parameter_hash"]),
                 source_version_inputs=dict(metadata.get("version_inputs", {})),
                 step_path=step_path,
-                part=_import_dependency_part(step_path),
+                part=imported_part,
+                placement_offset=_placement_offset_for_assembly(
+                    assembly_name, placement_state
+                ),
             )
         )
     return injections
@@ -1000,33 +1074,36 @@ def _hash_with_dependencies(
     generator_context: Optional[Mapping[str, Any]] = None,
     version_inputs: Optional[Mapping[str, Any]] = None,
 ) -> str:
-    hash_inputs = dict(generator_kwargs)
+    def normalize_hash_value(value: Any) -> Any:
+        if isinstance(value, (int, float, str, bool)):
+            return value
+        return json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+
+    hash_inputs = {
+        key: normalize_hash_value(value) for key, value in generator_kwargs.items()
+    }
     if generator_context:
         for key, value in generator_context.items():
-            hash_key = f"__context__{key}"
-            if isinstance(value, (int, float, str, bool)):
-                hash_inputs[hash_key] = value
-            else:
-                hash_inputs[hash_key] = json.dumps(
-                    value,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    default=str,
-                )
+            hash_inputs[f"__context__{key}"] = normalize_hash_value(value)
     if version_inputs:
         for key, value in version_inputs.items():
             hash_inputs[f"__version__{key}"] = value
     for injection in injections:
         hash_inputs[f"__dependency__{injection.kwarg_name}"] = (
-            f"{injection.assembly_name}:{injection.artifact}:{injection.source_parameter_hash}"
+            f"{injection.assembly_name}:{injection.artifact}:{injection.source_parameter_hash}:{json.dumps(injection.placement_offset)}"
         )
     return PartParameters(hash_inputs).parameters_hash()
 
 
 def _metadata_resolution_context(metadata: Mapping[str, Any]) -> Dict[str, Any]:
-    context = dict(metadata.get("public_parameters", {}))
-    context.update(metadata.get("generator_kwargs", {}))
-    context.update(metadata.get("generator_context", {}))
+    context = dict(metadata.get("public_parameters") or {})
+    context.update(metadata.get("generator_kwargs") or {})
+    context.update(metadata.get("generator_context") or {})
     return context
 
 
@@ -1286,10 +1363,13 @@ def _filter_artifact_entries(
     return filtered
 
 
-def _placement_section(resource_data: Mapping[str, Any]) -> Dict[str, Any]:
-    placement = resource_data.get("placement")
+def _placement_section(config_data: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    if not config_data:
+        return {}
+
+    placement = config_data.get("placement")
     if placement is None:
-        placement = resource_data.get("Placement", {})
+        placement = config_data.get("Placement", {})
     if placement is None:
         return {}
     if not isinstance(placement, Mapping):
@@ -1297,8 +1377,10 @@ def _placement_section(resource_data: Mapping[str, Any]) -> Dict[str, Any]:
     return dict(placement)
 
 
-def _placement_alignments(resource_data: Mapping[str, Any]) -> List[Dict[str, Any]]:
-    placement = _placement_section(resource_data)
+def _placement_alignments(
+    config_data: Optional[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    placement = _placement_section(config_data)
     alignments = placement.get("alignments", [])
     if alignments is None:
         return []
@@ -1368,13 +1450,12 @@ def _make_placement_translation(
 
 
 def _placement_reference_names(
-    resource_data: Mapping[str, Any],
     config_data: Optional[Mapping[str, Any]],
     built_results_by_name: Mapping[str, Dict[str, Any]],
 ) -> List[str]:
     known_assembly_names = _known_assembly_names(config_data, built_results_by_name)
     referenced: set[str] = set()
-    for alignment in _placement_alignments(resource_data):
+    for alignment in _placement_alignments(config_data):
         moving_reference = alignment.get("part")
         target_reference = alignment.get("to")
         if not moving_reference or not target_reference:
@@ -1586,16 +1667,225 @@ def _apply_translation_to_scene_parts(
         item["part"] = translation(item["part"])
 
 
+def _part_center(part: Any) -> tuple[float, float, float]:
+    from shellforgepy.simple import get_bounding_box_center
+
+    center = get_bounding_box_center(part)
+    return tuple(float(value) for value in center)
+
+
+def _format_point(point: Sequence[float]) -> str:
+    from shellforgepy.simple import point_string
+
+    return point_string(point)
+
+
+def _translation_delta(
+    before_center: Sequence[float], after_center: Sequence[float]
+) -> tuple[float, float, float]:
+    return tuple(
+        float(after_value - before_value)
+        for before_value, after_value in zip(before_center, after_center)
+    )
+
+
+def _add_translation_delta(
+    existing: Sequence[float], delta: Sequence[float]
+) -> tuple[float, float, float]:
+    return tuple(
+        float(existing_value + delta_value)
+        for existing_value, delta_value in zip(existing, delta)
+    )
+
+
+def _initialize_placement_execution_state(
+    config_data: Optional[Mapping[str, Any]],
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+) -> _PlacementExecutionState:
+    return _PlacementExecutionState(
+        alignments=_placement_alignments(config_data),
+        known_assembly_names=_known_assembly_names(config_data, built_results_by_name),
+        placement_context=(
+            resolve_globals(config_data.get("globals", {})) if config_data else {}
+        ),
+    )
+
+
+def _apply_translation_sequence(
+    part: Any, translations: Sequence[Callable[[Any], Any]]
+) -> Any:
+    transformed = part
+    for translation in translations:
+        transformed = translation(transformed)
+    return transformed
+
+
+def _apply_placement_state_to_part(
+    part: Any,
+    assembly_name: str,
+    placement_state: Optional[_PlacementExecutionState],
+) -> Any:
+    if placement_state is None:
+        return part
+    translations = placement_state.translation_history.get(assembly_name, [])
+    if not translations:
+        return part
+    return _apply_translation_sequence(part, translations)
+
+
+def _placement_offset_for_assembly(
+    assembly_name: str,
+    placement_state: Optional[_PlacementExecutionState],
+) -> tuple[float, float, float]:
+    if placement_state is None:
+        return (0.0, 0.0, 0.0)
+    return placement_state.placement_offsets.get(assembly_name, (0.0, 0.0, 0.0))
+
+
+def _resolve_placement_anchor(
+    reference: str,
+    *,
+    placement_state: _PlacementExecutionState,
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+    repository_dir: Path,
+) -> tuple[str, str, Any]:
+    assembly_name, selector = _parse_part_reference(
+        reference, placement_state.known_assembly_names
+    )
+    metadata = _dependency_metadata_for_assembly(
+        assembly_name,
+        built_results_by_name,
+        repository_dir,
+    )
+    entries = _artifact_entries_for_selector(metadata, selector)
+    if len(entries) != 1:
+        raise BuilderError(
+            f"Placement reference '{reference}' did not resolve to exactly one artifact"
+        )
+    anchor = _import_dependency_part(Path(entries[0]["path"]).expanduser().resolve())
+    anchor = _apply_placement_state_to_part(anchor, assembly_name, placement_state)
+    return assembly_name, selector, anchor
+
+
+def _advance_placement_execution(
+    placement_state: _PlacementExecutionState,
+    *,
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+    repository_dir: Path,
+) -> _PlacementExecutionState:
+    while placement_state.cursor < len(placement_state.alignments):
+        alignment_spec = placement_state.alignments[placement_state.cursor]
+        moving_reference = alignment_spec.get("part")
+        target_reference = alignment_spec.get("to")
+        if not moving_reference or not target_reference:
+            raise BuilderError("Each placement alignment requires 'part' and 'to'")
+
+        moving_reference_str = str(moving_reference)
+        target_reference_str = str(target_reference)
+        moving_assembly_name, _ = _parse_part_reference(
+            moving_reference_str, placement_state.known_assembly_names
+        )
+        target_assembly_name, _ = _parse_part_reference(
+            target_reference_str, placement_state.known_assembly_names
+        )
+        if moving_assembly_name not in built_results_by_name:
+            break
+        if target_assembly_name not in built_results_by_name:
+            break
+
+        _, _, moving_anchor = _resolve_placement_anchor(
+            moving_reference_str,
+            placement_state=placement_state,
+            built_results_by_name=built_results_by_name,
+            repository_dir=repository_dir,
+        )
+        _, _, target_anchor = _resolve_placement_anchor(
+            target_reference_str,
+            placement_state=placement_state,
+            built_results_by_name=built_results_by_name,
+            repository_dir=repository_dir,
+        )
+        _, _, moving_part = _resolve_placement_anchor(
+            moving_assembly_name,
+            placement_state=placement_state,
+            built_results_by_name=built_results_by_name,
+            repository_dir=repository_dir,
+        )
+        _, _, target_part = _resolve_placement_anchor(
+            target_assembly_name,
+            placement_state=placement_state,
+            built_results_by_name=built_results_by_name,
+            repository_dir=repository_dir,
+        )
+
+        resolved_alignment = _resolve_alignment_enum(alignment_spec.get("alignment"))
+        raw_axes = alignment_spec.get("axes")
+        axes = None
+        if raw_axes is not None:
+            resolved_axes = _resolve_inline_value(
+                raw_axes, placement_state.placement_context
+            )
+            if not isinstance(resolved_axes, list):
+                raise BuilderError("placement alignment axes must resolve to a list")
+            axes = [int(axis) for axis in resolved_axes]
+
+        stack_gap = alignment_spec.get("stack_gap", 0)
+        resolved_stack_gap = _resolve_inline_value(
+            stack_gap, placement_state.placement_context
+        )
+
+        moving_center_before = _part_center(moving_anchor)
+        target_center_before = _part_center(target_anchor)
+        moving_part_center_before = _part_center(moving_part)
+        target_part_center_before = _part_center(target_part)
+
+        translation = _make_placement_translation(
+            moving_anchor,
+            target_anchor,
+            alignment=resolved_alignment,
+            axes=axes,
+            stack_gap=resolved_stack_gap,
+        )
+        moved_anchor = translation(moving_anchor)
+        moving_center_after = _part_center(moved_anchor)
+        delta = _translation_delta(moving_center_before, moving_center_after)
+
+        _logger.info(
+            "Placement step: %s aligned to %s via %s; moving_anchor_center=%s; target_anchor_center=%s; moving_part_position=%s; target_part_position=%s; shift=%s",
+            moving_reference_str,
+            target_reference_str,
+            resolved_alignment.name,
+            _format_point(moving_center_before),
+            _format_point(target_center_before),
+            _format_point(moving_part_center_before),
+            _format_point(target_part_center_before),
+            _format_point(delta),
+        )
+
+        placement_state.translation_history.setdefault(moving_assembly_name, []).append(
+            translation
+        )
+        placement_state.placement_offsets[moving_assembly_name] = (
+            _add_translation_delta(
+                placement_state.placement_offsets.get(
+                    moving_assembly_name, (0.0, 0.0, 0.0)
+                ),
+                delta,
+            )
+        )
+        placement_state.cursor += 1
+
+    return placement_state
+
+
 def _apply_placement_alignments(
     scene_parts: List[Dict[str, Any]],
     *,
-    selected_metadata: Mapping[str, Any],
-    resource_data: Mapping[str, Any],
     built_results_by_name: Mapping[str, Dict[str, Any]],
     repository_dir: Path,
     config_data: Optional[Mapping[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    alignments = _placement_alignments(resource_data)
+    alignments = _placement_alignments(config_data)
     if not alignments:
         return scene_parts
 
@@ -1603,16 +1893,13 @@ def _apply_placement_alignments(
     placement_context = (
         resolve_globals(config_data.get("globals", {})) if config_data else {}
     )
-    placement_context.update(_metadata_resolution_context(selected_metadata))
 
     metadata_by_name: Dict[str, Dict[str, Any]] = {
         str(name): dict(value) for name, value in built_results_by_name.items()
     }
-    metadata_by_name.setdefault(
-        str(selected_metadata["assembly_name"]), dict(selected_metadata)
-    )
 
     anchor_cache: Dict[tuple[str, str], Any] = {}
+    translation_history: Dict[str, List[Callable[[Any], Any]]] = {}
 
     def resolve_metadata(assembly_name: str) -> Dict[str, Any]:
         metadata = metadata_by_name.get(assembly_name)
@@ -1635,9 +1922,12 @@ def _apply_placement_alignments(
                 raise BuilderError(
                     f"Placement reference '{reference}' did not resolve to exactly one artifact"
                 )
-            anchor_cache[cache_key] = _import_dependency_part(
+            imported_anchor = _import_dependency_part(
                 Path(entries[0]["path"]).expanduser().resolve()
             )
+            for translation in translation_history.get(assembly_name, []):
+                imported_anchor = translation(imported_anchor)
+            anchor_cache[cache_key] = imported_anchor
         return assembly_name, selector, anchor_cache[cache_key]
 
     for alignment_spec in alignments:
@@ -1646,8 +1936,11 @@ def _apply_placement_alignments(
         if not moving_reference or not target_reference:
             raise BuilderError("Each placement alignment requires 'part' and 'to'")
 
-        moving_assembly_name, _, moving_anchor = resolve_anchor(str(moving_reference))
-        _, _, target_anchor = resolve_anchor(str(target_reference))
+        moving_reference_str = str(moving_reference)
+        target_reference_str = str(target_reference)
+
+        moving_assembly_name, _, moving_anchor = resolve_anchor(moving_reference_str)
+        target_assembly_name, _, target_anchor = resolve_anchor(target_reference_str)
 
         resolved_alignment = _resolve_alignment_enum(alignment_spec.get("alignment"))
         raw_axes = alignment_spec.get("axes")
@@ -1661,6 +1954,13 @@ def _apply_placement_alignments(
         stack_gap = alignment_spec.get("stack_gap", 0)
         resolved_stack_gap = _resolve_inline_value(stack_gap, placement_context)
 
+        moving_center_before = _part_center(moving_anchor)
+        target_center_before = _part_center(target_anchor)
+        _, _, moving_part = resolve_anchor(moving_assembly_name)
+        _, _, target_part = resolve_anchor(target_assembly_name)
+        moving_part_center_before = _part_center(moving_part)
+        target_part_center_before = _part_center(target_part)
+
         translation = _make_placement_translation(
             moving_anchor,
             target_anchor,
@@ -1669,11 +1969,33 @@ def _apply_placement_alignments(
             stack_gap=resolved_stack_gap,
         )
 
+        moved_anchor = translation(moving_anchor)
+        moving_center_after = _part_center(moved_anchor)
+        translation_delta = _translation_delta(
+            moving_center_before, moving_center_after
+        )
+
+        _logger.info(
+            "Placement step: %s aligned to %s via %s; moving_anchor_center=%s; target_anchor_center=%s; moving_part_position=%s; target_part_position=%s; shift=%s",
+            moving_reference_str,
+            target_reference_str,
+            resolved_alignment.name,
+            _format_point(moving_center_before),
+            _format_point(target_center_before),
+            _format_point(moving_part_center_before),
+            _format_point(target_part_center_before),
+            _format_point(translation_delta),
+        )
+
         _apply_translation_to_scene_parts(
             scene_parts, moving_assembly_name, translation
         )
+        translation_history.setdefault(moving_assembly_name, []).append(translation)
         for (assembly_name, selector), anchor_part in list(anchor_cache.items()):
             if assembly_name != moving_assembly_name:
+                continue
+            if anchor_part is moving_anchor:
+                anchor_cache[(assembly_name, selector)] = moved_anchor
                 continue
             anchor_cache[(assembly_name, selector)] = translation(anchor_part)
 
@@ -1737,7 +2059,7 @@ def _resolve_export_options(
             "prod_gap": 1.0,
             "bed_width": 200.0,
             "max_build_height": None,
-            "export_step": True,
+            "export_step": False,
             "export_obj": True,
             "export_individual_parts": False,
             "export_stl": False,
@@ -1801,6 +2123,9 @@ def build_from_file(
 
     results: List[Dict[str, Any]] = []
     built_results_by_name: Dict[str, Dict[str, Any]] = {}
+    placement_state = _initialize_placement_execution_state(
+        config_data, built_results_by_name
+    )
     for generation_index, generation_entries in enumerate(build_generations):
         for assembly_index, entry in enumerate(generation_entries):
             resolved = _resolve_assembly(config_file, entry, global_context)
@@ -1808,6 +2133,7 @@ def build_from_file(
                 entry,
                 built_results_by_name,
                 repository_path,
+                placement_state,
             )
             generator = _load_generator_callable(resolved.generator_path)
             generator_context = (
@@ -1836,6 +2162,11 @@ def build_from_file(
                 cached_metadata["cache_hit"] = True
                 results.append(cached_metadata)
                 built_results_by_name[resolved.name] = cached_metadata
+                placement_state = _advance_placement_execution(
+                    placement_state,
+                    built_results_by_name=built_results_by_name,
+                    repository_dir=repository_path,
+                )
                 _logger.info(
                     "Using cached build for '%s' from %s",
                     resolved.name,
@@ -1889,6 +2220,15 @@ def build_from_file(
                         "source_assembly_hash": injection.source_parameter_hash,
                         "source_version_inputs": injection.source_version_inputs,
                         "step_path": str(injection.step_path),
+                        **(
+                            {
+                                "source_placement_offset": list(
+                                    injection.placement_offset
+                                )
+                            }
+                            if injection.placement_offset != (0.0, 0.0, 0.0)
+                            else {}
+                        ),
                     }
                     for injection in dependency_injections
                 ],
@@ -1897,6 +2237,11 @@ def build_from_file(
             _write_metadata(metadata_path, metadata)
             results.append(metadata)
             built_results_by_name[resolved.name] = metadata
+            placement_state = _advance_placement_execution(
+                placement_state,
+                built_results_by_name=built_results_by_name,
+                repository_dir=repository_path,
+            )
 
     return results
 
@@ -2005,8 +2350,6 @@ def _export_scene_for_assembly(
 
     scene_parts = _apply_placement_alignments(
         scene_parts,
-        selected_metadata=selected_metadata,
-        resource_data=selected_resource_data,
         built_results_by_name=built_results_by_name,
         repository_dir=repository_dir,
         config_data=config_data,
@@ -2113,7 +2456,6 @@ def run_builder(args: argparse.Namespace) -> int:
         )
         implicit_scene_dependencies.update(
             _placement_reference_names(
-                selected_resource_data,
                 config_data,
                 {selected_assembly: {"assembly_name": selected_assembly}},
             )
