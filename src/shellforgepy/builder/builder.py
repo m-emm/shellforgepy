@@ -1008,25 +1008,21 @@ def _resolve_injected_parts_config(
         )
 
     normalized: Dict[str, Dict[str, str]] = {}
-    dependencies = _dependency_names(entry)
     for kwarg_name, raw_spec in config.items():
-        if isinstance(raw_spec, str):
-            assembly_name = raw_spec
-            artifact = "leader"
-        elif isinstance(raw_spec, Mapping):
-            assembly_name = raw_spec.get("assembly")
-            if assembly_name is None:
-                if len(dependencies) == 1:
-                    assembly_name = dependencies[0]
-                else:
-                    raise BuilderError(
-                        f"inject_parts.{kwarg_name} for assembly '{entry.get('name')}' must specify an assembly"
-                    )
-            artifact = raw_spec.get("artifact", "assembly")
-        else:
+        if not isinstance(raw_spec, str):
             raise BuilderError(
-                f"inject_parts.{kwarg_name} for assembly '{entry.get('name')}' must be a string or mapping"
+                f"inject_parts.{kwarg_name} for assembly '{entry.get('name')}' must be a string reference"
             )
+
+        assembly_name = raw_spec
+        artifact = "assembly"
+        if "." in raw_spec:
+            assembly_name, artifact = raw_spec.split(".", 1)
+        if not assembly_name or not artifact:
+            raise BuilderError(
+                f"inject_parts.{kwarg_name} for assembly '{entry.get('name')}' must be '<assembly>' or '<assembly>.<artifact>'"
+            )
+
         normalized[str(kwarg_name)] = {
             "assembly": str(assembly_name),
             "artifact": str(artifact),
