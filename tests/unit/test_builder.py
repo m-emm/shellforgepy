@@ -2336,6 +2336,8 @@ def test_resolve_export_options_merges_top_level_builder_defaults():
         "export_obj": False,
         "export_individual_parts": True,
         "export_stl": True,
+        "plates": None,
+        "auto_assign_plates": False,
     }
 
 
@@ -2350,4 +2352,32 @@ def test_resolve_export_options_uses_lightweight_visualization_defaults():
         "export_obj": True,
         "export_individual_parts": False,
         "export_stl": False,
+        "plates": None,
+        "auto_assign_plates": False,
     }
+
+
+def test_resolve_export_options_supports_plate_configuration():
+    resolved = builder._resolve_export_options(
+        {
+            "Builder": {
+                "Production": {
+                    "arrange": {
+                        "auto_assign_plates": True,
+                        "plates": [
+                            {"name": "plate_a", "parts": ["frame"]},
+                            {"name": "plate_b", "parts": ["feet"]},
+                        ],
+                    }
+                }
+            }
+        },
+        "production",
+        None,
+    )
+
+    assert resolved["auto_assign_plates"] is True
+    assert resolved["plates"] == [
+        {"name": "plate_a", "parts": ["frame"]},
+        {"name": "plate_b", "parts": ["feet"]},
+    ]

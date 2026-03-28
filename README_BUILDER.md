@@ -177,6 +177,38 @@ Useful options:
 - `--force` rebuild even when hash-matched cache exists.
 - `--visualize` / `--production` export scene outputs for a selected assembly.
 
+## Production plates (optional)
+
+When `Builder.Production.arrange` is used, you can now split output into
+multiple **plates**. Each plate gets its own STL and process JSON, and the
+workflow slices each plate independently (resulting in separate G-code files).
+
+```yaml
+Builder:
+  Production:
+    arrange:
+      bed_width: 220
+      prod_gap: 3
+      # Optional: explicit/manual plate declaration
+      plates:
+        - name: plate_frame
+          parts: [frame, frame_clamps]
+        - name: plate_motion
+          parts: [y_axis, x_axis]
+      # Optional: place any parts not listed above on auto plates
+      auto_assign_plates: true
+```
+
+Behavior notes:
+
+- `plates` is optional.
+- `auto_assign_plates` defaults to `false`.
+- If `plates` is present and `auto_assign_plates` is `false`, every production
+  part must be listed in a plate.
+- If `auto_assign_plates` is `true`, remaining parts are assigned to additional
+  auto-generated plates in build order.
+- If neither option is used, behavior remains unchanged (single plate export).
+
 ## Working example in this repository
 
 See the complete demo under:
