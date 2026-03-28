@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Tuple
+from typing import Dict, Mapping, Optional, Sequence, Tuple
 
 
 def _vertex_to_xyz(vertex) -> tuple[float, float, float]:
@@ -37,6 +37,107 @@ def _write_animation_comments(file_obj, animation) -> None:
     for animation_key, vector in animation.items():
         x, y, z = _animation_to_xyz(vector)
         file_obj.write(f"# shellforgepy_anim {animation_key} {x} {y} {z}\n")
+
+
+def _normalize_hierarchy_value(value) -> str:
+    return str(value).strip()
+
+
+def _normalize_hierarchy(metadata) -> tuple[str, ...]:
+    if not metadata:
+        return ()
+
+    hierarchy = metadata.get("hierarchy")
+    if hierarchy is not None:
+        if not isinstance(hierarchy, Sequence) or isinstance(hierarchy, (str, bytes)):
+            raise ValueError(
+                "mesh metadata hierarchy must be a sequence of path segments"
+            )
+        return tuple(
+            segment
+            for segment in (_normalize_hierarchy_value(item) for item in hierarchy)
+            if segment
+        )
+
+    assembly_path = metadata.get("assembly_path")
+    if assembly_path is not None:
+        if not isinstance(assembly_path, Sequence) or isinstance(
+            assembly_path, (str, bytes)
+        ):
+            raise ValueError(
+                "mesh metadata assembly_path must be a sequence of path segments"
+            )
+        return tuple(
+            segment
+            for segment in (_normalize_hierarchy_value(item) for item in assembly_path)
+            if segment
+        )
+
+    assembly_name = metadata.get("assembly_name")
+    if assembly_name:
+        return (_normalize_hierarchy_value(assembly_name),)
+
+    return ()
+
+
+def _normalize_hierarchy_labels(
+    metadata,
+    hierarchy: Sequence[str],
+) -> tuple[str, ...]:
+    if not hierarchy:
+        return ()
+
+    labels = metadata.get("hierarchy_labels")
+    if labels is not None:
+        if not isinstance(labels, Sequence) or isinstance(labels, (str, bytes)):
+            raise ValueError("mesh metadata hierarchy_labels must be a sequence")
+        normalized_labels = tuple(
+            _normalize_hierarchy_value(item) for item in labels[: len(hierarchy)]
+        )
+        if len(normalized_labels) != len(hierarchy):
+            raise ValueError(
+                "mesh metadata hierarchy_labels length must match hierarchy length"
+            )
+        return normalized_labels
+
+    assembly_label = metadata.get("assembly_label")
+    if len(hierarchy) == 1 and assembly_label:
+        return (_normalize_hierarchy_value(assembly_label),)
+
+    return tuple(hierarchy)
+
+
+def _write_hierarchy_comments(file_obj, metadata) -> None:
+    if not metadata:
+        return
+    if not isinstance(metadata, Mapping):
+        raise ValueError("mesh metadata must be a mapping")
+
+    hierarchy = _normalize_hierarchy(metadata)
+    if not hierarchy:
+        return
+    labels = _normalize_hierarchy_labels(metadata, hierarchy)
+
+    file_obj.write(f"# shellforgepy_hierarchy {'/'.join(hierarchy)}\n")
+    file_obj.write(f"# shellforgepy_hierarchy_labels {'/'.join(labels)}\n")
+
+
+def _normalize_builder_selector(metadata) -> Optional[str]:
+    if not metadata:
+        return None
+
+    selector = metadata.get("builder_selector")
+    if selector is None:
+        return None
+
+    normalized = str(selector).strip()
+    return normalized or None
+
+
+def _write_builder_selector_comment(file_obj, metadata) -> None:
+    selector = _normalize_builder_selector(metadata)
+    if selector:
+        file_obj.write(f"# shellforgepy_builder_selector {selector}\n")
 
 
 def _write_mtl_file(
@@ -126,13 +227,16 @@ def export_colored_meshes_to_obj(
     """Export multiple parts with different colors to a single OBJ file.
 
     Args:
-        meshes: List of tuples `(vertices, triangles, name, color)` or
-            `(vertices, triangles, name, color, animation)` where:
+        meshes: List of tuples `(vertices, triangles, name, color)`,
+            `(vertices, triangles, name, color, animation)`, or
+            `(vertices, triangles, name, color, animation, metadata)` where:
             - vertices: Vertex rows or vertex objects with coordinate access
             - triangles: Triangles as integer index triplets
             - name: Part/material name (used as material identifier)
             - color: RGB tuple (0.0-1.0 range)
             - animation: Optional dict mapping animation key to XYZ vector
+            - metadata: Optional mapping with hierarchy information such as
+              `assembly_name`, `assembly_label`, `hierarchy`, or `hierarchy_labels`
         destination: Path to write the OBJ file to.
     """
     import os
@@ -153,12 +257,16 @@ def export_colored_meshes_to_obj(
             if len(mesh) == 4:
                 vertices, triangles, name, color = mesh
                 animation = None
+                metadata = None
             elif len(mesh) == 5:
                 vertices, triangles, name, color, animation = mesh
+                metadata = None
+            elif len(mesh) == 6:
+                vertices, triangles, name, color, animation, metadata = mesh
             else:
                 raise ValueError(
-                    "Each mesh entry must contain 4 or 5 values: "
-                    "(vertices, triangles, name, color[, animation])"
+                    "Each mesh entry must contain 4, 5, or 6 values: "
+                    "(vertices, triangles, name, color[, animation[, metadata]])"
                 )
 
             # Sanitize material name (OBJ material names shouldn't have spaces)
@@ -166,6 +274,8 @@ def export_colored_meshes_to_obj(
             materials[mat_name] = _color_to_rgb(color)
 
             f.write(f"# Object: {name}\n")
+            _write_hierarchy_comments(f, metadata)
+            _write_builder_selector_comment(f, metadata)
             f.write(f"o {mat_name}\n")
             _write_animation_comments(f, animation)
 

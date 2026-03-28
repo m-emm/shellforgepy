@@ -419,6 +419,69 @@ def test_arrange_and_export_obj_mesh_cache_reuses_cached_meshes(monkeypatch):
 
 
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
+def test_arrange_and_export_obj_preserves_metadata_for_export(monkeypatch):
+    import shellforgepy.produce.arrange_and_export as arrange_and_export_module
+
+    captured = {}
+
+    def fake_tessellate(part, tolerance=0.1, angular_tolerance=0.1):
+        return (
+            np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            np.asarray([[0, 1, 2]], dtype=np.int64),
+        )
+
+    def fake_export(meshes, destination):
+        captured["meshes"] = meshes
+        destination_path = Path(destination)
+        destination_path.write_text("obj", encoding="utf-8")
+        destination_path.with_suffix(".mtl").write_text("mtl", encoding="utf-8")
+
+    monkeypatch.setattr(arrange_and_export_module, "adapter_tesellate", fake_tessellate)
+    monkeypatch.setattr(
+        arrange_and_export_module, "export_colored_meshes_to_obj", fake_export
+    )
+
+    parts_list = [
+        {
+            "name": "bed_mount",
+            "part": "shape-1",
+            "assembly_name": "print_bed_assembly",
+            "obj_metadata": {
+                "assembly_name": "print_bed_assembly",
+                "assembly_label": "print_bed",
+                "builder_selector": "print_bed_assembly.leader",
+                "hierarchy": ["print_bed_assembly"],
+                "hierarchy_labels": ["print_bed"],
+            },
+        }
+    ]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        result_path = arrange_and_export_parts(
+            parts_list,
+            prod_gap=2.0,
+            bed_width=50.0,
+            script_file="test_obj_metadata.py",
+            export_directory=temp_dir,
+            export_stl=False,
+            export_step=False,
+            export_obj=True,
+        )
+
+        assert result_path.exists()
+
+    meshes = captured["meshes"]
+    assert len(meshes) == 1
+    assert meshes[0][5] == {
+        "assembly_name": "print_bed_assembly",
+        "assembly_label": "print_bed",
+        "builder_selector": "print_bed_assembly.leader",
+        "hierarchy": ["print_bed_assembly"],
+        "hierarchy_labels": ["print_bed"],
+    }
+
+
+@pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_arrange_and_export_step_respects_export_individual_parts():
     """STEP export should skip per-part files when export_individual_parts=False."""
     box1 = create_box(10, 10, 10)

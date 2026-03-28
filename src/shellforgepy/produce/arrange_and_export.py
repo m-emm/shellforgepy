@@ -225,6 +225,7 @@ def _build_colored_meshes(
         name = entry["name"]
         color = entry.get("color")
         animation = entry.get("animation")
+        metadata = entry.get("obj_metadata")
         if color is None:
             color = DEFAULT_PART_COLORS[(index - 1) % len(DEFAULT_PART_COLORS)]
 
@@ -264,7 +265,7 @@ def _build_colored_meshes(
             if cache_root is not None and signature is not None and payload is not None:
                 _store_cached_mesh(cache_root, signature, vertices, triangles, payload)
 
-        meshes.append((vertices, triangles, name, tuple(color), animation))
+        meshes.append((vertices, triangles, name, tuple(color), animation, metadata))
 
     if cache_hits:
         _logger.info("Reused %d cached OBJ mesh(es)", cache_hits)
@@ -358,6 +359,7 @@ def _arrange_parts_for_production(
                     part_entry.get("source_version_inputs", {})
                 ),
                 "transform_history": transform_history,
+                "obj_metadata": deepcopy(part_entry.get("obj_metadata")),
             }
         )
 
@@ -460,6 +462,7 @@ def _arrange_parts_for_production(
                     rect.get("source_version_inputs", {})
                 ),
                 "transform_history": _copy_transform_history(rect),
+                "obj_metadata": deepcopy(rect["original"].get("obj_metadata")),
             }
         )
 
@@ -503,6 +506,7 @@ def _arrange_parts_for_production(
             "source_parameter_hash": item.get("source_parameter_hash"),
             "source_version_inputs": deepcopy(item.get("source_version_inputs", {})),
             "transform_history": _copy_transform_history(item),
+            "obj_metadata": deepcopy(item.get("obj_metadata")),
         }
         for item in arranged
     ]
@@ -742,6 +746,7 @@ def arrange_and_export_parts(
                         entry.get("source_version_inputs", {})
                     ),
                     "transform_history": _copy_transform_history(entry),
+                    "obj_metadata": deepcopy(entry.get("obj_metadata")),
                 }
             )
 

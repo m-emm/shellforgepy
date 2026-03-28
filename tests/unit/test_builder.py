@@ -1640,7 +1640,10 @@ def test_resolve_process_data_applies_overrides(monkeypatch):
                         "source": "demo.process.PROCESS_DATA",
                         "overrides": {
                             "bed_temperature": {"$ref": "bed_temp"},
-                            "process_overrides": {"brim_type": "no_brim"},
+                            "process_overrides": {
+                                "brim_type": "no_brim",
+                                "support_object_first_layer_gap": 0.8,
+                            },
                         },
                     }
                 }
@@ -1654,6 +1657,64 @@ def test_resolve_process_data_applies_overrides(monkeypatch):
         "process_overrides": {
             "speed": "100",
             "brim_type": "no_brim",
+            "support_object_first_layer_gap": "0.8",
+        },
+    }
+
+
+def test_resolve_process_data_applies_prototype_overrides(monkeypatch):
+    class ProcessModule:
+        PROCESS_DATA = {
+            "filament": "TPU",
+            "process_overrides": {
+                "wall_loops": "3",
+                "sparse_infill_density": "75%",
+            },
+        }
+
+    real_import_module = importlib.import_module
+    monkeypatch.setattr(
+        builder.importlib,
+        "import_module",
+        lambda module_name: (
+            ProcessModule
+            if module_name == "demo.process"
+            else real_import_module(module_name)
+        ),
+    )
+
+    resolved = builder._resolve_process_data(
+        {
+            "public_parameters": {},
+            "generator_kwargs": {},
+        },
+        {
+            "Builder": {
+                "Production": {
+                    "process_data": {
+                        "source": "demo.process.PROCESS_DATA",
+                    },
+                    "prototype": {
+                        "process_data": {
+                            "overrides": {
+                                "process_overrides": {
+                                    "wall_loops": 2,
+                                    "sparse_infill_density": "40%",
+                                }
+                            }
+                        }
+                    },
+                }
+            }
+        },
+        include_prototype_overrides=True,
+    )
+
+    assert resolved == {
+        "filament": "TPU",
+        "process_overrides": {
+            "wall_loops": "2",
+            "sparse_infill_density": "40%",
         },
     }
 
@@ -1755,6 +1816,53 @@ def test_materialize_rule_parts_resolves_animation_from_metadata_context(
 
     assert len(parts) == 1
     assert parts[0]["animation"] == {"bed_y": [0, 325, 0]}
+
+
+def test_materialize_rule_parts_attaches_obj_metadata_for_assembly_grouping(
+    monkeypatch, tmp_path
+):
+    leader_step = tmp_path / "bed.step"
+    leader_step.write_text("bed", encoding="utf-8")
+
+    metadata = {
+        "assembly_name": "print_bed_assembly",
+        "public_parameters": {},
+        "generator_kwargs": {},
+        "artifacts": {"leader_step": str(leader_step)},
+    }
+    resource_data = {
+        "Builder": {
+            "Visualization": {
+                "parts": [
+                    {
+                        "source": "self",
+                        "artifact": "leader",
+                        "name": "print_bed",
+                    }
+                ]
+            }
+        }
+    }
+
+    monkeypatch.setattr(builder, "_import_dependency_part", lambda path: f"part:{path}")
+
+    parts = builder._materialize_rule_parts(
+        metadata,
+        resource_data,
+        "visualization",
+        {"print_bed_assembly": metadata},
+        tmp_path,
+        None,
+    )
+
+    assert len(parts) == 1
+    assert parts[0]["obj_metadata"] == {
+        "assembly_name": "print_bed_assembly",
+        "assembly_label": "print_bed",
+        "builder_selector": "print_bed_assembly.leader",
+        "hierarchy": ["print_bed_assembly"],
+        "hierarchy_labels": ["print_bed"],
+    }
 
 
 def test_apply_placement_alignments_moves_only_the_owning_assembly(
@@ -2757,6 +2865,154 @@ def test_resolve_prototype_reference_supports_self_and_relative_selectors():
         )
         == "print_bed_assembly.leader"
     )
+
+
+def test_resolve_prototype_anchor_error_lists_valid_and_cross_assembly_refs(
+    monkeypatch, tmp_path
+):
+    metadata_by_name = {
+        "print_bed_undercarriage_assembly": {
+            "assembly_name": "print_bed_undercarriage_assembly",
+            "artifacts": {
+                "leader_step": str(tmp_path / "pbuc_leader.step"),
+                "fused_step": None,
+                "followers": [],
+                "cutters": [],
+                "non_production_parts": [
+                    {
+                        "index": 0,
+                        "name": "mount_tower_left_front",
+                        "path": str(tmp_path / "mount_tower_left_front.step"),
+                    }
+                ],
+            },
+        },
+        "print_bed_assembly": {
+            "assembly_name": "print_bed_assembly",
+            "artifacts": {
+                "leader_step": str(tmp_path / "pb_leader.step"),
+                "fused_step": None,
+                "followers": [],
+                "cutters": [],
+                "non_production_parts": [
+                    {
+                        "index": 0,
+                        "name": "print_bed_undercarriage_belt_clamp_torsion_screw_back",
+                        "path": str(tmp_path / "torsion_screw_back.step"),
+                    }
+                ],
+            },
+        },
+    }
+
+    monkeypatch.setattr(
+        builder,
+        "_dependency_metadata_for_assembly",
+        lambda assembly_name, built_results_by_name, repository_dir: metadata_by_name[
+            assembly_name
+        ],
+    )
+
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder._resolve_prototype_anchor_part(
+            "self.non_production_parts.print_bed_undercarriage_belt_clamp_torsion_screw_back",
+            selected_assembly="print_bed_undercarriage_assembly",
+            built_results_by_name=metadata_by_name,
+            repository_dir=tmp_path,
+            placement_state=None,
+            config_data={
+                "assemblies": [
+                    {"name": "print_bed_undercarriage_assembly"},
+                    {"name": "print_bed_assembly"},
+                ]
+            },
+        )
+
+    message = str(excinfo.value)
+    assert "matched no artifacts" in message
+    assert (
+        "resolved to 'print_bed_undercarriage_assembly.non_production_parts."
+        "print_bed_undercarriage_belt_clamp_torsion_screw_back'"
+    ) in message
+    assert "self.non_production_parts.mount_tower_left_front" in message
+    assert (
+        "print_bed_assembly.non_production_parts."
+        "print_bed_undercarriage_belt_clamp_torsion_screw_back"
+    ) in message
+
+
+def test_resolve_placement_anchor_error_lists_valid_references(monkeypatch, tmp_path):
+    metadata_by_name = {
+        "print_bed_undercarriage_assembly": {
+            "assembly_name": "print_bed_undercarriage_assembly",
+            "artifacts": {
+                "leader_step": str(tmp_path / "pbuc_leader.step"),
+                "fused_step": None,
+                "followers": [],
+                "cutters": [],
+                "non_production_parts": [
+                    {
+                        "index": 0,
+                        "name": "mount_tower_left_front",
+                        "path": str(tmp_path / "mount_tower_left_front.step"),
+                    }
+                ],
+            },
+        },
+        "print_bed_assembly": {
+            "assembly_name": "print_bed_assembly",
+            "artifacts": {
+                "leader_step": str(tmp_path / "pb_leader.step"),
+                "fused_step": None,
+                "followers": [],
+                "cutters": [],
+                "non_production_parts": [
+                    {
+                        "index": 0,
+                        "name": "print_bed_undercarriage_belt_clamp_torsion_screw_back",
+                        "path": str(tmp_path / "torsion_screw_back.step"),
+                    }
+                ],
+            },
+        },
+    }
+
+    monkeypatch.setattr(
+        builder,
+        "_dependency_metadata_for_assembly",
+        lambda assembly_name, built_results_by_name, repository_dir: metadata_by_name[
+            assembly_name
+        ],
+    )
+
+    placement_state = builder._PlacementExecutionState(
+        alignments=[],
+        known_assembly_names=[
+            "print_bed_assembly",
+            "print_bed_undercarriage_assembly",
+        ],
+        placement_context={},
+    )
+
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder._resolve_placement_anchor(
+            "print_bed_undercarriage_assembly.non_production_parts.print_bed_undercarriage_belt_clamp_torsion_screw_back",
+            placement_state=placement_state,
+            built_results_by_name=metadata_by_name,
+            repository_dir=tmp_path,
+        )
+
+    message = str(excinfo.value)
+    assert "Placement reference" in message
+    assert "matched no artifacts" in message
+    assert (
+        "print_bed_undercarriage_assembly.non_production_parts.mount_tower_left_front"
+        in message
+    )
+    assert (
+        "print_bed_assembly.non_production_parts."
+        "print_bed_undercarriage_belt_clamp_torsion_screw_back"
+    ) in message
 
 
 def test_apply_prototype_configuration_filters_and_clips_parts(monkeypatch, tmp_path):

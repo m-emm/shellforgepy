@@ -1393,6 +1393,142 @@ def _artifact_entries_for_selector(
     raise BuilderError(f"Unsupported scene artifact selector '{artifact}'")
 
 
+def _addressable_artifact_selectors(metadata: Mapping[str, Any]) -> List[str]:
+    artifacts = metadata.get("artifacts", {})
+    selectors: List[str] = []
+
+    if artifacts.get("leader_step"):
+        selectors.append("leader")
+    if artifacts.get("fused_step"):
+        selectors.append("fused")
+
+    for artifact_group in ("followers", "cutters", "non_production_parts"):
+        for item in artifacts.get(artifact_group, []):
+            name = item.get("name")
+            if name:
+                selectors.append(f"{artifact_group}.{name}")
+
+    return sorted(
+        set(selectors),
+        key=lambda value: (
+            0 if value == "leader" else 1 if value == "fused" else 2,
+            value,
+        ),
+    )
+
+
+def _format_reference_examples(
+    references: Sequence[str],
+    *,
+    limit: int = 12,
+) -> str:
+    if not references:
+        return "(none)"
+    ordered = list(dict.fromkeys(str(item) for item in references))
+    if len(ordered) <= limit:
+        return ", ".join(ordered)
+    shown = ", ".join(ordered[:limit])
+    return f"{shown}, ... ({len(ordered) - limit} more)"
+
+
+def _addressable_references_for_assembly(
+    metadata: Mapping[str, Any],
+    *,
+    selected_assembly: Optional[str] = None,
+    use_self_for_selected: bool = False,
+) -> List[str]:
+    assembly_name = str(metadata.get("assembly_name") or "")
+    references: List[str] = []
+
+    for selector in _addressable_artifact_selectors(metadata):
+        if use_self_for_selected and selected_assembly == assembly_name:
+            references.append(f"self.{selector}")
+        else:
+            references.append(f"{assembly_name}.{selector}")
+
+    return references
+
+
+def _matching_selector_references(
+    selector: str,
+    *,
+    known_assembly_names: Sequence[str],
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+    repository_dir: Path,
+    exclude_assembly: Optional[str] = None,
+) -> List[str]:
+    matches: List[str] = []
+
+    for assembly_name in sorted(set(str(item) for item in known_assembly_names)):
+        if assembly_name == exclude_assembly:
+            continue
+        metadata = _dependency_metadata_for_assembly(
+            assembly_name,
+            built_results_by_name,
+            repository_dir,
+        )
+        if _artifact_entries_for_selector(metadata, selector):
+            matches.append(f"{assembly_name}.{selector}")
+
+    return matches
+
+
+def _raise_unresolved_artifact_reference(
+    *,
+    label: str,
+    reference: str,
+    resolved_reference: Optional[str],
+    assembly_name: str,
+    selector: str,
+    entries: Sequence[Mapping[str, Any]],
+    metadata: Mapping[str, Any],
+    known_assembly_names: Sequence[str],
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+    repository_dir: Path,
+    selected_assembly: Optional[str] = None,
+    use_self_for_selected: bool = False,
+) -> None:
+    if len(entries) == 0:
+        resolution_detail = (
+            f"resolved to '{resolved_reference}' but matched no artifacts"
+            if resolved_reference and resolved_reference != reference
+            else "matched no artifacts"
+        )
+    else:
+        resolution_detail = (
+            f"resolved to '{resolved_reference}' but matched {len(entries)} artifacts"
+            if resolved_reference and resolved_reference != reference
+            else f"matched {len(entries)} artifacts"
+        )
+
+    valid_references = _addressable_references_for_assembly(
+        metadata,
+        selected_assembly=selected_assembly,
+        use_self_for_selected=use_self_for_selected,
+    )
+    message_parts = [
+        f"{label} '{reference}' {resolution_detail} in assembly '{assembly_name}'.",
+        "Valid references for this assembly: "
+        + _format_reference_examples(valid_references),
+    ]
+
+    if "." in selector:
+        matching_references = _matching_selector_references(
+            selector,
+            known_assembly_names=known_assembly_names,
+            built_results_by_name=built_results_by_name,
+            repository_dir=repository_dir,
+            exclude_assembly=assembly_name,
+        )
+        if matching_references:
+            message_parts.append(
+                "Matching references in other assemblies: "
+                + _format_reference_examples(matching_references)
+            )
+
+    raise BuilderError(" ".join(message_parts))
+
+
 def _filter_artifact_entries(
     entries: Sequence[Mapping[str, Any]], rule: Mapping[str, Any]
 ) -> List[Dict[str, Any]]:
@@ -1653,6 +1789,27 @@ def _format_scene_name(
     return str(rule.get("name") or default_name)
 
 
+def _assembly_group_label(assembly_name: str) -> str:
+    if assembly_name.endswith("_assembly"):
+        return assembly_name[: -len("_assembly")]
+    return assembly_name
+
+
+def _builder_selector_for_scene_entry(entry: Mapping[str, Any]) -> Optional[str]:
+    assembly_name = str(entry.get("assembly_name") or "").strip()
+    artifact = str(entry.get("artifact") or "").strip()
+    if not assembly_name or not artifact:
+        return None
+
+    name = entry.get("name")
+    if artifact in {"followers", "cutters", "non_production_parts"}:
+        if not name:
+            return None
+        return f"{assembly_name}.{artifact}.{name}"
+
+    return f"{assembly_name}.{artifact}"
+
+
 def _scene_transform_record(
     function_name: str, resolved_kwargs: Mapping[str, Any]
 ) -> Dict[str, Any]:
@@ -1760,6 +1917,19 @@ def _materialize_rule_parts(
                         "name": _format_scene_name(entry, rule),
                         "part": part,
                         "assembly_name": entry["assembly_name"],
+                        "obj_metadata": {
+                            "assembly_name": entry["assembly_name"],
+                            "assembly_label": _assembly_group_label(
+                                str(entry["assembly_name"])
+                            ),
+                            "builder_selector": _builder_selector_for_scene_entry(
+                                entry
+                            ),
+                            "hierarchy": [str(entry["assembly_name"])],
+                            "hierarchy_labels": [
+                                _assembly_group_label(str(entry["assembly_name"]))
+                            ],
+                        },
                         "source_path": entry["path"],
                         "source_parameter_hash": target.get("parameter_hash"),
                         "source_version_inputs": deepcopy(
@@ -1905,8 +2075,17 @@ def _resolve_placement_anchor(
     )
     entries = _artifact_entries_for_selector(metadata, selector)
     if len(entries) != 1:
-        raise BuilderError(
-            f"Placement reference '{reference}' did not resolve to exactly one artifact"
+        _raise_unresolved_artifact_reference(
+            label="Placement reference",
+            reference=reference,
+            resolved_reference=reference,
+            assembly_name=assembly_name,
+            selector=selector,
+            entries=entries,
+            metadata=metadata,
+            known_assembly_names=placement_state.known_assembly_names,
+            built_results_by_name=built_results_by_name,
+            repository_dir=repository_dir,
         )
     anchor = _import_dependency_part(Path(entries[0]["path"]).expanduser().resolve())
     anchor = _apply_placement_state_to_part(anchor, assembly_name, placement_state)
@@ -2130,8 +2309,17 @@ def _apply_placement_alignments(
             metadata = resolve_metadata(assembly_name)
             entries = _artifact_entries_for_selector(metadata, selector)
             if len(entries) != 1:
-                raise BuilderError(
-                    f"Placement reference '{reference}' did not resolve to exactly one artifact"
+                _raise_unresolved_artifact_reference(
+                    label="Placement reference",
+                    reference=reference,
+                    resolved_reference=reference,
+                    assembly_name=assembly_name,
+                    selector=selector,
+                    entries=entries,
+                    metadata=metadata,
+                    known_assembly_names=known_assembly_names,
+                    built_results_by_name=built_results_by_name,
+                    repository_dir=repository_dir,
                 )
             imported_anchor = _import_dependency_part(
                 Path(entries[0]["path"]).expanduser().resolve()
@@ -2234,39 +2422,93 @@ def _apply_placement_alignments(
 def _resolve_process_data(
     metadata: Mapping[str, Any],
     resource_data: Mapping[str, Any],
+    *,
+    include_prototype_overrides: bool = False,
     config_data: Optional[Mapping[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
-    production_section = _builder_section(resource_data, "Production", config_data)
-    process_data_spec = production_section.get("process_data")
-    if process_data_spec is None:
-        return None
-    if not isinstance(process_data_spec, Mapping):
-        raise BuilderError("Builder.Production.process_data must be a mapping")
-    source = process_data_spec.get("source")
-    if not source:
-        raise BuilderError("Builder.Production.process_data.source is required")
+    def apply_process_data_spec(
+        resolved: Optional[Dict[str, Any]],
+        spec: Any,
+        *,
+        field_name: str,
+    ) -> Optional[Dict[str, Any]]:
+        if spec is None:
+            return resolved
+        if not isinstance(spec, Mapping):
+            raise BuilderError(f"{field_name} must be a mapping")
 
-    loaded = _load_attribute(str(source))
-    if not isinstance(loaded, Mapping):
-        raise BuilderError(
-            f"Resolved process_data source '{source}' must be a mapping, got {type(loaded).__name__}"
-        )
-    resolved = deepcopy(dict(loaded))
-    overrides = process_data_spec.get("overrides", {})
-    if overrides:
-        if not isinstance(overrides, Mapping):
-            raise BuilderError(
-                "Builder.Production.process_data.overrides must be a mapping"
+        next_resolved = None if resolved is None else deepcopy(dict(resolved))
+        source = spec.get("source")
+        if source:
+            loaded = _load_attribute(str(source))
+            if not isinstance(loaded, Mapping):
+                raise BuilderError(
+                    f"Resolved process_data source '{source}' must be a mapping, got {type(loaded).__name__}"
+                )
+            next_resolved = deepcopy(dict(loaded))
+        elif next_resolved is None:
+            raise BuilderError(f"{field_name}.source is required")
+
+        overrides = spec.get("overrides", {})
+        if overrides:
+            if not isinstance(overrides, Mapping):
+                raise BuilderError(f"{field_name}.overrides must be a mapping")
+            context = _metadata_resolution_context(metadata)
+            resolved_overrides = _resolve_inline_mapping(overrides, context)
+            for key, value in resolved_overrides.items():
+                if isinstance(value, Mapping) and isinstance(
+                    next_resolved.get(key), Mapping
+                ):
+                    merged = dict(next_resolved[key])
+                    merged.update(value)
+                    next_resolved[key] = merged
+                else:
+                    next_resolved[key] = value
+        return next_resolved
+
+    def stringify_process_override_value(value: Any) -> Any:
+        if isinstance(value, bool):
+            return "1" if value else "0"
+        if isinstance(value, (int, float)):
+            return str(value)
+        if isinstance(value, list):
+            return [stringify_process_override_value(item) for item in value]
+        if isinstance(value, Mapping):
+            return {
+                str(key): stringify_process_override_value(item)
+                for key, item in value.items()
+            }
+        return value
+
+    production_section = _builder_section(resource_data, "Production", config_data)
+    resolved = apply_process_data_spec(
+        None,
+        production_section.get("process_data"),
+        field_name="Builder.Production.process_data",
+    )
+    if resolved is None:
+        return None
+
+    if include_prototype_overrides:
+        prototype = production_section.get("prototype")
+        if prototype is not None:
+            if not isinstance(prototype, Mapping):
+                raise BuilderError("Builder.Production.prototype must be a mapping")
+            resolved = apply_process_data_spec(
+                resolved,
+                prototype.get("process_data"),
+                field_name="Builder.Production.prototype.process_data",
             )
-        context = _metadata_resolution_context(metadata)
-        resolved_overrides = _resolve_inline_mapping(overrides, context)
-        for key, value in resolved_overrides.items():
-            if isinstance(value, Mapping) and isinstance(resolved.get(key), Mapping):
-                merged = dict(resolved[key])
-                merged.update(value)
-                resolved[key] = merged
-            else:
-                resolved[key] = value
+
+    process_overrides = resolved.get("process_overrides")
+    if isinstance(process_overrides, Mapping):
+        normalized_process_overrides: Dict[str, Any] = {}
+        for key, value in process_overrides.items():
+            normalized_process_overrides[str(key)] = stringify_process_override_value(
+                value
+            )
+        resolved["process_overrides"] = normalized_process_overrides
+
     return resolved
 
 
@@ -2394,8 +2636,19 @@ def _resolve_prototype_anchor_part(
     )
     entries = _artifact_entries_for_selector(metadata, selector)
     if len(entries) != 1:
-        raise BuilderError(
-            f"Prototype anchor '{reference}' did not resolve to exactly one artifact"
+        _raise_unresolved_artifact_reference(
+            label="Prototype anchor",
+            reference=reference,
+            resolved_reference=resolved_reference,
+            assembly_name=assembly_name,
+            selector=selector,
+            entries=entries,
+            metadata=metadata,
+            known_assembly_names=known_assembly_names,
+            built_results_by_name=built_results_by_name,
+            repository_dir=repository_dir,
+            selected_assembly=selected_assembly,
+            use_self_for_selected=True,
         )
     anchor = _import_dependency_part(Path(entries[0]["path"]).expanduser().resolve())
     return _apply_placement_state_to_part(anchor, assembly_name, placement_state)
@@ -2941,7 +3194,8 @@ def _export_scene_for_assembly(
         process_data = _resolve_process_data(
             selected_metadata,
             selected_resource_data,
-            config_data,
+            include_prototype_overrides=bool(getattr(args, "prototype", False)),
+            config_data=config_data,
         )
         if process_data is None:
             raise BuilderError(
@@ -2989,9 +3243,7 @@ def _export_scene_for_assembly(
     with _temporary_environment(env):
         exportable_scene_parts: List[Dict[str, Any]] = []
         for part in scene_parts:
-            export_part = dict(part)
-            export_part.pop("assembly_name", None)
-            exportable_scene_parts.append(export_part)
+            exportable_scene_parts.append(dict(part))
         enforce_bed_size = not (
             bool(getattr(args, "visualize", False))
             and production_mode

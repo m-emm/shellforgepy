@@ -236,3 +236,90 @@ def test_export_colored_meshes_to_obj_writes_animation_comments():
         assert obj_content.index(
             "# shellforgepy_anim bed_x 100.0 0.0 0.0"
         ) < obj_content.index("\nv 0.0 0.0 0.0")
+
+
+def test_export_colored_meshes_to_obj_writes_hierarchy_comments():
+    """OBJ writer should emit hierarchy comments when provided."""
+    from shellforgepy.produce.obj_file_export import export_colored_meshes_to_obj
+
+    vertices = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+        ],
+        dtype=float,
+    )
+    triangles = np.array([[0, 1, 2]], dtype=np.int32)
+    meshes = [
+        (
+            vertices,
+            triangles,
+            "bed spacer",
+            (0.5, 0.5, 0.5),
+            None,
+            {
+                "hierarchy": ["print_bed_assembly", "hardware"],
+                "hierarchy_labels": ["print_bed", "hardware"],
+            },
+        )
+    ]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        obj_path = os.path.join(tmpdir, "hierarchy.obj")
+
+        export_colored_meshes_to_obj(meshes, obj_path)
+
+        with open(obj_path) as f:
+            obj_content = f.read()
+
+        assert "# shellforgepy_hierarchy print_bed_assembly/hardware" in obj_content
+        assert "# shellforgepy_hierarchy_labels print_bed/hardware" in obj_content
+        assert obj_content.index(
+            "# shellforgepy_hierarchy print_bed_assembly/hardware"
+        ) < obj_content.index("o bed_spacer")
+
+
+def test_export_colored_meshes_to_obj_writes_builder_selector_comment():
+    from shellforgepy.produce.obj_file_export import export_colored_meshes_to_obj
+
+    vertices = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+        ],
+        dtype=float,
+    )
+    triangles = np.array([[0, 1, 2]], dtype=np.int32)
+    meshes = [
+        (
+            vertices,
+            triangles,
+            "belt clamp screw",
+            (0.5, 0.5, 0.5),
+            None,
+            {
+                "builder_selector": "print_bed_assembly.non_production_parts.print_bed_undercarriage_belt_clamp_torsion_screw_back",
+            },
+        )
+    ]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        obj_path = os.path.join(tmpdir, "selector.obj")
+
+        export_colored_meshes_to_obj(meshes, obj_path)
+
+        with open(obj_path) as f:
+            obj_content = f.read()
+
+        assert (
+            "# shellforgepy_builder_selector "
+            "print_bed_assembly.non_production_parts."
+            "print_bed_undercarriage_belt_clamp_torsion_screw_back" in obj_content
+        )
+        assert obj_content.index(
+            "# shellforgepy_builder_selector "
+            "print_bed_assembly.non_production_parts."
+            "print_bed_undercarriage_belt_clamp_torsion_screw_back"
+        ) < obj_content.index("o belt_clamp_screw")
