@@ -1,0 +1,18 @@
+ShellforgepyBuilderVersion: "2026-03-27"
+
+Parameters:
+  radius:
+    Type: Float
+  height:
+    Type: Float
+
+Parts:
+  Column:
+    Type: Shellforgepy::Assembly
+    Properties:
+      Generator: shellforgepy.simple.create_cylinder
+      Properties:
+        radius:
+          $ref: radius
+        height:
+          $ref: height

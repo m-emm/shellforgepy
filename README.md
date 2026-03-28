@@ -17,10 +17,13 @@ python examples/filleted_boxes_example.py
 # Amazing mathematical surfaces
 python examples/mobius_strip.py
 
+# Declarative machine assembly with the builder
+python examples/builder_machine_example.py
+
 # All 8 examples ready to run!
 ```
 
-**[👉 See All Examples →](examples/README.md)** | **[🎯 Quick Examples Guide →](#examples)**
+**[👉 See All Examples →](examples/README.md)** | **[🎯 Quick Examples Guide →](#examples)** | **[🏗️ Declarative Builder Guide →](README_BUILDER.md)**
 
 ---
 
