@@ -21,6 +21,13 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 
 import yaml
 from shellforgepy.construct.part_parameters import PartParameters
+from shellforgepy.metrics import (
+    reset_metrics,
+    snapshot_has_metrics,
+    snapshot_metrics,
+    using_metrics_snapshot,
+    write_metrics_report,
+)
 
 from . import graph_model as builder_graph_model
 from .errors import BuilderError
@@ -29,6 +36,7 @@ _logger = logging.getLogger(__name__)
 
 _REF_PATTERN = re.compile(r"\$\{([A-Za-z0-9_./:-]+)\}")
 _SAFE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
+BUILD_METADATA_SCHEMA_VERSION = 2
 
 
 class _BuilderLoader(yaml.SafeLoader):
@@ -805,6 +813,13 @@ def _metadata_path(artifact_dir: Path, assembly_name: str, parameter_hash: str) 
     return artifact_dir / f"{assembly_name}__{parameter_hash}__metadata.json"
 
 
+def _metadata_supports_current_schema(metadata: Mapping[str, Any]) -> bool:
+    if int(metadata.get("schema_version", 0)) < BUILD_METADATA_SCHEMA_VERSION:
+        return False
+    metrics = metadata.get("metrics")
+    return isinstance(metrics, Mapping) and "snapshot" in metrics
+
+
 def _import_dependency_part(step_path: Path) -> Any:
     from shellforgepy.simple import import_solid_from_step
 
@@ -941,6 +956,109 @@ def _declared_dependency_names_for_metadata(
         if str(entry.get("name")) == str(assembly_name):
             return _dependency_names(entry)
     return []
+
+
+def _metrics_aggregation_closure(
+    build_results: Sequence[Mapping[str, Any]],
+    root_assembly_names: Sequence[str],
+) -> List[Mapping[str, Any]]:
+    by_name = {
+        str(result["assembly_name"]): result
+        for result in build_results
+        if result.get("assembly_name")
+    }
+    ordered_results: List[Mapping[str, Any]] = []
+    seen: set[str] = set()
+    stack = list(root_assembly_names)
+
+    while stack:
+        assembly_name = stack.pop()
+        if assembly_name in seen:
+            continue
+        seen.add(assembly_name)
+
+        metadata = by_name.get(assembly_name)
+        if metadata is None:
+            continue
+
+        ordered_results.append(metadata)
+        declared_dependencies = list(metadata.get("declared_dependencies") or [])
+        injected_dependencies = [
+            dependency.get("assembly_name")
+            for dependency in metadata.get("dependencies", [])
+            if dependency.get("assembly_name")
+        ]
+        for dependency_name in reversed(
+            [*declared_dependencies, *injected_dependencies]
+        ):
+            stack.append(str(dependency_name))
+
+    return ordered_results
+
+
+def _combined_metrics_snapshot_for_results(
+    build_results: Sequence[Mapping[str, Any]],
+    root_assembly_names: Sequence[str],
+) -> dict[str, Any] | None:
+    from shellforgepy.metrics import merge_metrics_snapshot
+
+    matching_results = _metrics_aggregation_closure(build_results, root_assembly_names)
+    if not matching_results:
+        return None
+
+    reset_metrics()
+    try:
+        for metadata in reversed(matching_results):
+            metrics = metadata.get("metrics") or {}
+            snapshot = metrics.get("snapshot")
+            if snapshot:
+                merge_metrics_snapshot(snapshot)
+
+        combined_snapshot = snapshot_metrics()
+        if not snapshot_has_metrics(combined_snapshot):
+            return None
+        return combined_snapshot
+    finally:
+        reset_metrics()
+
+
+def _scene_metrics_assembly_names(
+    *,
+    seed_assemblies: Sequence[str],
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+    repository_dir: Path,
+    mode: str,
+    config_data: Optional[Mapping[str, Any]] = None,
+) -> List[str]:
+    resolved: List[str] = []
+    seen: set[str] = set()
+    pending = list(seed_assemblies)
+
+    while pending:
+        assembly_name = pending.pop()
+        if assembly_name in seen:
+            continue
+        seen.add(assembly_name)
+        resolved.append(assembly_name)
+
+        metadata = built_results_by_name.get(assembly_name)
+        if metadata is None:
+            metadata = _dependency_metadata_for_assembly(
+                assembly_name,
+                built_results_by_name,
+                repository_dir,
+            )
+
+        resource_data = _load_yaml(
+            Path(metadata["resource_file"]).expanduser().resolve()
+        )
+        for dependency_name in reversed(
+            _scene_dependency_names(resource_data, mode, config_data)
+        ):
+            if dependency_name not in seen:
+                pending.append(dependency_name)
+
+    return resolved
 
 
 def _dependency_step_path(metadata: Mapping[str, Any], artifact: str) -> Path:
@@ -2282,20 +2400,26 @@ def build_from_file(
 
             if metadata_path.exists() and not force:
                 cached_metadata = _read_metadata(metadata_path)
-                cached_metadata["cache_hit"] = True
-                results.append(cached_metadata)
-                built_results_by_name[resolved.name] = cached_metadata
-                placement_state = _advance_placement_execution(
-                    placement_state,
-                    built_results_by_name=built_results_by_name,
-                    repository_dir=repository_path,
-                )
+                if _metadata_supports_current_schema(cached_metadata):
+                    cached_metadata["cache_hit"] = True
+                    results.append(cached_metadata)
+                    built_results_by_name[resolved.name] = cached_metadata
+                    placement_state = _advance_placement_execution(
+                        placement_state,
+                        built_results_by_name=built_results_by_name,
+                        repository_dir=repository_path,
+                    )
+                    _logger.info(
+                        "Using cached build for '%s' from %s",
+                        resolved.name,
+                        metadata_path,
+                    )
+                    continue
                 _logger.info(
-                    "Using cached build for '%s' from %s",
+                    "Rebuilding assembly '%s' because cached metadata at %s uses an older schema",
                     resolved.name,
                     metadata_path,
                 )
-                continue
 
             _logger.info(
                 "Building assembly '%s' with %s",
@@ -2307,16 +2431,26 @@ def build_from_file(
                 generator_kwargs[injection.kwarg_name] = injection.part
             if generator_context is not None:
                 generator_kwargs["context"] = deepcopy(generator_context)
-            generated_part = generator(**generator_kwargs)
+            reset_metrics()
+            try:
+                generated_part = generator(**generator_kwargs)
+                metrics_snapshot = snapshot_metrics()
+            finally:
+                reset_metrics()
             artifacts = _export_artifacts(
                 resolved.name,
                 parameter_hash,
                 generated_part,
                 artifact_dir,
             )
+            metrics_report_path = write_metrics_report(
+                artifact_dir,
+                base_name=f"{resolved.name}__{parameter_hash}__metrics_report",
+                snapshot=metrics_snapshot,
+            )
 
             metadata = {
-                "schema_version": 1,
+                "schema_version": BUILD_METADATA_SCHEMA_VERSION,
                 "cache_hit": False,
                 "built_at": _utc_now_iso(),
                 "project_root": str(project_root),
@@ -2356,6 +2490,15 @@ def build_from_file(
                     for injection in dependency_injections
                 ],
                 "artifacts": artifacts,
+                "metrics": {
+                    "has_metrics": snapshot_has_metrics(metrics_snapshot),
+                    "snapshot": metrics_snapshot,
+                    "report_path": (
+                        None
+                        if metrics_report_path is None
+                        else str(metrics_report_path.resolve())
+                    ),
+                },
             }
             _write_metadata(metadata_path, metadata)
             results.append(metadata)
@@ -2499,6 +2642,17 @@ def _export_scene_for_assembly(
         mode,
         config_data,
     )
+    metrics_assembly_names = _scene_metrics_assembly_names(
+        seed_assemblies=scene_assembly_names,
+        built_results_by_name=built_results_by_name,
+        repository_dir=repository_dir,
+        mode=mode,
+        config_data=config_data,
+    )
+    combined_metrics_snapshot = _combined_metrics_snapshot_for_results(
+        build_results,
+        metrics_assembly_names,
+    )
     env = {
         RUN_ID_ENV: run_id,
         RUN_DIR_ENV: str(run_directory),
@@ -2516,26 +2670,29 @@ def _export_scene_for_assembly(
             export_part = dict(part)
             export_part.pop("assembly_name", None)
             exportable_scene_parts.append(export_part)
-        arrange_and_export_parts(
-            exportable_scene_parts,
-            prod_gap=float(export_options["prod_gap"]),
-            bed_width=float(export_options["bed_width"]),
-            script_file=str(Path(selected_metadata["resource_file"]).resolve()),
-            export_directory=run_directory,
-            prod=production_mode,
-            process_data=process_data,
-            max_build_height=export_options.get("max_build_height"),
-            verbose=bool(getattr(args, "verbose", False)),
-            export_step=bool(export_options.get("export_step", True)),
-            export_obj=bool(export_options.get("export_obj", True)),
-            export_individual_parts=bool(
-                export_options.get("export_individual_parts", True)
-            ),
-            export_stl=bool(export_options.get("export_stl", True)),
-            mesh_cache_dir=repository_dir / "__mesh_cache__" / "obj",
-            plates=export_options.get("plates"),
-            auto_assign_plates=bool(export_options.get("auto_assign_plates", False)),
-        )
+        with using_metrics_snapshot(combined_metrics_snapshot):
+            arrange_and_export_parts(
+                exportable_scene_parts,
+                prod_gap=float(export_options["prod_gap"]),
+                bed_width=float(export_options["bed_width"]),
+                script_file=str(Path(selected_metadata["resource_file"]).resolve()),
+                export_directory=run_directory,
+                prod=production_mode,
+                process_data=process_data,
+                max_build_height=export_options.get("max_build_height"),
+                verbose=bool(getattr(args, "verbose", False)),
+                export_step=bool(export_options.get("export_step", True)),
+                export_obj=bool(export_options.get("export_obj", True)),
+                export_individual_parts=bool(
+                    export_options.get("export_individual_parts", True)
+                ),
+                export_stl=bool(export_options.get("export_stl", True)),
+                mesh_cache_dir=repository_dir / "__mesh_cache__" / "obj",
+                plates=export_options.get("plates"),
+                auto_assign_plates=bool(
+                    export_options.get("auto_assign_plates", False)
+                ),
+            )
 
     if not manifest_path.exists():
         raise BuilderError(f"Expected workflow manifest at {manifest_path}")

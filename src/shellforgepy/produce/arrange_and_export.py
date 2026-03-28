@@ -22,6 +22,11 @@ from shellforgepy.adapters._adapter import get_bounding_box
 from shellforgepy.adapters._adapter import tesellate as adapter_tesellate
 from shellforgepy.construct.alignment_operations import rotate_part, translate
 from shellforgepy.construct.part_collector import PartCollector
+from shellforgepy.metrics import (
+    has_metrics,
+    was_metrics_report_logged,
+    write_metrics_report,
+)
 from shellforgepy.produce.obj_file_export import export_colored_meshes_to_obj
 from shellforgepy.produce.production_parts_model import PartList
 
@@ -846,6 +851,19 @@ def arrange_and_export_parts(
             manifest_data["process_data_path"] = str(process_filename.resolve())
     elif process_data is not None:
         _logger.info("Skipping process data export because export_stl=False")
+
+    metrics_report_path = None
+    if has_metrics():
+        metrics_report_path = write_metrics_report(
+            export_dir,
+            base_name=f"{_safe_name(base_name)}_metrics_report",
+        )
+        if metrics_report_path is not None:
+            _logger.info("Exported metrics report to %s", metrics_report_path)
+
+    if manifest_data is not None and metrics_report_path is not None:
+        manifest_data["metrics_report_path"] = str(metrics_report_path.resolve())
+        manifest_data["metrics_report_logged"] = was_metrics_report_logged()
 
     if manifest_path is not None and manifest_data is not None:
         if assembly_path is not None:
