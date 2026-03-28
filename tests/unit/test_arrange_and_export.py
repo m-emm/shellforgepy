@@ -1,5 +1,6 @@
 import pytest
 from shellforgepy.produce.arrange_and_export import (
+    _arrange_parts_for_production,
     _center_plate_parts_on_bed,
     _split_parts_into_plates,
 )
@@ -89,3 +90,18 @@ def test_center_plate_parts_on_bed_recenters_subset_independently():
     assert min_y == pytest.approx(40.0)
     assert max_y == pytest.approx(180.0)
     assert centered[0]["transform_history"][-1]["kind"] == "translate"
+
+
+def test_arrange_parts_for_production_allows_overflow_for_visualization():
+    arranged = _arrange_parts_for_production(
+        [{"name": "oversize", "part": create_box(270.4, 144.0, 10.0)}],
+        gap=1.0,
+        bed_width=220.0,
+        enforce_bed_size=False,
+    )
+
+    assert [entry["name"] for entry in arranged] == ["oversize"]
+
+    min_point, max_point = get_bounding_box(arranged[0]["part"])
+    assert max_point[0] - min_point[0] == pytest.approx(270.4)
+    assert max_point[1] - min_point[1] == pytest.approx(144.0)

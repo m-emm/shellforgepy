@@ -279,6 +279,7 @@ def _arrange_parts_for_production(
     bed_depth=None,
     verbose=False,
     max_build_height=None,
+    enforce_bed_size=True,
 ):
     """
     Arrange parts for production with proper flipping and rotation support.
@@ -373,18 +374,34 @@ def _arrange_parts_for_production(
         width = rect["width"]
         height = rect["height"]
 
-        if width > bed_width:
+        if width > bed_width and enforce_bed_size:
             raise ValueError(
                 f"Part '{rect['name']}' too wide for bed ({width:.1f}mm > {bed_width}mm)"
+            )
+        elif width > bed_width:
+            _logger.warning(
+                "Part '%s' exceeds bed width for production visualization "
+                "(%0.1fmm > %0.1fmm); keeping it for export",
+                rect["name"],
+                width,
+                bed_width,
             )
         else:
             _logger.info(
                 f"Part '{rect['name']}' fits width-wise: {width:.1f}mm <= {bed_width}mm"
             )
 
-        if height > bed_depth:
+        if height > bed_depth and enforce_bed_size:
             raise ValueError(
                 f"Part '{rect['name']}' too deep for bed ({height:.1f}mm > {bed_depth}mm)"
+            )
+        elif height > bed_depth:
+            _logger.warning(
+                "Part '%s' exceeds bed depth for production visualization "
+                "(%0.1fmm > %0.1fmm); keeping it for export",
+                rect["name"],
+                height,
+                bed_depth,
             )
         else:
             _logger.info(
@@ -634,6 +651,7 @@ def arrange_and_export_parts(
     mesh_cache_dir=None,
     plates=None,
     auto_assign_plates=False,
+    enforce_bed_size=True,
 ):
     """Arrange named parts with production support and export requested formats.
 
@@ -705,6 +723,7 @@ def arrange_and_export_parts(
             bed_width=bed_width,
             max_build_height=max_build_height,
             verbose=verbose,
+            enforce_bed_size=enforce_bed_size,
         )
     else:
         arranged_parts = []

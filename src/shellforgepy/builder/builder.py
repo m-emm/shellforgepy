@@ -2313,6 +2313,39 @@ def _resolve_export_options(
     return resolved
 
 
+def _apply_prototype_arrange_overrides(
+    export_options: Mapping[str, Any],
+    *,
+    selected_metadata: Mapping[str, Any],
+    selected_resource_data: Mapping[str, Any],
+    config_data: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    production_section = _builder_section(
+        selected_resource_data,
+        "Production",
+        config_data,
+    )
+    prototype = production_section.get("prototype")
+    if prototype is None:
+        return dict(export_options)
+    if not isinstance(prototype, Mapping):
+        raise BuilderError("Builder.Production.prototype must be a mapping")
+
+    arrange = prototype.get("arrange")
+    if arrange is None:
+        return dict(export_options)
+    if not isinstance(arrange, Mapping):
+        raise BuilderError("Builder.Production.prototype.arrange must be a mapping")
+
+    resolved = dict(export_options)
+    resolved.update(
+        _resolve_inline_mapping(
+            arrange, _metadata_resolution_context(selected_metadata)
+        )
+    )
+    return resolved
+
+
 def _resolve_prototype_reference(reference: str, selected_assembly: str) -> str:
     normalized = str(reference).strip()
     if not normalized:
@@ -2921,6 +2954,12 @@ def _export_scene_for_assembly(
         config_data,
     )
     if bool(getattr(args, "prototype", False)):
+        export_options = _apply_prototype_arrange_overrides(
+            export_options,
+            selected_metadata=selected_metadata,
+            selected_resource_data=selected_resource_data,
+            config_data=config_data,
+        )
         export_options["plates"] = _filter_declared_plates_for_scene_parts(
             export_options.get("plates"),
             scene_parts,
@@ -2953,6 +2992,12 @@ def _export_scene_for_assembly(
             export_part = dict(part)
             export_part.pop("assembly_name", None)
             exportable_scene_parts.append(export_part)
+        enforce_bed_size = not (
+            bool(getattr(args, "visualize", False))
+            and production_mode
+            and not bool(getattr(args, "slice", False))
+            and not bool(getattr(args, "upload", False))
+        )
         with using_metrics_snapshot(combined_metrics_snapshot):
             arrange_and_export_parts(
                 exportable_scene_parts,
@@ -2975,6 +3020,7 @@ def _export_scene_for_assembly(
                 auto_assign_plates=bool(
                     export_options.get("auto_assign_plates", False)
                 ),
+                enforce_bed_size=enforce_bed_size,
             )
 
     if not manifest_path.exists():

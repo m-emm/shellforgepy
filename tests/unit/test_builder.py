@@ -2676,6 +2676,65 @@ def test_resolve_export_options_supports_plate_configuration():
     ]
 
 
+def test_apply_prototype_arrange_overrides_merges_prototype_only_settings():
+    resolved = builder._apply_prototype_arrange_overrides(
+        {
+            "prod_gap": 1.0,
+            "bed_width": 220,
+            "max_build_height": None,
+            "export_step": True,
+            "export_obj": True,
+            "export_individual_parts": False,
+            "export_stl": True,
+            "plates": [
+                {"name": "front_left", "parts": ["front_left_uc"]},
+                {"name": "front_right", "parts": ["front_right_uc"]},
+            ],
+            "auto_assign_plates": False,
+        },
+        selected_metadata={
+            "public_parameters": {"holder_margin": 6},
+            "generator_kwargs": {},
+            "generator_context": {},
+        },
+        selected_resource_data={
+            "Builder": {
+                "Production": {
+                    "prototype": {
+                        "arrange": {
+                            "bed_width": {"$expr": {"$sub": "200 + ${holder_margin}"}},
+                            "plates": [
+                                {
+                                    "name": "prototype_pair",
+                                    "parts": ["front_left_uc", "front_right_uc"],
+                                }
+                            ],
+                        }
+                    }
+                }
+            }
+        },
+        config_data=None,
+    )
+
+    assert resolved == {
+        "prod_gap": 1.0,
+        "bed_width": 206,
+        "max_build_height": None,
+        "export_step": True,
+        "export_obj": True,
+        "export_individual_parts": False,
+        "export_stl": True,
+        "plates": [
+            {
+                "name": "prototype_pair",
+                "parts": ["front_left_uc", "front_right_uc"],
+            }
+        ],
+        "auto_assign_plates": False,
+    }
+
+
 def test_resolve_prototype_reference_supports_self_and_relative_selectors():
     assert (
         builder._resolve_prototype_reference(
