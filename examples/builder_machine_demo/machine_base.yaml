@@ -1,0 +1,22 @@
+ShellforgepyBuilderVersion: "2026-03-27"
+
+Parameters:
+  length:
+    Type: Float
+  width:
+    Type: Float
+  height:
+    Type: Float
+
+Parts:
+  Base:
+    Type: Shellforgepy::Assembly
+    Properties:
+      Generator: shellforgepy.simple.create_box
+      Properties:
+        length:
+          $ref: length
+        width:
+          $ref: width
+        height:
+          $ref: height

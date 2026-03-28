@@ -1,0 +1,46 @@
+globals:
+  machine_name: mini-mill
+
+assemblies:
+  - name: machine_base
+    parameters:
+      length: 260
+      width: 180
+      height: 24
+
+  - name: guide_column
+    depends_on:
+      - machine_base
+    parameters:
+      radius: 20
+      height: 220
+
+  - name: spindle_head
+    depends_on:
+      - guide_column
+    parameters:
+      length: 90
+      width: 70
+      height: 55
+
+placement:
+  alignments:
+    # Keep the column centered over the base in X/Y, then stack in Z.
+    - part: guide_column
+      to: machine_base
+      alignment: CENTER
+      axes: [0, 1]
+
+    - part: guide_column
+      to: machine_base
+      alignment: STACK_TOP
+
+    # Keep the spindle head centered over the column in X/Y, then stack in Z.
+    - part: spindle_head
+      to: guide_column
+      alignment: CENTER
+      axes: [0, 1]
+
+    - part: spindle_head
+      to: guide_column
+      alignment: STACK_TOP
