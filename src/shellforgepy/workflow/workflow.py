@@ -1080,6 +1080,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Export a production scene for the selected assembly.",
     )
     build_parser.add_argument(
+        "--prototype",
+        action="store_true",
+        help="Apply Builder.Production.prototype filtering and clipping before export.",
+    )
+    build_parser.add_argument(
         "--slice",
         action="store_true",
         help="Run OrcaSlicer after exporting a production scene.",

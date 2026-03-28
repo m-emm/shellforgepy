@@ -2674,3 +2674,128 @@ def test_resolve_export_options_supports_plate_configuration():
         {"name": "plate_a", "parts": ["frame"]},
         {"name": "plate_b", "parts": ["feet"]},
     ]
+
+
+def test_resolve_prototype_reference_supports_self_and_relative_selectors():
+    assert (
+        builder._resolve_prototype_reference(
+            "self.non_production_parts.mount_tower_left_front",
+            "print_bed_undercarriage_assembly",
+        )
+        == "print_bed_undercarriage_assembly.non_production_parts.mount_tower_left_front"
+    )
+    assert (
+        builder._resolve_prototype_reference(
+            "followers.front_left_uc",
+            "print_bed_undercarriage_assembly",
+        )
+        == "print_bed_undercarriage_assembly.followers.front_left_uc"
+    )
+    assert (
+        builder._resolve_prototype_reference(
+            "print_bed_assembly.leader",
+            "print_bed_undercarriage_assembly",
+        )
+        == "print_bed_assembly.leader"
+    )
+
+
+def test_apply_prototype_configuration_filters_and_clips_parts(monkeypatch, tmp_path):
+    import shellforgepy.geometry.keepouts as keepouts
+    import shellforgepy.simple as simple
+
+    metadata = {
+        "assembly_name": "print_bed_undercarriage_assembly",
+        "public_parameters": {"holder_margin": 4},
+        "generator_kwargs": {},
+        "generator_context": {"BIG_THING": 500},
+    }
+    resource_data = {
+        "Builder": {
+            "Production": {
+                "prototype": {
+                    "include_parts": ["front_left_uc", "front_right_uc"],
+                    "exclude_parts": ["front_right_uc"],
+                    "box_cutters": [
+                        {
+                            "part": "front_left_uc",
+                            "around": "self.non_production_parts.mount_tower_left_front",
+                            "size": [
+                                34,
+                                {"$expr": {"$sub": "30 + ${holder_margin}"}},
+                                70,
+                            ],
+                            "offset": [1, 2, 3],
+                        }
+                    ],
+                }
+            }
+        }
+    }
+    scene_parts = [
+        {"name": "front_left_uc", "part": "front-left", "transform_history": []},
+        {"name": "front_right_uc", "part": "front-right", "transform_history": []},
+        {"name": "belt_clamp_clamp_front", "part": "clamp", "transform_history": []},
+    ]
+
+    class FakeKeepVolume:
+        def __init__(self, size, cutter_size):
+            self.size = size
+            self.cutter_size = cutter_size
+
+        def use_as_cutter_on(self, part):
+            return f"clipped:{part}:{self.size}:{self.cutter_size}"
+
+    captured = {}
+
+    def fake_create_box_hole_cutter(x, y, z, *, cutter_size):
+        captured["size"] = (x, y, z)
+        captured["cutter_size"] = cutter_size
+        return FakeKeepVolume((x, y, z), cutter_size)
+
+    def fake_align(part, anchor, alignment):
+        captured["anchor"] = anchor
+        captured["alignment"] = alignment
+        return part
+
+    def fake_translate(x, y, z):
+        captured["offset"] = (x, y, z)
+        return lambda part: part
+
+    monkeypatch.setattr(keepouts, "create_box_hole_cutter", fake_create_box_hole_cutter)
+    monkeypatch.setattr(simple, "align", fake_align)
+    monkeypatch.setattr(simple, "translate", fake_translate)
+    monkeypatch.setattr(
+        builder,
+        "_resolve_prototype_anchor_part",
+        lambda *args, **kwargs: "anchor-part",
+    )
+
+    prototype_parts = builder._apply_prototype_configuration(
+        scene_parts,
+        selected_metadata=metadata,
+        selected_resource_data=resource_data,
+        selected_assembly="print_bed_undercarriage_assembly",
+        built_results_by_name={"print_bed_undercarriage_assembly": metadata},
+        repository_dir=tmp_path,
+        placement_state=None,
+        config_data=None,
+    )
+
+    assert [part["name"] for part in prototype_parts] == ["front_left_uc"]
+    assert prototype_parts[0]["part"] == "clipped:front-left:(34.0, 34.0, 70.0):500.0"
+    assert prototype_parts[0]["transform_history"][-1] == {
+        "kind": "prototype_box_cutter",
+        "part": "front_left_uc",
+        "around": "self.non_production_parts.mount_tower_left_front",
+        "size": [34.0, 34.0, 70.0],
+        "cutter_size": 500.0,
+        "offset": [1.0, 2.0, 3.0],
+    }
+    assert captured == {
+        "size": (34.0, 34.0, 70.0),
+        "cutter_size": 500.0,
+        "anchor": "anchor-part",
+        "alignment": simple.Alignment.CENTER,
+        "offset": (1.0, 2.0, 3.0),
+    }

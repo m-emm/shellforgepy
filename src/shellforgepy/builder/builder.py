@@ -2313,6 +2313,263 @@ def _resolve_export_options(
     return resolved
 
 
+def _resolve_prototype_reference(reference: str, selected_assembly: str) -> str:
+    normalized = str(reference).strip()
+    if not normalized:
+        raise BuilderError("Prototype reference must not be empty")
+    if normalized.startswith("self."):
+        return f"{selected_assembly}.{normalized[len('self.'):]}"
+    if "." not in normalized or normalized.startswith(
+        ("leader", "fused", "followers.", "cutters.", "non_production_parts.")
+    ):
+        return f"{selected_assembly}.{normalized}"
+    return normalized
+
+
+def _resolve_prototype_part_names(
+    raw_names: Any,
+    context: Mapping[str, Any],
+    *,
+    field_name: str,
+) -> Optional[set[str]]:
+    if raw_names is None:
+        return None
+    resolved_names = _resolve_inline_value(raw_names, context)
+    if not isinstance(resolved_names, list):
+        raise BuilderError(f"Builder.Production.prototype.{field_name} must be a list")
+    return {str(item) for item in resolved_names}
+
+
+def _resolve_prototype_anchor_part(
+    reference: str,
+    *,
+    selected_assembly: str,
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+    repository_dir: Path,
+    placement_state: Optional[_PlacementExecutionState],
+    config_data: Optional[Mapping[str, Any]],
+) -> Any:
+    resolved_reference = _resolve_prototype_reference(reference, selected_assembly)
+    known_assembly_names = _known_assembly_names(config_data, built_results_by_name)
+    assembly_name, selector = _parse_part_reference(
+        resolved_reference, known_assembly_names
+    )
+    metadata = _dependency_metadata_for_assembly(
+        assembly_name,
+        built_results_by_name,
+        repository_dir,
+    )
+    entries = _artifact_entries_for_selector(metadata, selector)
+    if len(entries) != 1:
+        raise BuilderError(
+            f"Prototype anchor '{reference}' did not resolve to exactly one artifact"
+        )
+    anchor = _import_dependency_part(Path(entries[0]["path"]).expanduser().resolve())
+    return _apply_placement_state_to_part(anchor, assembly_name, placement_state)
+
+
+def _apply_prototype_configuration(
+    scene_parts: List[Dict[str, Any]],
+    *,
+    selected_metadata: Mapping[str, Any],
+    selected_resource_data: Mapping[str, Any],
+    selected_assembly: str,
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+    repository_dir: Path,
+    placement_state: Optional[_PlacementExecutionState],
+    config_data: Optional[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    from shellforgepy.construct.alignment import Alignment
+    from shellforgepy.geometry.keepouts import create_box_hole_cutter
+    from shellforgepy.simple import align, translate
+
+    production_section = _builder_section(
+        selected_resource_data,
+        "Production",
+        config_data,
+    )
+    prototype = production_section.get("prototype")
+    if prototype is None:
+        raise BuilderError(
+            f"Assembly '{selected_assembly}' does not declare Builder.Production.prototype"
+        )
+    if not isinstance(prototype, Mapping):
+        raise BuilderError("Builder.Production.prototype must be a mapping")
+
+    context = _metadata_resolution_context(selected_metadata)
+    include_parts = _resolve_prototype_part_names(
+        prototype.get("include_parts"),
+        context,
+        field_name="include_parts",
+    )
+    exclude_parts = (
+        _resolve_prototype_part_names(
+            prototype.get("exclude_parts"),
+            context,
+            field_name="exclude_parts",
+        )
+        or set()
+    )
+
+    filtered_scene_parts: List[Dict[str, Any]] = []
+    for item in scene_parts:
+        name = str(item.get("name"))
+        if include_parts is not None and name not in include_parts:
+            continue
+        if name in exclude_parts:
+            continue
+        filtered_scene_parts.append(dict(item))
+
+    if not filtered_scene_parts:
+        raise BuilderError(
+            f"Prototype selection for assembly '{selected_assembly}' resolved to no parts"
+        )
+
+    by_name = {str(item["name"]): item for item in filtered_scene_parts}
+    box_cutters = prototype.get("box_cutters", [])
+    if box_cutters is None:
+        box_cutters = []
+    if not isinstance(box_cutters, list):
+        raise BuilderError("Builder.Production.prototype.box_cutters must be a list")
+
+    for index, cutter_spec in enumerate(box_cutters):
+        if not isinstance(cutter_spec, Mapping):
+            raise BuilderError("Prototype box cutter entries must be mappings")
+
+        target_names: list[str]
+        if "part" in cutter_spec and "parts" in cutter_spec:
+            raise BuilderError(
+                "Prototype box cutter may specify either 'part' or 'parts', not both"
+            )
+        if "part" in cutter_spec:
+            target_names = [str(_resolve_inline_value(cutter_spec["part"], context))]
+        elif "parts" in cutter_spec:
+            resolved_parts = _resolve_inline_value(cutter_spec["parts"], context)
+            if not isinstance(resolved_parts, list):
+                raise BuilderError("Prototype box cutter parts must resolve to a list")
+            target_names = [str(item) for item in resolved_parts]
+        else:
+            raise BuilderError("Prototype box cutter requires 'part' or 'parts'")
+
+        around = cutter_spec.get("around") or cutter_spec.get("center_on")
+        if around is None:
+            raise BuilderError("Prototype box cutter requires 'around'")
+        around_reference = str(_resolve_inline_value(around, context))
+        anchor_part = _resolve_prototype_anchor_part(
+            around_reference,
+            selected_assembly=selected_assembly,
+            built_results_by_name=built_results_by_name,
+            repository_dir=repository_dir,
+            placement_state=placement_state,
+            config_data=config_data,
+        )
+
+        resolved_size = _resolve_inline_value(cutter_spec.get("size"), context)
+        if not isinstance(resolved_size, (list, tuple)) or len(resolved_size) != 3:
+            raise BuilderError("Prototype box cutter size must resolve to three values")
+        size = tuple(float(value) for value in resolved_size)
+
+        resolved_cutter_size = cutter_spec.get(
+            "cutter_size",
+            context.get("BIG_THING", 500.0),
+        )
+        cutter_size = float(_resolve_inline_value(resolved_cutter_size, context))
+
+        keep_volume = create_box_hole_cutter(
+            size[0],
+            size[1],
+            size[2],
+            cutter_size=cutter_size,
+        )
+        keep_volume = align(keep_volume, anchor_part, Alignment.CENTER)
+        if cutter_spec.get("offset") is not None:
+            resolved_offset = _resolve_inline_value(cutter_spec.get("offset"), context)
+            if (
+                not isinstance(resolved_offset, (list, tuple))
+                or len(resolved_offset) != 3
+            ):
+                raise BuilderError(
+                    "Prototype box cutter offset must resolve to three values"
+                )
+            keep_volume = translate(
+                float(resolved_offset[0]),
+                float(resolved_offset[1]),
+                float(resolved_offset[2]),
+            )(keep_volume)
+
+        for target_name in target_names:
+            target_part = by_name.get(target_name)
+            if target_part is None:
+                raise BuilderError(
+                    f"Prototype box cutter #{index + 1} targets unknown part '{target_name}'"
+                )
+            target_part["part"] = keep_volume.use_as_cutter_on(target_part["part"])
+            transform_history = list(target_part.get("transform_history") or [])
+            transform_history.append(
+                {
+                    "kind": "prototype_box_cutter",
+                    "part": target_name,
+                    "around": around_reference,
+                    "size": [float(value) for value in size],
+                    "cutter_size": cutter_size,
+                    **(
+                        {
+                            "offset": [
+                                float(resolved_offset[0]),
+                                float(resolved_offset[1]),
+                                float(resolved_offset[2]),
+                            ]
+                        }
+                        if cutter_spec.get("offset") is not None
+                        else {}
+                    ),
+                }
+            )
+            target_part["transform_history"] = transform_history
+
+    return filtered_scene_parts
+
+
+def _filter_declared_plates_for_scene_parts(
+    declared_plates: Any,
+    scene_parts: Sequence[Mapping[str, Any]],
+) -> Any:
+    if not declared_plates:
+        return declared_plates
+
+    valid_names = {str(item["name"]) for item in scene_parts}
+
+    if isinstance(declared_plates, dict):
+        filtered: Dict[str, List[str]] = {}
+        for plate_name, part_names in declared_plates.items():
+            filtered_parts = [
+                str(name) for name in list(part_names or []) if str(name) in valid_names
+            ]
+            if filtered_parts:
+                filtered[str(plate_name)] = filtered_parts
+        return filtered
+
+    if isinstance(declared_plates, list):
+        filtered_list: List[Dict[str, Any]] = []
+        for index, entry in enumerate(declared_plates, start=1):
+            if not isinstance(entry, Mapping):
+                raise BuilderError("Each declared plate must be a mapping")
+            filtered_parts = [
+                str(name)
+                for name in list(entry.get("parts", []) or [])
+                if str(name) in valid_names
+            ]
+            if not filtered_parts:
+                continue
+            filtered_entry = dict(entry)
+            filtered_entry["name"] = str(entry.get("name") or f"plate_{index}")
+            filtered_entry["parts"] = filtered_parts
+            filtered_list.append(filtered_entry)
+        return filtered_list
+
+    raise BuilderError("plates must be a mapping or a list")
+
+
 @contextmanager
 def _temporary_environment(values: Mapping[str, str]):
     previous: Dict[str, Optional[str]] = {}
@@ -2620,6 +2877,27 @@ def _export_scene_for_assembly(
         config_data=config_data,
     )
 
+    if bool(getattr(args, "prototype", False)):
+        placement_state = _initialize_placement_execution_state(
+            config_data,
+            built_results_by_name,
+        )
+        placement_state = _advance_placement_execution(
+            placement_state,
+            built_results_by_name=built_results_by_name,
+            repository_dir=repository_dir,
+        )
+        scene_parts = _apply_prototype_configuration(
+            scene_parts,
+            selected_metadata=selected_metadata,
+            selected_resource_data=selected_resource_data,
+            selected_assembly=selected_assembly,
+            built_results_by_name=built_results_by_name,
+            repository_dir=repository_dir,
+            placement_state=placement_state,
+            config_data=config_data,
+        )
+
     if not scene_parts:
         raise BuilderError(
             f"No scene parts resolved for assembly '{selected_assembly}' in {mode} mode"
@@ -2642,6 +2920,11 @@ def _export_scene_for_assembly(
         mode,
         config_data,
     )
+    if bool(getattr(args, "prototype", False)):
+        export_options["plates"] = _filter_declared_plates_for_scene_parts(
+            export_options.get("plates"),
+            scene_parts,
+        )
     metrics_assembly_names = _scene_metrics_assembly_names(
         seed_assemblies=scene_assembly_names,
         built_results_by_name=built_results_by_name,
@@ -2724,6 +3007,7 @@ def run_builder(args: argparse.Namespace) -> int:
 
     production_mode = bool(
         getattr(args, "production", False)
+        or getattr(args, "prototype", False)
         or getattr(args, "slice", False)
         or getattr(args, "upload", False)
     )
@@ -2833,6 +3117,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--production",
         action="store_true",
         help="Export a production scene using Builder.Production rules.",
+    )
+    parser.add_argument(
+        "--prototype",
+        action="store_true",
+        help="Apply Builder.Production.prototype filtering and clipping before export.",
     )
     parser.add_argument(
         "--slice",
