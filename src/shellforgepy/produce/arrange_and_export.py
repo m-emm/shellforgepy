@@ -486,6 +486,88 @@ def _arrange_parts_for_production(
     ]
 
 
+def _split_parts_into_plates(
+    arranged_parts,
+    *,
+    declared_plates=None,
+    auto_assign_plates=False,
+):
+    """Split arranged part entries into named plate groups.
+
+    Args:
+        arranged_parts: Sequence of arranged part dictionaries.
+        declared_plates: Optional declarative plate specification. Supports:
+            - [{"name": "plate_a", "parts": ["part_1", "part_2"]}, ...]
+            - {"plate_a": ["part_1", "part_2"], "plate_b": ["part_3"]}
+        auto_assign_plates: If True, unassigned parts are appended to auto-generated
+            plate names while preserving the existing arrangement order.
+    """
+
+    if not declared_plates and not auto_assign_plates:
+        return [("plate_1", list(arranged_parts))]
+
+    by_name = {entry["name"]: entry for entry in arranged_parts}
+    assigned_names = set()
+    plates = []
+
+    if declared_plates:
+        normalized_spec = []
+        if isinstance(declared_plates, dict):
+            for plate_name, part_names in declared_plates.items():
+                normalized_spec.append(
+                    {"name": str(plate_name), "parts": list(part_names or [])}
+                )
+        elif isinstance(declared_plates, list):
+            normalized_spec = list(declared_plates)
+        else:
+            raise ValueError("plates must be a mapping or a list")
+
+        for index, entry in enumerate(normalized_spec, start=1):
+            if not isinstance(entry, dict):
+                raise ValueError("Each declared plate must be a mapping")
+            plate_name = str(entry.get("name") or f"plate_{index}")
+            part_names = entry.get("parts", [])
+            if not isinstance(part_names, list):
+                raise ValueError(f"Plate '{plate_name}' parts must be a list")
+
+            plate_parts = []
+            for part_name in part_names:
+                if part_name not in by_name:
+                    raise ValueError(
+                        f"Plate '{plate_name}' references unknown part '{part_name}'"
+                    )
+                if part_name in assigned_names:
+                    raise ValueError(
+                        f"Part '{part_name}' is assigned to multiple declared plates"
+                    )
+                assigned_names.add(part_name)
+                plate_parts.append(by_name[part_name])
+            if plate_parts:
+                plates.append((plate_name, plate_parts))
+
+    remaining_parts = [
+        entry for entry in arranged_parts if entry["name"] not in assigned_names
+    ]
+
+    if remaining_parts:
+        if declared_plates and not auto_assign_plates:
+            unassigned_names = ", ".join(item["name"] for item in remaining_parts)
+            raise ValueError(
+                "Unassigned parts remain after declared plates: "
+                f"{unassigned_names}. Enable auto_assign_plates to place them automatically."
+            )
+
+        if auto_assign_plates:
+            for entry in remaining_parts:
+                plate_index = len(plates) + 1
+                plates.append((f"plate_{plate_index}", [entry]))
+
+    if not plates:
+        raise ValueError("No parts assigned to any plate")
+
+    return plates
+
+
 def arrange_and_export_parts(
     parts,
     prod_gap,
@@ -503,6 +585,8 @@ def arrange_and_export_parts(
     export_individual_parts=True,
     export_stl=True,
     mesh_cache_dir=None,
+    plates=None,
+    auto_assign_plates=False,
 ):
     """Arrange named parts with production support and export requested formats.
 
@@ -595,8 +679,11 @@ def arrange_and_export_parts(
                 }
             )
 
-    arranged_shapes = [item["part"] for item in arranged_parts]
-    names = [item["name"] for item in arranged_parts]
+    plate_groups = _split_parts_into_plates(
+        arranged_parts,
+        declared_plates=plates,
+        auto_assign_plates=auto_assign_plates,
+    )
 
     export_dir = Path(export_directory) if export_directory is not None else Path.home()
     export_dir = export_dir.expanduser()
@@ -604,6 +691,7 @@ def arrange_and_export_parts(
 
     if manifest_data is not None:
         manifest_data["export_dir"] = str(export_dir.resolve())
+        manifest_data["plates"] = []
 
     base_name = Path(script_file).stem or "cadquery_parts"
     fused_shape = None
@@ -612,60 +700,116 @@ def arrange_and_export_parts(
     obj_path = None
     needs_fused_export = export_stl or export_step
 
-    fused_collector = PartCollector() if needs_fused_export else None
+    for plate_name, plate_parts in plate_groups:
+        fused_collector = PartCollector() if needs_fused_export else None
+        safe_plate_name = _safe_name(plate_name)
+        if needs_fused_export:
+            _logger.info("Fusing parts for plate '%s'", plate_name)
 
-    if needs_fused_export:
-        _logger.info("Fusing parts")
+        plate_manifest = {
+            "name": plate_name,
+            "parts": [item["name"] for item in plate_parts],
+        }
 
-    for name, arranged_shape in zip(names, arranged_shapes):
-        try:
-            if fused_collector is not None:
-                fused_collector.fuse(arranged_shape)
+        for entry in plate_parts:
+            name = entry["name"]
+            arranged_shape = entry["part"]
+            try:
+                if fused_collector is not None:
+                    fused_collector.fuse(arranged_shape)
 
-            part_filename = export_dir / f"{base_name}_{_safe_name(name)}.stl"
+                part_filename = export_dir / f"{base_name}_{_safe_name(name)}.stl"
+                if export_stl and export_individual_parts:
+                    _logger.info("Exporting %s to %s", name, part_filename)
+                    export_solid_to_stl(arranged_shape, part_filename)
+                    _logger.info("Exported %s to %s", name, part_filename)
+                elif export_stl:
+                    _logger.info(
+                        "Skipping individual export for %s due to export_individual_parts=False",
+                        name,
+                    )
+
+                if export_step and export_individual_parts:
+                    step_filename = export_dir / f"{base_name}_{_safe_name(name)}.step"
+                    _logger.info("Exporting %s to %s", name, step_filename)
+                    export_solid_to_step(arranged_shape, step_filename)
+                    _logger.info("Exported %s to %s", name, step_filename)
+                elif export_step:
+                    _logger.info(
+                        "Skipping individual STEP export for %s due to export_individual_parts=False",
+                        name,
+                    )
+            except Exception as e:
+                raise RuntimeError(f"Failed to export part '{name}': {e}") from e
+
+        if fused_collector is not None:
+            fused_shape = fused_collector.part
+            assert fused_shape is not None
+        else:
+            fused_shape = None
+
+        plate_suffix = f"_{safe_plate_name}" if len(plate_groups) > 1 or plates else ""
+        current_assembly_path = None
+        current_step_path = None
+        current_process_path = None
+
+        if export_stl:
+            assert fused_shape is not None
+            current_assembly_path = export_dir / f"{base_name}{plate_suffix}.stl"
+            export_solid_to_stl(fused_shape, current_assembly_path)
+            _logger.info("Exported plate STL to %s", current_assembly_path)
+            if assembly_path is None:
+                assembly_path = current_assembly_path
+
+        if export_step:
+            assert fused_shape is not None
+            current_step_path = export_dir / f"{base_name}{plate_suffix}.step"
+            export_solid_to_step(fused_shape, current_step_path)
+            _logger.info("Exported plate STEP to %s", current_step_path)
+            if assembly_step_path is None:
+                assembly_step_path = current_step_path
+
+        if (
+            process_data is not None
+            and export_stl
+            and current_assembly_path is not None
+        ):
+            plate_process_data = deepcopy(process_data)
+            plate_process_data["part_file"] = current_assembly_path.resolve().as_posix()
+            current_process_path = current_assembly_path.with_name(
+                f"{current_assembly_path.stem}_process.json"
+            )
+            with current_process_path.open("w", encoding="utf-8") as handle:
+                json.dump(plate_process_data, handle, indent=4)
+            _logger.info("Exported process data to %s", current_process_path)
+
+        if manifest_data is not None:
             if export_stl and export_individual_parts:
-                _logger.info("Exporting %s to %s", name, part_filename)
-                export_solid_to_stl(arranged_shape, part_filename)
-                _logger.info("Exported %s to %s", name, part_filename)
-            elif export_stl:
-                _logger.info(
-                    "Skipping individual export for %s due to export_individual_parts=False",
-                    name,
-                )
-
-            if export_step and export_individual_parts:
-                step_filename = export_dir / f"{base_name}_{_safe_name(name)}.step"
-                _logger.info("Exporting %s to %s", name, step_filename)
-                export_solid_to_step(arranged_shape, step_filename)
-                _logger.info("Exported %s to %s", name, step_filename)
-            elif export_step:
-                _logger.info(
-                    "Skipping individual STEP export for %s due to export_individual_parts=False",
-                    name,
-                )
-
-            if manifest_data is not None and export_stl and export_individual_parts:
                 manifest_parts = manifest_data.setdefault("part_files", [])
                 if isinstance(manifest_parts, list):
-                    manifest_parts.append(str(part_filename.resolve()))
-        except Exception as e:
-            raise RuntimeError(f"Failed to export part '{name}': {e}") from e
+                    for item in plate_parts:
+                        manifest_parts.append(
+                            str(
+                                (
+                                    export_dir
+                                    / f"{base_name}_{_safe_name(item['name'])}.stl"
+                                ).resolve()
+                            )
+                        )
 
-    if fused_collector is not None:
-        fused_shape = fused_collector.part
-        assert fused_shape is not None  # fused_collector received at least one part
-
-    if export_stl:
-        assert fused_shape is not None
-        assembly_path = export_dir / f"{base_name}.stl"
-        export_solid_to_stl(fused_shape, assembly_path)
-        _logger.info("Exported whole part to %s", assembly_path)
-
-    if export_step:
-        assert fused_shape is not None
-        assembly_step_path = export_dir / f"{base_name}.step"
-        export_solid_to_step(fused_shape, assembly_step_path)
-        _logger.info("Exported whole part to %s", assembly_step_path)
+            plate_manifest["assembly_path"] = (
+                str(current_assembly_path.resolve())
+                if current_assembly_path is not None
+                else None
+            )
+            plate_manifest["process_data_path"] = (
+                str(current_process_path.resolve())
+                if current_process_path is not None
+                else None
+            )
+            manifest_plates = manifest_data.get("plates")
+            if isinstance(manifest_plates, list):
+                manifest_plates.append(plate_manifest)
 
     # Export colored OBJ file
     if export_obj:
@@ -695,20 +839,19 @@ def arrange_and_export_parts(
     if manifest_data is not None and assembly_step_path is not None:
         manifest_data["assembly_step_path"] = str(assembly_step_path.resolve())
 
-    if process_data is not None and export_stl:
-        assert assembly_path is not None
-        process_data["part_file"] = assembly_path.resolve().as_posix()
+    process_filename = None
+    if process_data is not None and export_stl and assembly_path is not None:
         process_filename = assembly_path.with_name(f"{assembly_path.stem}_process.json")
-        with process_filename.open("w", encoding="utf-8") as handle:
-            json.dump(process_data, handle, indent=4)
-        _logger.info("Exported process data to %s", process_filename)
-
         if manifest_data is not None:
             manifest_data["process_data_path"] = str(process_filename.resolve())
     elif process_data is not None:
         _logger.info("Skipping process data export because export_stl=False")
 
     if manifest_path is not None and manifest_data is not None:
+        if assembly_path is not None:
+            manifest_data["assembly_path"] = str(assembly_path.resolve())
+        if assembly_step_path is not None:
+            manifest_data["assembly_step_path"] = str(assembly_step_path.resolve())
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         with manifest_path.open("w", encoding="utf-8") as handle:
             json.dump(manifest_data, handle, indent=2, sort_keys=True)
@@ -739,6 +882,8 @@ def arrange_and_export(
     export_individual_parts=True,
     export_stl=True,
     mesh_cache_dir=None,
+    plates=None,
+    auto_assign_plates=False,
 ):
     """Arrange and export a single part with production support.
 
@@ -780,4 +925,6 @@ def arrange_and_export(
         export_individual_parts=export_individual_parts,
         export_stl=export_stl,
         mesh_cache_dir=mesh_cache_dir,
+        plates=plates,
+        auto_assign_plates=auto_assign_plates,
     )

@@ -361,6 +361,10 @@ def _upload_file_to_viewer(file_path: Path, upload_url: str) -> None:
         return response_data
 
 
+def _slugify_name(value: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value)
+
+
 def complete_workflow_run(
     args: argparse.Namespace,
     *,
@@ -371,12 +375,35 @@ def complete_workflow_run(
 ) -> int:
     slice_requested = bool(args.slice or args.upload)
 
+    plate_entries = manifest.get("plates")
+    plate_jobs: List[Dict[str, object]] = []
+    if isinstance(plate_entries, list):
+        for index, entry in enumerate(plate_entries, start=1):
+            if not isinstance(entry, dict):
+                continue
+            plate_name = str(entry.get("name") or f"plate_{index}")
+            part_entry = _resolve_manifest_path(
+                run_directory, entry.get("assembly_path")
+            )
+            process_entry = _resolve_manifest_path(
+                run_directory, entry.get("process_data_path")
+            )
+            if part_entry is None:
+                continue
+            plate_jobs.append(
+                {
+                    "name": plate_name,
+                    "part_path": part_entry,
+                    "process_path": process_entry,
+                }
+            )
+
     part_path = (
         Path(args.part_file).expanduser()
         if getattr(args, "part_file", None)
         else _resolve_manifest_path(run_directory, manifest.get("assembly_path"))
     )
-    if slice_requested:
+    if slice_requested and (getattr(args, "part_file", None) or not plate_jobs):
         part_path = _ensure_path(part_path, "generated STL")
         _logger.info("Detected part file: %s", part_path)
     else:
@@ -452,14 +479,52 @@ def complete_workflow_run(
                 _logger.info("  %s", file_path)
         return 0
 
-    process_path = (
+    process_path_override = (
         Path(args.process_file).expanduser()
         if getattr(args, "process_file", None)
-        else _resolve_manifest_path(run_directory, manifest.get("process_data_path"))
+        else None
     )
-    process_path = _ensure_path(process_path, "generated process data JSON")
+    if process_path_override is not None:
+        process_path_override = _ensure_path(
+            process_path_override, "generated process data JSON"
+        )
 
-    _logger.info("Detected process file: %s", process_path)
+    if process_path_override is not None:
+        slicing_jobs = [
+            {
+                "name": "plate_1",
+                "part_path": _ensure_path(part_path, "generated STL"),
+                "process_path": process_path_override,
+            }
+        ]
+    elif plate_jobs:
+        slicing_jobs = []
+        for job in plate_jobs:
+            resolved_part = _ensure_path(job.get("part_path"), "generated STL")
+            resolved_process = _ensure_path(
+                job.get("process_path"), "generated process data JSON"
+            )
+            slicing_jobs.append(
+                {
+                    "name": str(job["name"]),
+                    "part_path": resolved_part,
+                    "process_path": resolved_process,
+                }
+            )
+    else:
+        resolved_process_path = _resolve_manifest_path(
+            run_directory, manifest.get("process_data_path")
+        )
+        resolved_process_path = _ensure_path(
+            resolved_process_path, "generated process data JSON"
+        )
+        slicing_jobs = [
+            {
+                "name": "plate_1",
+                "part_path": _ensure_path(part_path, "generated STL"),
+                "process_path": resolved_process_path,
+            }
+        ]
 
     master_settings_dir = args.master_settings_dir or _resolve_config_key_value(
         config, "orca_master_settings_dir"
@@ -474,26 +539,8 @@ def complete_workflow_run(
             f"Master settings directory not found: {master_settings_dir}"
         )
 
-    _logger.info("Generating OrcaSlicer settings in %s", run_directory)
-    try:
-        generate_settings(
-            process_data_file=process_path,
-            output_dir=run_directory,
-            master_settings_dir=master_settings_dir,
-        )
-    except Exception as exc:
-        raise WorkflowError(f"Failed to generate OrcaSlicer settings: {exc}") from exc
-
-    settings_files = _gather_jsons(run_directory)
-    filament_files = _gather_filament_jsons(run_directory)
-
-    if not settings_files:
-        raise WorkflowError(
-            f"No settings JSON files were generated in {run_directory}."
-        )
-
-    slicer_output_dir = run_directory / "slicedata"
-    slicer_output_dir.mkdir(exist_ok=True)
+    slicer_output_root = run_directory / "slicedata"
+    slicer_output_root.mkdir(exist_ok=True)
 
     orca_exec = (
         args.orca_executable
@@ -511,35 +558,7 @@ def complete_workflow_run(
     debug_level = str(
         args.orca_debug or _resolve_config_key_value(config, "orca_debug_level") or 6
     )
-    project_filename = f"{Path(target_label).stem}.3mf"
-    project_path = run_directory / project_filename
-
-    settings_arg = ";".join(str(path) for path in settings_files)
-    slicer_cmd = [
-        str(orca_exec_path),
-        "--debug",
-        debug_level,
-        "--slice",
-        "0",
-        "--arrange",
-        "0",
-        "--outputdir",
-        str(run_directory),
-        "--export-slicedata",
-        str(slicer_output_dir),
-        "--export-3mf",
-        project_filename,
-        "--load-settings",
-        settings_arg,
-    ]
-
-    if filament_files:
-        filament_arg = ";".join(str(path) for path in filament_files)
-        slicer_cmd.extend(["--load-filaments", filament_arg])
-
-    slicer_cmd.append(str(part_path))
-
-    _logger.info("Running OrcaSlicer: %s", format_command(slicer_cmd))
+    project_paths: List[Path] = []
 
     orca_env_settings = _resolve_config_key_value(config, "orca_env")
     orca_env: Dict[str, str] = {}
@@ -554,56 +573,125 @@ def complete_workflow_run(
     if "QT_QPA_PLATFORM" not in orca_env and "QT_QPA_PLATFORM" not in os.environ:
         orca_env["QT_QPA_PLATFORM"] = "offscreen"
 
-    execute_subprocess(slicer_cmd, env=orca_env)
-
     render_script = _resolve_config_key_value(config, "render_script")
-    preview_path = run_directory / "plate_1_preview.png"
-
-    preview_generated = False
-    if render_script:
-        render_exec = _resolve_config_key_value(config, "render_executable")
-        render_args = _resolve_config_key_value(config, "render_args") or []
-        if isinstance(render_args, str):
-            render_args = shlex.split(render_args)
-        elif not isinstance(render_args, list):
-            render_args = []
-        if render_exec:
-            render_cmd = [
-                render_exec,
-                str(render_script),
-                str(part_path),
-                str(preview_path),
-            ]
-        else:
-            render_cmd = [
-                sys.executable,
-                str(render_script),
-                str(part_path),
-                str(preview_path),
-            ]
-        render_cmd.extend(str(arg) for arg in render_args)
+    for index, job in enumerate(slicing_jobs, start=1):
+        current_part_path = Path(job["part_path"])
+        current_process_path = Path(job["process_path"])
+        current_plate_name = str(job["name"])
         _logger.info(
-            "Generating preview via render script: %s", format_command(render_cmd)
+            "Detected part file for %s: %s", current_plate_name, current_part_path
         )
-        try:
-            execute_subprocess(render_cmd)
-            preview_generated = preview_path.exists()
-        except WorkflowError as exc:
-            _logger.warning("Preview generation failed: %s", exc)
+        _logger.info(
+            "Detected process file for %s: %s", current_plate_name, current_process_path
+        )
 
-    if not preview_generated and part_path.suffix.lower() == ".stl":
+        _logger.info("Generating OrcaSlicer settings in %s", run_directory)
         try:
-            from shellforgepy.workflow.preview_generator import render_stl_to_png
-
-            render_stl_to_png(
-                stl_path=part_path,
-                out_path=preview_path,
-                bed_mm=(220.0, 220.0, 220.0),
-                model_offset=(0, 0, 0),
+            generate_settings(
+                process_data_file=current_process_path,
+                output_dir=run_directory,
+                master_settings_dir=master_settings_dir,
             )
-            _logger.info("Generated preview image: %s", preview_path)
-        except Exception as exc:  # pragma: no cover - best effort
-            _logger.warning("Preview generation failed: %s", exc)
+        except Exception as exc:
+            raise WorkflowError(
+                f"Failed to generate OrcaSlicer settings: {exc}"
+            ) from exc
+
+        settings_files = _gather_jsons(run_directory)
+        filament_files = _gather_filament_jsons(run_directory)
+
+        if not settings_files:
+            raise WorkflowError(
+                f"No settings JSON files were generated in {run_directory}."
+            )
+
+        project_filename = (
+            f"{Path(target_label).stem}_{_slugify_name(current_plate_name)}.3mf"
+        )
+        project_path = run_directory / project_filename
+        project_paths.append(project_path)
+        slicer_output_dir = slicer_output_root / _slugify_name(current_plate_name)
+        slicer_output_dir.mkdir(parents=True, exist_ok=True)
+
+        settings_arg = ";".join(str(path) for path in settings_files)
+        slicer_cmd = [
+            str(orca_exec_path),
+            "--debug",
+            debug_level,
+            "--slice",
+            "0",
+            "--arrange",
+            "0",
+            "--outputdir",
+            str(run_directory),
+            "--export-slicedata",
+            str(slicer_output_dir),
+            "--export-3mf",
+            project_filename,
+            "--load-settings",
+            settings_arg,
+        ]
+
+        if filament_files:
+            filament_arg = ";".join(str(path) for path in filament_files)
+            slicer_cmd.extend(["--load-filaments", filament_arg])
+
+        slicer_cmd.append(str(current_part_path))
+        _logger.info(
+            "Running OrcaSlicer for %s: %s",
+            current_plate_name,
+            format_command(slicer_cmd),
+        )
+        execute_subprocess(slicer_cmd, env=orca_env)
+
+        preview_path = (
+            run_directory / f"{_slugify_name(current_plate_name)}_preview.png"
+        )
+        preview_generated = False
+        if render_script:
+            render_exec = _resolve_config_key_value(config, "render_executable")
+            render_args = _resolve_config_key_value(config, "render_args") or []
+            if isinstance(render_args, str):
+                render_args = shlex.split(render_args)
+            elif not isinstance(render_args, list):
+                render_args = []
+            if render_exec:
+                render_cmd = [
+                    render_exec,
+                    str(render_script),
+                    str(current_part_path),
+                    str(preview_path),
+                ]
+            else:
+                render_cmd = [
+                    sys.executable,
+                    str(render_script),
+                    str(current_part_path),
+                    str(preview_path),
+                ]
+            render_cmd.extend(str(arg) for arg in render_args)
+            _logger.info(
+                "Generating preview via render script: %s", format_command(render_cmd)
+            )
+            try:
+                execute_subprocess(render_cmd)
+                preview_generated = preview_path.exists()
+            except WorkflowError as exc:
+                _logger.warning("Preview generation failed: %s", exc)
+
+        if not preview_generated and current_part_path.suffix.lower() == ".stl":
+            try:
+                from shellforgepy.workflow.preview_generator import render_stl_to_png
+
+                render_stl_to_png(
+                    stl_path=current_part_path,
+                    out_path=preview_path,
+                    bed_mm=(220.0, 220.0, 220.0),
+                    model_offset=(0, 0, 0),
+                )
+                _logger.info("Generated preview image: %s", preview_path)
+            except Exception as exc:  # pragma: no cover - best effort
+                _logger.warning("Preview generation failed: %s", exc)
 
     created_files = _list_created_files(run_directory)
     run_info = {}
@@ -642,11 +730,22 @@ def complete_workflow_run(
     _logger.info("Workflow completed successfully. Run directory: %s", run_directory)
 
     if args.open and slice_requested:
-        if project_path.exists():
-            open_cmd = [str(orca_exec_path), str(project_path)]
+        existing_project_paths = [path for path in project_paths if path.exists()]
+        missing_project_paths = [path for path in project_paths if not path.exists()]
+
+        if missing_project_paths:
+            for missing_path in missing_project_paths:
+                _logger.warning(
+                    "Cannot open GUI: 3MF project file not found at %s", missing_path
+                )
+
+        if not existing_project_paths:
+            _logger.warning("No 3MF project files found to open in OrcaSlicer.")
+        for current_project_path in existing_project_paths:
+            open_cmd = [str(orca_exec_path), str(current_project_path)]
             _logger.info(
                 "Opening OrcaSlicer GUI with project file: %s with %s",
-                project_path,
+                current_project_path,
                 open_cmd,
             )
             try:
@@ -658,11 +757,11 @@ def complete_workflow_run(
                 )
                 _logger.info("OrcaSlicer GUI started in background")
             except Exception as exc:
-                _logger.warning("Failed to open OrcaSlicer GUI: %s", exc)
-        else:
-            _logger.warning(
-                "Cannot open GUI: 3MF project file not found at %s", project_path
-            )
+                _logger.warning(
+                    "Failed to open OrcaSlicer GUI for %s: %s",
+                    current_project_path,
+                    exc,
+                )
     elif args.open and not slice_requested:
         _logger.warning("--open option requires slicing (use --slice or --upload)")
 

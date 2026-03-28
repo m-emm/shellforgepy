@@ -2174,6 +2174,8 @@ def _resolve_export_options(
             "export_obj": True,
             "export_individual_parts": False,
             "export_stl": False,
+            "plates": None,
+            "auto_assign_plates": False,
         }
     else:
         defaults = {
@@ -2184,6 +2186,8 @@ def _resolve_export_options(
             "export_obj": True,
             "export_individual_parts": True,
             "export_stl": True,
+            "plates": None,
+            "auto_assign_plates": False,
         }
 
     resolved = dict(defaults)
@@ -2529,6 +2533,8 @@ def _export_scene_for_assembly(
             ),
             export_stl=bool(export_options.get("export_stl", True)),
             mesh_cache_dir=repository_dir / "__mesh_cache__" / "obj",
+            plates=export_options.get("plates"),
+            auto_assign_plates=bool(export_options.get("auto_assign_plates", False)),
         )
 
     if not manifest_path.exists():
