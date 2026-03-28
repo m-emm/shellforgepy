@@ -6,6 +6,14 @@ from pathlib import Path
 
 import pytest
 from shellforgepy.builder import builder
+from shellforgepy.metrics import (
+    Material,
+    build_metrics_report_lines,
+    record_weight_metric,
+    reset_metrics,
+    snapshot_metrics,
+    using_metrics_snapshot,
+)
 
 
 def _write_file(path: Path, content: str) -> None:
@@ -98,6 +106,8 @@ def test_build_from_file_falls_back_to_same_named_globals_for_missing_parameters
         destination.write_text(str(part), encoding="utf-8")
 
     monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+    monkeypatch.delitem(sys.modules, "demo_pkg", raising=False)
+    monkeypatch.delitem(sys.modules, "demo_pkg.metric_generators", raising=False)
 
     results = builder.build_from_file(config_path)
 
@@ -239,6 +249,171 @@ def test_build_from_file_writes_hashed_metadata_and_reuses_cache(monkeypatch, tm
     cached_results = builder.build_from_file(config_path)
     assert cached_results[0]["cache_hit"] is True
     assert cached_results[0]["parameter_hash"] == expected_hash
+
+
+def test_build_from_file_captures_metrics_snapshot_and_report(monkeypatch, tmp_path):
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / "demo_metrics_pkg"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "metric_generators.py",
+        "\n".join(
+            [
+                "from shellforgepy.metrics import record_length_metric",
+                "def make_widget(*, width):",
+                "    record_length_metric('linear_rail', 'MGN12', 'x_axis_rail', width)",
+                "    return f'widget-{width}'",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(
+        assemblies_dir / "sample_assembly.yaml",
+        "\n".join(
+            [
+                "Parameters:",
+                "  width:",
+                "    Type: Float",
+                "Parts:",
+                "  Sample:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_metrics_pkg.metric_generators.make_widget",
+                "      Properties:",
+                "        width:",
+                "          $ref: width",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: sample_assembly",
+                "    parameters:",
+                "      width: 450",
+            ]
+        ),
+    )
+
+    def fake_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+    monkeypatch.delitem(sys.modules, "demo_metrics_pkg", raising=False)
+    monkeypatch.delitem(
+        sys.modules, "demo_metrics_pkg.metric_generators", raising=False
+    )
+
+    results = builder.build_from_file(config_path)
+
+    metrics = results[0]["metrics"]
+    assert metrics["has_metrics"] is True
+    assert metrics["snapshot"]["length_metrics"] == [
+        {
+            "category": "linear_rail",
+            "stock_type": "MGN12",
+            "part_name": "x_axis_rail",
+            "length_mm": 450.0,
+        }
+    ]
+    assert Path(metrics["report_path"]).read_text(encoding="utf-8") == "\n".join(
+        [
+            "Cut stock metrics:",
+            "linear_rail MGN12:",
+            "  450 mm x1",
+            "    - x_axis_rail",
+            "",
+        ]
+    )
+
+
+def test_build_from_file_rebuilds_legacy_metadata_schema_for_metrics(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / "demo_metrics_pkg"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "metric_generators.py",
+        "\n".join(
+            [
+                "from shellforgepy.metrics import record_length_metric",
+                "def make_widget(*, width):",
+                "    record_length_metric('linear_rail', 'MGN12', 'x_axis_rail', width)",
+                "    return f'widget-{width}'",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(
+        assemblies_dir / "sample_assembly.yaml",
+        "\n".join(
+            [
+                "Parameters:",
+                "  width:",
+                "    Type: Float",
+                "Parts:",
+                "  Sample:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_metrics_pkg.metric_generators.make_widget",
+                "      Properties:",
+                "        width:",
+                "          $ref: width",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: sample_assembly",
+                "    parameters:",
+                "      width: 450",
+            ]
+        ),
+    )
+
+    exports = []
+
+    def fake_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+        exports.append(destination)
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+    monkeypatch.delitem(sys.modules, "demo_metrics_pkg", raising=False)
+    monkeypatch.delitem(
+        sys.modules, "demo_metrics_pkg.metric_generators", raising=False
+    )
+
+    initial_results = builder.build_from_file(config_path)
+    metadata_path = (
+        Path(initial_results[0]["artifact_dir"])
+        / f"sample_assembly__{initial_results[0]['parameter_hash']}__metadata.json"
+    )
+    legacy_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    legacy_metadata["schema_version"] = 1
+    legacy_metadata.pop("metrics", None)
+    metadata_path.write_text(json.dumps(legacy_metadata), encoding="utf-8")
+
+    exports.clear()
+    rebuilt_results = builder.build_from_file(config_path)
+
+    assert rebuilt_results[0]["cache_hit"] is False
+    assert rebuilt_results[0]["schema_version"] == builder.BUILD_METADATA_SCHEMA_VERSION
+    assert rebuilt_results[0]["metrics"]["has_metrics"] is True
+    assert exports, "legacy schema metadata should force a rebuild"
 
 
 def test_build_from_file_injects_global_context_when_generator_accepts_it(
@@ -782,6 +957,124 @@ def test_build_from_file_rebuilds_assembly_and_dependents_when_generator_code_ch
         Path(rebuilt_feet["artifacts"]["leader_step"]).read_text(encoding="utf-8")
         == "feet-on-frame-v2-42.0-h9.0"
     )
+
+
+def test_scene_metrics_aggregation_includes_visualization_dependencies(tmp_path):
+    def make_snapshot(assembly_id, material, volume_mm3, part_id):
+        reset_metrics()
+        record_weight_metric(
+            assembly_id,
+            material,
+            volume_mm3,
+            part_id=part_id,
+        )
+        snapshot = snapshot_metrics()
+        reset_metrics()
+        return snapshot
+
+    y_axis_resource = tmp_path / "y_axis.yaml"
+    y_axis_resource.write_text(
+        "\n".join(
+            [
+                "Builder:",
+                "  Visualization:",
+                "    parts:",
+                "      - source: dependencies",
+                "        assembly: print_bed_assembly",
+                "        artifact: leader",
+                "      - source: dependencies",
+                "        assembly: print_bed_undercarriage_assembly",
+                "        artifact: leader",
+                "      - source: self",
+                "        artifact: leader",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    print_bed_resource = tmp_path / "print_bed.yaml"
+    print_bed_resource.write_text("Builder: {}\n", encoding="utf-8")
+    undercarriage_resource = tmp_path / "undercarriage.yaml"
+    undercarriage_resource.write_text("Builder: {}\n", encoding="utf-8")
+
+    build_results = [
+        {
+            "assembly_name": "y_axis_assembly",
+            "resource_file": str(y_axis_resource),
+            "declared_dependencies": [],
+            "dependencies": [],
+            "metrics": {
+                "snapshot": make_snapshot(
+                    "y_axis_moving_mass",
+                    Material.STEEL,
+                    1000.0,
+                    "mgn12ca_carriages",
+                )
+            },
+        },
+        {
+            "assembly_name": "print_bed_assembly",
+            "resource_file": str(print_bed_resource),
+            "declared_dependencies": [],
+            "dependencies": [],
+            "metrics": {
+                "snapshot": make_snapshot(
+                    "y_axis_moving_mass",
+                    Material.ALUMINUM,
+                    1000.0,
+                    "print_bed_main",
+                )
+            },
+        },
+        {
+            "assembly_name": "print_bed_undercarriage_assembly",
+            "resource_file": str(undercarriage_resource),
+            "declared_dependencies": [],
+            "dependencies": [],
+            "metrics": {
+                "snapshot": make_snapshot(
+                    "y_axis_moving_mass",
+                    Material.PETG_CF,
+                    1000.0,
+                    "print_bed_undercarriage_fused",
+                )
+            },
+        },
+    ]
+
+    built_results_by_name = {
+        result["assembly_name"]: dict(result) for result in build_results
+    }
+
+    metrics_assemblies = builder._scene_metrics_assembly_names(
+        seed_assemblies=["y_axis_assembly"],
+        built_results_by_name=built_results_by_name,
+        repository_dir=tmp_path,
+        mode="visualization",
+        config_data={},
+    )
+
+    assert set(metrics_assemblies) == {
+        "y_axis_assembly",
+        "print_bed_assembly",
+        "print_bed_undercarriage_assembly",
+    }
+
+    combined_snapshot = builder._combined_metrics_snapshot_for_results(
+        build_results,
+        metrics_assemblies,
+    )
+
+    with using_metrics_snapshot(combined_snapshot):
+        assert build_metrics_report_lines() == [
+            "Weight metrics:",
+            "y_axis_moving_mass: 0.011850 kg",
+            "  ALUMINUM: 0.002700 kg",
+            "  PETG_CF: 0.001300 kg",
+            "  STEEL: 0.007850 kg",
+            "  mgn12ca_carriages (STEEL): 0.007850 kg",
+            "  print_bed_main (ALUMINUM): 0.002700 kg",
+            "  print_bed_undercarriage_fused (PETG_CF): 0.001300 kg",
+        ]
 
 
 def test_dependency_step_path_supports_dotted_named_artifacts():

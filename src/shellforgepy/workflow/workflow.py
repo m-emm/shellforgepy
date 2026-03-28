@@ -323,6 +323,23 @@ def _list_created_files(directory: Path) -> List[Path]:
     return files
 
 
+def _log_metrics_report_from_manifest(
+    run_directory: Path, manifest: Dict[str, object]
+) -> None:
+    if manifest.get("metrics_report_logged"):
+        return
+
+    metrics_report_path = _resolve_manifest_path(
+        run_directory, manifest.get("metrics_report_path")
+    )
+    if metrics_report_path is None or not metrics_report_path.exists():
+        return
+
+    _logger.info("Metrics report:")
+    for line in metrics_report_path.read_text(encoding="utf-8").splitlines():
+        _logger.info("%s", line)
+
+
 def _upload_file_to_viewer(file_path: Path, upload_url: str) -> None:
     """Upload a file to the viewer backend API using multipart/form-data."""
     boundary = "----WebKitFormBoundary" + os.urandom(16).hex()
@@ -472,6 +489,7 @@ def complete_workflow_run(
         _logger.info(
             "No slicing requested; workflow run finished after geometry stage."
         )
+        _log_metrics_report_from_manifest(run_directory, manifest)
         created_files = _list_created_files(run_directory)
         if created_files:
             _logger.info("Artifacts created in run directory:")
@@ -764,6 +782,8 @@ def complete_workflow_run(
                 )
     elif args.open and not slice_requested:
         _logger.warning("--open option requires slicing (use --slice or --upload)")
+
+    _log_metrics_report_from_manifest(run_directory, manifest)
 
     return 0
 

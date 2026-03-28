@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -246,3 +247,44 @@ def test_complete_workflow_run_open_starts_orca_for_each_plate(monkeypatch, tmp_
         [str(orca_exec), str(run_directory / "machine_plate_a.3mf")],
         [str(orca_exec), str(run_directory / "machine_plate_b.3mf")],
     ]
+
+
+def test_run_workflow_logs_metrics_report_from_manifest(monkeypatch, tmp_path, caplog):
+    target = tmp_path / "design.py"
+    target.write_text("print('hello')\n", encoding="utf-8")
+
+    def fake_execute_subprocess(cmd, *, env=None, cwd=None, stdin_data=None):
+        manifest_path = Path(env[MANIFEST_ENV])
+        run_directory = manifest_path.parent
+        obj_path = run_directory / "design.obj"
+        metrics_report_path = run_directory / "design_metrics_report.txt"
+        obj_path.write_text("# obj\n", encoding="utf-8")
+        metrics_report_path.write_text(
+            "Weight metrics:\ny_axis_moving_mass: 1.174000 kg\n",
+            encoding="utf-8",
+        )
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "obj_path": str(obj_path),
+                    "metrics_report_path": str(metrics_report_path),
+                    "metrics_report_logged": False,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return SubprocessResult(0, [], [])
+
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.execute_subprocess",
+        fake_execute_subprocess,
+    )
+
+    caplog.set_level(logging.INFO)
+
+    result = run_workflow(_make_args(target, tmp_path))
+
+    assert result == 0
+    assert "Metrics report:" in caplog.text
+    assert "Weight metrics:" in caplog.text
+    assert "y_axis_moving_mass: 1.174000 kg" in caplog.text
