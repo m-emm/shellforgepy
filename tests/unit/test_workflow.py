@@ -9,6 +9,7 @@ from shellforgepy.workflow.workflow import (
     MANIFEST_ENV,
     SubprocessResult,
     WorkflowError,
+    _orca_open_commands,
     complete_workflow_run,
     run_workflow,
 )
@@ -246,6 +247,39 @@ def test_complete_workflow_run_open_starts_orca_for_each_plate(monkeypatch, tmp_
     assert popen_calls == [
         [str(orca_exec), str(run_directory / "machine_plate_a.3mf")],
         [str(orca_exec), str(run_directory / "machine_plate_b.3mf")],
+    ]
+
+
+def test_orca_open_commands_uses_open_with_app_bundle_on_macos(monkeypatch, tmp_path):
+    app_dir = tmp_path / "OrcaSlicer.app" / "Contents" / "MacOS"
+    app_dir.mkdir(parents=True)
+    orca_exec = app_dir / "OrcaSlicer"
+    orca_exec.write_text("", encoding="utf-8")
+    project_a = tmp_path / "a.3mf"
+    project_b = tmp_path / "b.3mf"
+    project_a.write_text("", encoding="utf-8")
+    project_b.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr("shellforgepy.workflow.workflow.sys.platform", "darwin")
+
+    commands = _orca_open_commands(
+        orca_exec_path=orca_exec,
+        project_paths=[project_a, project_b],
+    )
+
+    assert commands == [
+        [
+            "open",
+            "-a",
+            str(tmp_path / "OrcaSlicer.app"),
+            str(project_a),
+        ],
+        [
+            "open",
+            "-a",
+            str(tmp_path / "OrcaSlicer.app"),
+            str(project_b),
+        ],
     ]
 
 

@@ -573,6 +573,48 @@ def _split_parts_into_plates(
     return plates
 
 
+def _center_plate_parts_on_bed(
+    plate_parts,
+    *,
+    bed_width,
+    bed_depth,
+):
+    """Center a plate subset on its own virtual bed."""
+
+    if not plate_parts:
+        return []
+
+    bounds = [get_bounding_box(entry["part"]) for entry in plate_parts]
+    min_x = min(bound[0][0] for bound in bounds)
+    min_y = min(bound[0][1] for bound in bounds)
+    max_x = max(bound[1][0] for bound in bounds)
+    max_y = max(bound[1][1] for bound in bounds)
+
+    total_width = max_x - min_x
+    total_height = max_y - min_y
+    offset_x = (bed_width - total_width) / 2 - min_x
+    offset_y = (bed_depth - total_height) / 2 - min_y
+
+    centered_parts = []
+    for entry in plate_parts:
+        centered_entry = dict(entry)
+        centered_entry["transform_history"] = _copy_transform_history(entry)
+        if offset_x != 0.0 or offset_y != 0.0:
+            centered_entry["part"] = translate(offset_x, offset_y, 0)(entry["part"])
+            _append_transform_record(
+                centered_entry,
+                {
+                    "kind": "translate",
+                    "vector": [float(offset_x), float(offset_y), 0.0],
+                },
+            )
+        else:
+            centered_entry["part"] = entry["part"]
+        centered_parts.append(centered_entry)
+
+    return centered_parts
+
+
 def arrange_and_export_parts(
     parts,
     prod_gap,
@@ -706,6 +748,15 @@ def arrange_and_export_parts(
     needs_fused_export = export_stl or export_step
 
     for plate_name, plate_parts in plate_groups:
+        export_plate_parts = (
+            _center_plate_parts_on_bed(
+                plate_parts,
+                bed_width=bed_width,
+                bed_depth=bed_width,
+            )
+            if prod
+            else list(plate_parts)
+        )
         fused_collector = PartCollector() if needs_fused_export else None
         safe_plate_name = _safe_name(plate_name)
         if needs_fused_export:
@@ -713,10 +764,10 @@ def arrange_and_export_parts(
 
         plate_manifest = {
             "name": plate_name,
-            "parts": [item["name"] for item in plate_parts],
+            "parts": [item["name"] for item in export_plate_parts],
         }
 
-        for entry in plate_parts:
+        for entry in export_plate_parts:
             name = entry["name"]
             arranged_shape = entry["part"]
             try:

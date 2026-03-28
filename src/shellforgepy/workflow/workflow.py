@@ -11,11 +11,12 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Sequence
 
 from shellforgepy.simple import LOGGING_FORMAT
 from shellforgepy.slicing.orca_slicer_settings_generator import generate_settings
@@ -338,6 +339,41 @@ def _log_metrics_report_from_manifest(
     _logger.info("Metrics report:")
     for line in metrics_report_path.read_text(encoding="utf-8").splitlines():
         _logger.info("%s", line)
+
+
+def _macos_app_bundle_for_executable(executable_path: Path) -> Optional[Path]:
+    executable_path = executable_path.expanduser().resolve()
+    parts = executable_path.parts
+    app_index = next(
+        (index for index, part in enumerate(parts) if part.endswith(".app")),
+        None,
+    )
+    if app_index is None:
+        return None
+    return Path(*parts[: app_index + 1])
+
+
+def _orca_open_commands(
+    *,
+    orca_exec_path: Path,
+    project_paths: Sequence[Path],
+) -> List[List[str]]:
+    existing_project_paths = [path for path in project_paths if path.exists()]
+    if not existing_project_paths:
+        return []
+
+    if sys.platform == "darwin":
+        app_bundle = _macos_app_bundle_for_executable(orca_exec_path)
+        if app_bundle is not None:
+            return [
+                ["open", "-a", str(app_bundle), str(current_project_path)]
+                for current_project_path in existing_project_paths
+            ]
+
+    return [
+        [str(orca_exec_path), str(current_project_path)]
+        for current_project_path in existing_project_paths
+    ]
 
 
 def _upload_file_to_viewer(file_path: Path, upload_url: str) -> None:
@@ -759,13 +795,11 @@ def complete_workflow_run(
 
         if not existing_project_paths:
             _logger.warning("No 3MF project files found to open in OrcaSlicer.")
-        for current_project_path in existing_project_paths:
-            open_cmd = [str(orca_exec_path), str(current_project_path)]
-            _logger.info(
-                "Opening OrcaSlicer GUI with project file: %s with %s",
-                current_project_path,
-                open_cmd,
-            )
+        for open_cmd in _orca_open_commands(
+            orca_exec_path=orca_exec_path,
+            project_paths=existing_project_paths,
+        ):
+            _logger.info("Opening OrcaSlicer GUI with %s", open_cmd)
             try:
                 subprocess.Popen(
                     open_cmd,
@@ -774,10 +808,12 @@ def complete_workflow_run(
                     start_new_session=True,
                 )
                 _logger.info("OrcaSlicer GUI started in background")
+                if sys.platform == "darwin" and open_cmd[:2] == ["open", "-a"]:
+                    time.sleep(3.0)
             except Exception as exc:
                 _logger.warning(
                     "Failed to open OrcaSlicer GUI for %s: %s",
-                    current_project_path,
+                    open_cmd[-1] if open_cmd else "<unknown>",
                     exc,
                 )
     elif args.open and not slice_requested:
