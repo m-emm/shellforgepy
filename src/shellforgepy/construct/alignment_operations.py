@@ -119,18 +119,70 @@ def _calc_stack_translation_vector(
 
 def align_translation(part, to, alignment: Alignment, axes=None, stack_gap=0):
     """
-    Create a translation function that aligns one object to another.
+    Return a reusable translation function computed from an alignment setup.
 
-    Args:
-        part: The object to be aligned
-        to: The target object to align to
-        alignment: The type of alignment to perform
-        axes: Optional list of axes to constrain alignment to (0=X, 1=Y, 2=Z)
+    This is the lower-level companion to ``align()``. In most design code you
+    should prefer ``align()`` because it is more direct and reads more clearly
+    at the call site. See ``align()`` for the full explanation of alignment
+    families, idiomatic chaining, ``axes``, and ``stack_gap`` semantics.
 
-    Returns:
-        A function that applies the alignment translation
+    The difference is that ``align_translation()`` does not immediately move
+    ``part``. Instead, it calculates the translation implied by aligning
+    ``part`` relative to ``to`` and returns that translation as a callable.
+    You can then apply the same movement to one or more parts.
+
+    This is useful when a single placement decision must be reused for a whole
+    group of related parts, helper solids, or cutter geometry.
+
+    Example
+    -------
+    Compute the translation once and reuse it:
+
+    .. code-block:: python
+
+        move_to_carriage = align_translation(tool_head, carriage, Alignment.CENTER)
+
+        tool_head = move_to_carriage(tool_head)
+        nozzle = move_to_carriage(nozzle)
+        cable_relief = move_to_carriage(cable_relief)
+
+    This keeps several parts in the same relative arrangement while moving the
+    whole group according to the placement computed from ``tool_head``.
+
+    A common advanced pattern is to compute the transform from one
+    representative part and then apply it to associated geometry that should
+    travel with it.
+
+    Parameters
+    ----------
+    part:
+        The reference part whose bounding box is used to compute the
+        translation.
+    to:
+        The target reference object. As with ``align()``, ``None`` is only
+        valid together with ``Alignment.CENTER`` and means centering around
+        the origin.
+    alignment:
+        The alignment mode used to compute the translation.
+    axes:
+        Optional iterable of constrained axes ``[0, 1, 2]`` for
+        ``X, Y, Z``. Only supported for ``Alignment.CENTER``.
+    stack_gap:
+        Additional offset used for ``STACK_*`` alignments.
+
+    Returns
+    -------
+    A transformation function equivalent to ``translate(dx, dy, dz)`` for the
+    computed alignment.
+
+    Notes
+    -----
+    - The returned callable copies the part it is applied to, just like
+      ``translate()`` and ``align()``.
+    - The translation is computed from the bounding boxes of ``part`` and
+      ``to`` at the time ``align_translation()`` is called.
+    - If you only need to move one part once, prefer ``align()``.
     """
-    # Extract the solid from workplane if needed
 
     bb = get_bounding_box(part)
 
@@ -299,8 +351,135 @@ def chain_translations(*translations):
 
 def align(part, to, alignment, axes=None, stack_gap=0):
     """
-    Align one object to another and return the aligned copy.
+    Return a translated copy of ``part`` aligned relative to ``to``.
 
-    This is a wrapper that delegates to the CAD adapter's align function.
+    This is one of the core placement APIs in ShellForgePy. It computes a
+    bounding-box based translation and applies it to a copy of ``part``;
+    the original input object is not modified.
+
+    The function is intentionally simple and idiomatic usage relies on
+    chaining multiple calls to express placement step by step. In practice,
+    most designs start with a coarse placement such as ``Alignment.CENTER``
+    and then refine it with one or two directional alignments:
+
+    .. code-block:: python
+
+        mount = align(mount, motor, Alignment.CENTER)
+        mount = align(mount, motor, Alignment.STACK_TOP)
+        mount = align(mount, frame, Alignment.BACK)
+
+    This style is used throughout the codebase because it is easy to read,
+    easy to tweak, and avoids manual offset arithmetic.
+
+    Alignment families
+    ------------------
+    ``Alignment`` values fall into three practical groups:
+
+    - Face alignments: ``LEFT``, ``RIGHT``, ``FRONT``, ``BACK``, ``TOP``,
+      ``BOTTOM``, ``CENTER``.
+      These make the corresponding face, or the full center, coincide with
+      the target.
+    - Edge alignments: ``EDGE_LEFT``, ``EDGE_RIGHT``, ``EDGE_FRONT``,
+      ``EDGE_BACK``, ``EDGE_TOP``, ``EDGE_BOTTOM``.
+      These place the center of ``part`` onto the corresponding target face
+      plane. They are useful for cutters, holes, and helper geometry that
+      should sit on a boundary rather than span across the full part.
+    - Stack alignments: ``STACK_LEFT``, ``STACK_RIGHT``, ``STACK_FRONT``,
+      ``STACK_BACK``, ``STACK_TOP``, ``STACK_BOTTOM``.
+      These place ``part`` immediately outside the target so the touching
+      faces butt against each other. ``stack_gap`` then moves the part
+      farther apart or slightly into the target.
+
+    Parameters
+    ----------
+    part:
+        The part to move. Any object supported by the active adapter is
+        accepted as long as it has a bounding box.
+    to:
+        The reference part to align against. When ``None``, only
+        ``Alignment.CENTER`` is allowed; in that special case the part is
+        centered around the origin instead of another object.
+    alignment:
+        The requested relative placement, typically an ``Alignment`` enum
+        value.
+    axes:
+        Optional iterable of constrained axes ``[0, 1, 2]`` for
+        ``X, Y, Z``. Only supported with ``Alignment.CENTER``.
+        This is commonly used for partial centering, for example keeping a
+        drill centered in ``X`` and ``Y`` while preserving a separately
+        chosen ``Z`` placement, or centering a model around the origin only
+        in the print bed plane.
+    stack_gap:
+        Extra offset used with ``STACK_*`` alignments. Positive values add
+        clearance between the parts. Negative values intentionally create
+        overlap or inset placement and are used frequently for cutters,
+        sockets, and print helpers.
+
+    Returns
+    -------
+    The translated copy of ``part``.
+
+    Idiomatic usage
+    ---------------
+    Common patterns found across ShellForgePy projects:
+
+    1. Center, then choose a face.
+
+       .. code-block:: python
+
+           cutter = align(cutter, plate, Alignment.CENTER)
+           cutter = align(cutter, plate, Alignment.TOP)
+
+       This is the most common pattern for placing holes, bosses, and
+       cutters relative to a host body.
+
+    2. Build compound placement from orthogonal constraints.
+
+       .. code-block:: python
+
+           wall = align(wall, base, Alignment.CENTER)
+           wall = align(wall, base, Alignment.STACK_TOP)
+           wall = align(wall, base, Alignment.LEFT)
+
+       Each call constrains one aspect of the final position and the result
+       reads like assembly intent instead of coordinate math.
+
+    3. Use stack alignments for adjacency.
+
+       .. code-block:: python
+
+           cover = align(cover, housing, Alignment.CENTER)
+           cover = align(cover, housing, Alignment.STACK_TOP, stack_gap=0.2)
+
+       Without a gap, the faces touch exactly. With a positive gap, the
+       parts are separated. With a negative gap, the part is pushed into the
+       reference volume.
+
+    4. Use axis-restricted centering to preserve an earlier decision.
+
+       .. code-block:: python
+
+           drill = align(drill, screw_hole, Alignment.CENTER)
+           drill = align(drill, jig, Alignment.CENTER, axes=[2])
+
+       Here the second call only adjusts ``Z`` while keeping the previous
+       ``X`` and ``Y`` placement intact.
+
+    5. Center around the origin for export or setup geometry.
+
+       .. code-block:: python
+
+           body = align(body, None, Alignment.CENTER)
+           plate = align(plate, None, Alignment.CENTER, axes=[0, 1])
+
+    Notes
+    -----
+    - Alignment is based on bounding boxes, not mating features or local
+      coordinate systems.
+    - Repeated calls are expected and cheap to read; do not try to compress
+      normal placement logic into manual translation formulas unless there is
+      a specific geometric reason.
+    - ``axes`` with non-``CENTER`` alignments raises ``ValueError``.
+    - ``to=None`` with anything other than ``CENTER`` raises ``ValueError``.
     """
     return align_translation(part, to, alignment, axes, stack_gap)(part)

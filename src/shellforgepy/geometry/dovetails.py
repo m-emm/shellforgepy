@@ -61,6 +61,7 @@ def create_dovetail_tongue_and_groove(
     angle_deg=None,
     dovetail_clearance=0.0,
     parts_clearance=0.0,
+    groove_box_size_x=None,
     groove_box_size_y=None,
     front_wall_clearance=0.0,
 ) -> LeaderFollowersCuttersPart:
@@ -69,13 +70,26 @@ def create_dovetail_tongue_and_groove(
     Args:
         dovetail_width: Width of the tongue at the groove opening.
         length: Length of the dovetail along the Z axis.
-        box_size_x: Shared X width of both supporting boxes.
-        box_size_y: Depth of the tongue side and of the dovetail engagement.
-        taper_per_side: Extra width added per side at the dovetail back.
-        angle_deg: Optional alternative to ``taper_per_side``.
+        box_size_x: X width of the tongue-side support box.
+        box_size_y: Depth of the tongue along Y, measured from the groove
+            opening plane at ``Y=0`` to the back of the dovetail. This is the
+            dovetail engagement depth. It is used directly and is not
+            calculated from ``taper_per_side`` or ``angle_deg``.
+        taper_per_side: Extra width added per side at the dovetail back over
+            the full ``box_size_y`` depth.
+        angle_deg: Optional alternative to ``taper_per_side``. When provided,
+            the extra width per side is calculated as
+            ``tan(angle_deg) * box_size_y``.
         dovetail_clearance: Lateral clearance between tongue and groove walls.
         parts_clearance: Clearance between the two mating flat faces at the opening.
-        groove_box_size_y: Optional independent depth of the groove-side box.
+        groove_box_size_x: Optional independent X width of the groove-side
+            support box. Defaults to ``box_size_x``. Increase this if you want
+            more material on the groove side in X, or if the widened groove
+            root would otherwise be too large for the groove-side box.
+        groove_box_size_y: Optional independent total depth of the groove-side
+            support box. Defaults to ``box_size_y``. Increase this if you want
+            additional material behind the groove without changing the dovetail
+            engagement depth.
         front_wall_clearance: Extra clearance behind the tongue tip inside the groove.
 
     The returned composite uses:
@@ -85,6 +99,15 @@ def create_dovetail_tongue_and_groove(
 
     The dovetail runs along the Z axis, the tongue points towards +Y, and the
     groove opens towards -Y.
+
+    Depth notes:
+    - If you want a "deeper" dovetail engagement, increase ``box_size_y``.
+    - If you want a stronger or more pronounced dovetail shape at the same
+      depth, increase ``taper_per_side`` or ``angle_deg``.
+    - If you want a wider groove-side support box in X, increase
+      ``groove_box_size_x``.
+    - If you want more material behind the groove, increase
+      ``groove_box_size_y``.
     """
 
     _require_positive("dovetail_width", dovetail_width)
@@ -98,6 +121,10 @@ def create_dovetail_tongue_and_groove(
         raise ValueError("parts_clearance must be non-negative")
     if front_wall_clearance < 0:
         raise ValueError("front_wall_clearance must be non-negative")
+
+    if groove_box_size_x is None:
+        groove_box_size_x = box_size_x
+    _require_positive("groove_box_size_x", groove_box_size_x)
 
     if groove_box_size_y is None:
         groove_box_size_y = box_size_y
@@ -115,8 +142,10 @@ def create_dovetail_tongue_and_groove(
     groove_opening_width = dovetail_width + 2 * dovetail_clearance
     groove_back_width = tongue_back_width + 2 * dovetail_clearance
 
-    if groove_back_width >= box_size_x:
-        raise ValueError("box_size_x must be larger than the widened groove root width")
+    if groove_back_width >= groove_box_size_x:
+        raise ValueError(
+            "groove_box_size_x must be larger than the widened groove root width"
+        )
 
     tongue = _create_vertical_dovetail(
         width_at_opening=dovetail_width,
@@ -168,10 +197,10 @@ def create_dovetail_tongue_and_groove(
         groove_cutter = fuse_parts(groove_cutter, groove_front_wall_clearance)
 
     groove_part = create_box(
-        box_size_x,
+        groove_box_size_x,
         groove_box_size_y,
         length,
-        origin=(-box_size_x / 2, 0.0, -length / 2),
+        origin=(-groove_box_size_x / 2, 0.0, -length / 2),
     )
     groove_part = cut_parts(groove_part, groove_cutter)
 
