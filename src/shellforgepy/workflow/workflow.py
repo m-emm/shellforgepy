@@ -324,6 +324,56 @@ def _list_created_files(directory: Path) -> List[Path]:
     return files
 
 
+def _snapshot_matching_files(
+    directory: Path, pattern: str
+) -> Dict[Path, tuple[int, int]]:
+    snapshot: Dict[Path, tuple[int, int]] = {}
+    for path in sorted(directory.glob(pattern)):
+        if not path.is_file():
+            continue
+        stat = path.stat()
+        snapshot[path] = (stat.st_mtime_ns, stat.st_size)
+    return snapshot
+
+
+def _preserve_generated_gcode_files(
+    *,
+    run_directory: Path,
+    plate_name: str,
+    target_label: str,
+    previous_snapshot: Dict[Path, tuple[int, int]],
+) -> List[Path]:
+    current_snapshot = _snapshot_matching_files(run_directory, "*.gcode")
+    changed_paths = [
+        path
+        for path, current_signature in current_snapshot.items()
+        if previous_snapshot.get(path) != current_signature
+    ]
+    if not changed_paths:
+        return []
+
+    base_name = f"{Path(target_label).stem}_{_slugify_name(plate_name)}"
+    preserved_paths: List[Path] = []
+    multiple_files = len(changed_paths) > 1
+
+    for index, source_path in enumerate(sorted(changed_paths), start=1):
+        suffix = f"_{index}" if multiple_files else ""
+        destination_path = run_directory / f"{base_name}{suffix}{source_path.suffix}"
+        if destination_path.exists() and destination_path != source_path:
+            destination_path.unlink()
+        if source_path != destination_path:
+            source_path.replace(destination_path)
+            _logger.info(
+                "Preserved G-code for %s: %s -> %s",
+                plate_name,
+                source_path.name,
+                destination_path.name,
+            )
+        preserved_paths.append(destination_path)
+
+    return preserved_paths
+
+
 def _log_metrics_report_from_manifest(
     run_directory: Path, manifest: Dict[str, object]
 ) -> None:
@@ -613,6 +663,7 @@ def complete_workflow_run(
         args.orca_debug or _resolve_config_key_value(config, "orca_debug_level") or 6
     )
     project_paths: List[Path] = []
+    preserved_gcode_paths: List[Path] = []
 
     orca_env_settings = _resolve_config_key_value(config, "orca_env")
     orca_env: Dict[str, str] = {}
@@ -632,6 +683,7 @@ def complete_workflow_run(
         current_part_path = Path(job["part_path"])
         current_process_path = Path(job["process_path"])
         current_plate_name = str(job["name"])
+        gcode_snapshot_before = _snapshot_matching_files(run_directory, "*.gcode")
         _logger.info(
             "Detected part file for %s: %s", current_plate_name, current_part_path
         )
@@ -698,8 +750,17 @@ def complete_workflow_run(
         )
         execute_subprocess(slicer_cmd, env=orca_env)
 
+        preserved_paths = _preserve_generated_gcode_files(
+            run_directory=run_directory,
+            plate_name=current_plate_name,
+            target_label=target_label,
+            previous_snapshot=gcode_snapshot_before,
+        )
+        preserved_gcode_paths.extend(preserved_paths)
+
         preview_path = (
-            run_directory / f"{_slugify_name(current_plate_name)}_preview.png"
+            run_directory
+            / f"{Path(target_label).stem}_{_slugify_name(current_plate_name)}_preview.png"
         )
         preview_generated = False
         if render_script:
@@ -766,7 +827,11 @@ def complete_workflow_run(
             _logger.info("  %s: %s", key, value)
 
     if args.upload:
-        gcode_files = sorted(run_directory.glob("*.gcode"))
+        gcode_files = (
+            preserved_gcode_paths
+            if preserved_gcode_paths
+            else sorted(run_directory.glob("*.gcode"))
+        )
         if not gcode_files:
             raise WorkflowError("Upload requested but no G-code files were generated.")
 
