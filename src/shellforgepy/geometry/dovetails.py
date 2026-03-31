@@ -2,7 +2,7 @@
 
 import math
 
-from shellforgepy.adapters._adapter import create_box, cut_parts, fuse_parts
+from shellforgepy.adapters._adapter import create_box
 from shellforgepy.construct.alignment_operations import rotate, translate
 from shellforgepy.construct.leader_followers_cutters_part import (
     LeaderFollowersCuttersPart,
@@ -160,7 +160,7 @@ def create_dovetail_tongue_and_groove(
         length,
         origin=(-box_size_x / 2, -(box_size_y + parts_clearance), -length / 2),
     )
-    tongue_part = fuse_parts(tongue_part, tongue)
+    tongue_part = tongue_part.fuse(tongue)
 
     if parts_clearance > 0:
         clearance_bridge = create_box(
@@ -169,7 +169,7 @@ def create_dovetail_tongue_and_groove(
             length,
             origin=(-dovetail_width / 2, -parts_clearance, -length / 2),
         )
-        tongue_part = fuse_parts(tongue_part, clearance_bridge)
+        tongue_part = tongue_part.fuse(clearance_bridge)
 
     groove_cutter = _create_vertical_dovetail(
         width_at_opening=groove_opening_width,
@@ -183,9 +183,9 @@ def create_dovetail_tongue_and_groove(
             groove_opening_width,
             parts_clearance,
             length,
-            origin=(-groove_opening_width / 2, 0.0, -length / 2),
+            origin=(-groove_opening_width / 2, -parts_clearance, -length / 2),
         )
-        groove_cutter = fuse_parts(groove_cutter, groove_entry_clearance)
+        groove_cutter = groove_cutter.fuse(groove_entry_clearance)
 
     if front_wall_clearance > 0:
         groove_front_wall_clearance = create_box(
@@ -194,7 +194,7 @@ def create_dovetail_tongue_and_groove(
             length,
             origin=(-groove_back_width / 2, box_size_y, -length / 2),
         )
-        groove_cutter = fuse_parts(groove_cutter, groove_front_wall_clearance)
+        groove_cutter = groove_cutter.fuse(groove_front_wall_clearance)
 
     groove_part = create_box(
         groove_box_size_x,
@@ -202,7 +202,7 @@ def create_dovetail_tongue_and_groove(
         length,
         origin=(-groove_box_size_x / 2, 0.0, -length / 2),
     )
-    groove_part = cut_parts(groove_part, groove_cutter)
+    groove_part = groove_part.cut(groove_cutter)
 
     return LeaderFollowersCuttersPart(
         leader=tongue_part,
