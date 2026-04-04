@@ -164,6 +164,10 @@ class LeaderFollowersCuttersPart:
         self.leader = leader
         if isinstance(leader, list) or isinstance(leader, tuple):
             raise ValueError("Leader must be a single part, not a list or tuple.")
+        if isinstance(leader, LeaderFollowersCuttersPart):
+            raise ValueError(
+                "Leader cannot be a LeaderFollowersCuttersPart. It must be a single CAD part."
+            )
 
         # Store raw parts directly for convenience during construction
         self.followers = _ensure_list(followers)

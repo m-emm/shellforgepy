@@ -94,6 +94,7 @@ class _DependencyInjection:
     step_path: Path
     part: Any
     placement_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    placement_transform_records: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -107,6 +108,7 @@ class _PlacementExecutionState:
     translation_history: Dict[str, List[Callable[[Any], Any]]] = field(
         default_factory=dict
     )
+    transform_records: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
     placement_offsets: Dict[str, tuple[float, float, float]] = field(
         default_factory=dict
     )
@@ -1123,6 +1125,11 @@ def _resolve_dependency_injections(
                 placement_offset=_placement_offset_for_assembly(
                     assembly_name, placement_state
                 ),
+                placement_transform_records=list(
+                    _placement_transform_records_for_assembly(
+                        assembly_name, placement_state
+                    )
+                ),
             )
         )
     return injections
@@ -1155,7 +1162,9 @@ def _hash_with_dependencies(
             hash_inputs[f"__version__{key}"] = value
     for injection in injections:
         hash_inputs[f"__dependency__{injection.kwarg_name}"] = (
-            f"{injection.assembly_name}:{injection.artifact}:{injection.source_parameter_hash}:{json.dumps(injection.placement_offset)}"
+            f"{injection.assembly_name}:{injection.artifact}:{injection.source_parameter_hash}:"
+            f"{json.dumps(injection.placement_offset)}:"
+            f"{json.dumps(injection.placement_transform_records, sort_keys=True)}"
         )
     return PartParameters(hash_inputs).parameters_hash()
 
@@ -1646,6 +1655,17 @@ def _make_post_translation(delta: Sequence[float]) -> Callable[[Any], Any]:
     return translate(*delta)
 
 
+def _make_post_rotation(
+    angle: float,
+    *,
+    axis: Optional[Sequence[float]] = None,
+    center: Optional[Sequence[float]] = None,
+) -> Callable[[Any], Any]:
+    from shellforgepy.construct.alignment_operations import rotate
+
+    return rotate(angle, axis=axis, center=center)
+
+
 def _compose_translations(
     *translations: Callable[[Any], Any],
 ) -> Callable[[Any], Any]:
@@ -1668,7 +1688,8 @@ def _placement_reference_names(
         config_data, known_assembly_names
     ):
         referenced.add(moving_assembly)
-        referenced.add(target_assembly)
+        if target_assembly is not None:
+            referenced.add(target_assembly)
     return sorted(referenced)
 
 
@@ -1677,7 +1698,7 @@ def _placement_alignment_references(
     known_assembly_names: Sequence[str],
     *,
     graph_model: Optional[builder_graph_model.BuilderGraphModel] = None,
-) -> List[tuple[str, str]]:
+) -> List[tuple[str, Optional[str]]]:
     model = graph_model
     if model is None:
         assemblies = [{"name": name} for name in sorted(set(known_assembly_names))]
@@ -1686,6 +1707,69 @@ def _placement_alignment_references(
         (step.moving_assembly_name, step.target_assembly_name)
         for step in model.placement_steps
     ]
+
+
+def _resolve_xyz_vector(
+    value: Any,
+    placement_context: Mapping[str, Any],
+    *,
+    label: str,
+) -> tuple[float, float, float]:
+    resolved_value = _resolve_inline_value(value, placement_context)
+    if not isinstance(resolved_value, (list, tuple)):
+        raise BuilderError(f"{label} must resolve to a 3-item list")
+    if len(resolved_value) != 3:
+        raise BuilderError(f"{label} must resolve to exactly 3 values")
+    return tuple(float(component) for component in resolved_value)
+
+
+def _resolve_post_rotation(
+    alignment_spec: Mapping[str, Any],
+    placement_context: Mapping[str, Any],
+    *,
+    resolve_anchor: Callable[[str], tuple[str, str, Any]],
+) -> Optional[Dict[str, Any]]:
+    raw_post_rotation = alignment_spec.get("post_rotation")
+    if raw_post_rotation is None:
+        return None
+    if not isinstance(raw_post_rotation, Mapping):
+        raise BuilderError("placement alignment post_rotation must be a mapping")
+    if raw_post_rotation.get("angle") is None:
+        raise BuilderError("placement alignment post_rotation requires 'angle'")
+
+    angle = float(_resolve_inline_value(raw_post_rotation["angle"], placement_context))
+    axis = _resolve_xyz_vector(
+        raw_post_rotation.get("axis", [0, 0, 1]),
+        placement_context,
+        label="placement alignment post_rotation.axis",
+    )
+
+    center = None
+    raw_center = raw_post_rotation.get("center")
+    if raw_center is not None:
+        resolved_center = _resolve_inline_value(raw_center, placement_context)
+        if isinstance(resolved_center, str):
+            center_reference = resolved_center.strip()
+            if not center_reference.endswith(".CENTER"):
+                raise BuilderError(
+                    "placement alignment post_rotation.center must be a 3-item list "
+                    "or a '<reference>.CENTER' string"
+                )
+            _, _, center_part = resolve_anchor(center_reference[: -len(".CENTER")])
+            center = _part_center(center_part)
+        elif isinstance(resolved_center, (list, tuple)):
+            if len(resolved_center) != 3:
+                raise BuilderError(
+                    "placement alignment post_rotation.center must resolve to exactly 3 values"
+                )
+            center = tuple(float(component) for component in resolved_center)
+        else:
+            raise BuilderError(
+                "placement alignment post_rotation.center must be a 3-item list "
+                "or a '<reference>.CENTER' string"
+            )
+
+    return {"angle": angle, "axis": axis, "center": center}
 
 
 def _placement_dependency_closure(
@@ -1953,16 +2037,16 @@ def _materialize_rule_parts(
     return scene_parts
 
 
-def _apply_translation_to_scene_parts(
+def _apply_transform_to_scene_parts(
     scene_parts: List[Dict[str, Any]],
     assembly_name: str,
-    translation: Callable[[Any], Any],
+    transform: Callable[[Any], Any],
     transform_record: Optional[Mapping[str, Any]] = None,
 ) -> None:
     for item in scene_parts:
         if str(item.get("assembly_name")) != assembly_name:
             continue
-        item["part"] = translation(item["part"])
+        item["part"] = transform(item["part"])
         if transform_record is not None:
             history = list(item.get("transform_history") or [])
             history.append(deepcopy(dict(transform_record)))
@@ -2058,6 +2142,15 @@ def _placement_offset_for_assembly(
     return placement_state.placement_offsets.get(assembly_name, (0.0, 0.0, 0.0))
 
 
+def _placement_transform_records_for_assembly(
+    assembly_name: str,
+    placement_state: Optional[_PlacementExecutionState],
+) -> List[Dict[str, Any]]:
+    if placement_state is None:
+        return []
+    return list(placement_state.transform_records.get(assembly_name, []))
+
+
 def _resolve_placement_anchor(
     reference: str,
     *,
@@ -2106,13 +2199,19 @@ def _advance_placement_execution(
                 index=index,
                 spec=dict(alignment),
                 moving_reference=str(alignment["part"]),
-                target_reference=str(alignment["to"]),
+                target_reference=(
+                    str(alignment["to"]) if alignment.get("to") is not None else None
+                ),
                 moving_assembly_name=_parse_part_reference(
                     str(alignment["part"]), placement_state.known_assembly_names
                 )[0],
-                target_assembly_name=_parse_part_reference(
-                    str(alignment["to"]), placement_state.known_assembly_names
-                )[0],
+                target_assembly_name=(
+                    _parse_part_reference(
+                        str(alignment["to"]), placement_state.known_assembly_names
+                    )[0]
+                    if alignment.get("to") is not None
+                    else None
+                ),
             )
             for index, alignment in enumerate(placement_state.alignments)
         ]
@@ -2143,17 +2242,14 @@ def _advance_placement_execution(
 
             if moving_assembly_name not in built_results_by_name:
                 continue
-            if target_assembly_name not in built_results_by_name:
+            if (
+                target_assembly_name is not None
+                and target_assembly_name not in built_results_by_name
+            ):
                 continue
 
             _, _, moving_anchor = _resolve_placement_anchor(
                 moving_reference_str,
-                placement_state=placement_state,
-                built_results_by_name=built_results_by_name,
-                repository_dir=repository_dir,
-            )
-            _, _, target_anchor = _resolve_placement_anchor(
-                target_reference_str,
                 placement_state=placement_state,
                 built_results_by_name=built_results_by_name,
                 repository_dir=repository_dir,
@@ -2164,73 +2260,159 @@ def _advance_placement_execution(
                 built_results_by_name=built_results_by_name,
                 repository_dir=repository_dir,
             )
-            _, _, target_part = _resolve_placement_anchor(
-                target_assembly_name,
-                placement_state=placement_state,
-                built_results_by_name=built_results_by_name,
-                repository_dir=repository_dir,
-            )
+            moving_center_before = _part_center(moving_anchor)
+            moved_anchor = moving_anchor
 
-            resolved_alignment = _resolve_alignment_enum(
-                alignment_spec.get("alignment")
-            )
-            raw_axes = alignment_spec.get("axes")
-            axes = None
-            if raw_axes is not None:
-                resolved_axes = _resolve_inline_value(
-                    raw_axes, placement_state.placement_context
-                )
-                if not isinstance(resolved_axes, list):
+            step_transforms: List[Callable[[Any], Any]] = []
+            step_records: List[Dict[str, Any]] = []
+
+            if alignment_spec.get("alignment") is not None:
+                if target_reference_str is None or target_assembly_name is None:
                     raise BuilderError(
-                        "placement alignment axes must resolve to a list"
+                        "Placement steps with 'alignment' also require 'to'"
                     )
-                axes = [int(axis) for axis in resolved_axes]
+                _, _, target_anchor = _resolve_placement_anchor(
+                    target_reference_str,
+                    placement_state=placement_state,
+                    built_results_by_name=built_results_by_name,
+                    repository_dir=repository_dir,
+                )
+                _, _, target_part = _resolve_placement_anchor(
+                    target_assembly_name,
+                    placement_state=placement_state,
+                    built_results_by_name=built_results_by_name,
+                    repository_dir=repository_dir,
+                )
 
-            stack_gap = alignment_spec.get("stack_gap", 0)
-            resolved_stack_gap = _resolve_inline_value(
-                stack_gap, placement_state.placement_context
+                resolved_alignment = _resolve_alignment_enum(
+                    alignment_spec.get("alignment")
+                )
+                raw_axes = alignment_spec.get("axes")
+                axes = None
+                if raw_axes is not None:
+                    resolved_axes = _resolve_inline_value(
+                        raw_axes, placement_state.placement_context
+                    )
+                    if not isinstance(resolved_axes, list):
+                        raise BuilderError(
+                            "placement alignment axes must resolve to a list"
+                        )
+                    axes = [int(axis) for axis in resolved_axes]
+
+                stack_gap = alignment_spec.get("stack_gap", 0)
+                resolved_stack_gap = _resolve_inline_value(
+                    stack_gap, placement_state.placement_context
+                )
+
+                target_center_before = _part_center(target_anchor)
+                moving_part_center_before = _part_center(moving_part)
+                target_part_center_before = _part_center(target_part)
+
+                alignment_transform = _make_placement_translation(
+                    moved_anchor,
+                    target_anchor,
+                    alignment=resolved_alignment,
+                    axes=axes,
+                    stack_gap=resolved_stack_gap,
+                )
+                aligned_anchor = alignment_transform(moved_anchor)
+                alignment_delta = _translation_delta(
+                    _part_center(moved_anchor), _part_center(aligned_anchor)
+                )
+                _logger.info(
+                    "Placement step: %s aligned to %s via %s; moving_anchor_center=%s; target_anchor_center=%s; moving_part_position=%s; target_part_position=%s; shift=%s",
+                    moving_reference_str,
+                    target_reference_str,
+                    resolved_alignment.name,
+                    _format_point(_part_center(moved_anchor)),
+                    _format_point(target_center_before),
+                    _format_point(moving_part_center_before),
+                    _format_point(target_part_center_before),
+                    _format_point(alignment_delta),
+                )
+                step_transforms.append(alignment_transform)
+                step_records.append(
+                    {
+                        "kind": "translate",
+                        "vector": [float(value) for value in alignment_delta],
+                        "placement_step": placement_step.index,
+                    }
+                )
+                moved_anchor = aligned_anchor
+
+            resolved_post_rotation = _resolve_post_rotation(
+                alignment_spec,
+                placement_state.placement_context,
+                resolve_anchor=lambda reference: (
+                    lambda assembly_name, selector, anchor: (
+                        assembly_name,
+                        selector,
+                        (
+                            _apply_translation_sequence(anchor, step_transforms)
+                            if assembly_name == moving_assembly_name and step_transforms
+                            else anchor
+                        ),
+                    )
+                )(
+                    *_resolve_placement_anchor(
+                        reference,
+                        placement_state=placement_state,
+                        built_results_by_name=built_results_by_name,
+                        repository_dir=repository_dir,
+                    )
+                ),
             )
+            if resolved_post_rotation is not None:
+                rotation_transform = _make_post_rotation(
+                    resolved_post_rotation["angle"],
+                    axis=resolved_post_rotation["axis"],
+                    center=resolved_post_rotation["center"],
+                )
+                moved_anchor = rotation_transform(moved_anchor)
+                step_transforms.append(rotation_transform)
+                rotation_record = {
+                    "kind": "rotate",
+                    "angle": float(resolved_post_rotation["angle"]),
+                    "axis": [float(value) for value in resolved_post_rotation["axis"]],
+                    "placement_step": placement_step.index,
+                }
+                if resolved_post_rotation["center"] is not None:
+                    rotation_record["center"] = [
+                        float(value) for value in resolved_post_rotation["center"]
+                    ]
+                step_records.append(rotation_record)
+
             resolved_post_translation = _resolve_post_translation(
                 alignment_spec,
                 placement_state.placement_context,
             )
-
-            moving_center_before = _part_center(moving_anchor)
-            target_center_before = _part_center(target_anchor)
-            moving_part_center_before = _part_center(moving_part)
-            target_part_center_before = _part_center(target_part)
-
-            translation = _make_placement_translation(
-                moving_anchor,
-                target_anchor,
-                alignment=resolved_alignment,
-                axes=axes,
-                stack_gap=resolved_stack_gap,
-            )
             if resolved_post_translation is not None:
-                translation = _compose_translations(
-                    translation,
-                    _make_post_translation(resolved_post_translation),
+                post_translation_transform = _make_post_translation(
+                    resolved_post_translation
                 )
-            moved_anchor = translation(moving_anchor)
-            moving_center_after = _part_center(moved_anchor)
-            delta = _translation_delta(moving_center_before, moving_center_after)
+                moved_anchor = post_translation_transform(moved_anchor)
+                step_transforms.append(post_translation_transform)
+                step_records.append(
+                    {
+                        "kind": "translate",
+                        "vector": [float(value) for value in resolved_post_translation],
+                        "placement_step": placement_step.index,
+                    }
+                )
 
-            _logger.info(
-                "Placement step: %s aligned to %s via %s; moving_anchor_center=%s; target_anchor_center=%s; moving_part_position=%s; target_part_position=%s; shift=%s",
-                moving_reference_str,
-                target_reference_str,
-                resolved_alignment.name,
-                _format_point(moving_center_before),
-                _format_point(target_center_before),
-                _format_point(moving_part_center_before),
-                _format_point(target_part_center_before),
-                _format_point(delta),
-            )
+            if not step_transforms:
+                raise BuilderError(
+                    "Each placement step requires either 'alignment' or 'post_rotation'"
+                )
+
+            delta = _translation_delta(moving_center_before, _part_center(moved_anchor))
 
             placement_state.translation_history.setdefault(
                 moving_assembly_name, []
-            ).append(translation)
+            ).extend(step_transforms)
+            placement_state.transform_records.setdefault(
+                moving_assembly_name, []
+            ).extend(step_records)
             placement_state.placement_offsets[moving_assembly_name] = (
                 _add_translation_delta(
                     placement_state.placement_offsets.get(
@@ -2334,87 +2516,167 @@ def _apply_placement_alignments(
             continue
         moving_reference = alignment_spec.get("part")
         target_reference = alignment_spec.get("to")
-        if not moving_reference or not target_reference:
-            raise BuilderError("Each placement alignment requires 'part' and 'to'")
+        if not moving_reference:
+            raise BuilderError("Each placement alignment requires 'part'")
 
         moving_reference_str = str(moving_reference)
-        target_reference_str = str(target_reference)
-
         moving_assembly_name, _, moving_anchor = resolve_anchor(moving_reference_str)
-        target_assembly_name, _, target_anchor = resolve_anchor(target_reference_str)
+        moving_center_before = _part_center(moving_anchor)
+        moved_anchor = moving_anchor
+        step_transforms: List[Callable[[Any], Any]] = []
 
-        resolved_alignment = _resolve_alignment_enum(alignment_spec.get("alignment"))
-        raw_axes = alignment_spec.get("axes")
-        axes = None
-        if raw_axes is not None:
-            resolved_axes = _resolve_inline_value(raw_axes, placement_context)
-            if not isinstance(resolved_axes, list):
-                raise BuilderError("placement alignment axes must resolve to a list")
-            axes = [int(axis) for axis in resolved_axes]
+        if alignment_spec.get("alignment") is not None:
+            if not target_reference:
+                raise BuilderError("Placement steps with 'alignment' also require 'to'")
+            target_reference_str = str(target_reference)
+            target_assembly_name, _, target_anchor = resolve_anchor(
+                target_reference_str
+            )
 
-        stack_gap = alignment_spec.get("stack_gap", 0)
-        resolved_stack_gap = _resolve_inline_value(stack_gap, placement_context)
+            resolved_alignment = _resolve_alignment_enum(
+                alignment_spec.get("alignment")
+            )
+            raw_axes = alignment_spec.get("axes")
+            axes = None
+            if raw_axes is not None:
+                resolved_axes = _resolve_inline_value(raw_axes, placement_context)
+                if not isinstance(resolved_axes, list):
+                    raise BuilderError(
+                        "placement alignment axes must resolve to a list"
+                    )
+                axes = [int(axis) for axis in resolved_axes]
+
+            stack_gap = alignment_spec.get("stack_gap", 0)
+            resolved_stack_gap = _resolve_inline_value(stack_gap, placement_context)
+
+            target_center_before = _part_center(target_anchor)
+            _, _, moving_part = resolve_anchor(moving_assembly_name)
+            _, _, target_part = resolve_anchor(target_assembly_name)
+            moving_part_center_before = _part_center(moving_part)
+            target_part_center_before = _part_center(target_part)
+
+            alignment_transform = _make_placement_translation(
+                moved_anchor,
+                target_anchor,
+                alignment=resolved_alignment,
+                axes=axes,
+                stack_gap=resolved_stack_gap,
+            )
+            aligned_anchor = alignment_transform(moved_anchor)
+            alignment_delta = _translation_delta(
+                _part_center(moved_anchor), _part_center(aligned_anchor)
+            )
+
+            _logger.info(
+                "Placement step: %s aligned to %s via %s; moving_anchor_center=%s; target_anchor_center=%s; moving_part_position=%s; target_part_position=%s; shift=%s",
+                moving_reference_str,
+                target_reference_str,
+                resolved_alignment.name,
+                _format_point(_part_center(moved_anchor)),
+                _format_point(target_center_before),
+                _format_point(moving_part_center_before),
+                _format_point(target_part_center_before),
+                _format_point(alignment_delta),
+            )
+
+            _apply_transform_to_scene_parts(
+                scene_parts,
+                moving_assembly_name,
+                alignment_transform,
+                transform_record={
+                    "kind": "translate",
+                    "vector": [float(value) for value in alignment_delta],
+                    "placement_step": placement_index,
+                },
+            )
+            step_transforms.append(alignment_transform)
+            moved_anchor = aligned_anchor
+
+        resolved_post_rotation = _resolve_post_rotation(
+            alignment_spec,
+            placement_context,
+            resolve_anchor=lambda reference: (
+                lambda assembly_name, selector, anchor: (
+                    assembly_name,
+                    selector,
+                    (
+                        _apply_translation_sequence(anchor, step_transforms)
+                        if assembly_name == moving_assembly_name and step_transforms
+                        else anchor
+                    ),
+                )
+            )(*resolve_anchor(reference)),
+        )
+        if resolved_post_rotation is not None:
+            rotation_transform = _make_post_rotation(
+                resolved_post_rotation["angle"],
+                axis=resolved_post_rotation["axis"],
+                center=resolved_post_rotation["center"],
+            )
+            moved_anchor = rotation_transform(moved_anchor)
+            _apply_transform_to_scene_parts(
+                scene_parts,
+                moving_assembly_name,
+                rotation_transform,
+                transform_record={
+                    "kind": "rotate",
+                    "angle": float(resolved_post_rotation["angle"]),
+                    "axis": [float(value) for value in resolved_post_rotation["axis"]],
+                    **(
+                        {
+                            "center": [
+                                float(value)
+                                for value in resolved_post_rotation["center"]
+                            ]
+                        }
+                        if resolved_post_rotation["center"] is not None
+                        else {}
+                    ),
+                    "placement_step": placement_index,
+                },
+            )
+            step_transforms.append(rotation_transform)
+
         resolved_post_translation = _resolve_post_translation(
             alignment_spec,
             placement_context,
         )
-
-        moving_center_before = _part_center(moving_anchor)
-        target_center_before = _part_center(target_anchor)
-        _, _, moving_part = resolve_anchor(moving_assembly_name)
-        _, _, target_part = resolve_anchor(target_assembly_name)
-        moving_part_center_before = _part_center(moving_part)
-        target_part_center_before = _part_center(target_part)
-
-        translation = _make_placement_translation(
-            moving_anchor,
-            target_anchor,
-            alignment=resolved_alignment,
-            axes=axes,
-            stack_gap=resolved_stack_gap,
-        )
         if resolved_post_translation is not None:
-            translation = _compose_translations(
-                translation,
-                _make_post_translation(resolved_post_translation),
+            post_translation_transform = _make_post_translation(
+                resolved_post_translation
+            )
+            moved_anchor = post_translation_transform(moved_anchor)
+            _apply_transform_to_scene_parts(
+                scene_parts,
+                moving_assembly_name,
+                post_translation_transform,
+                transform_record={
+                    "kind": "translate",
+                    "vector": [float(value) for value in resolved_post_translation],
+                    "placement_step": placement_index,
+                },
+            )
+            step_transforms.append(post_translation_transform)
+
+        if not step_transforms:
+            raise BuilderError(
+                "Each placement step requires either 'alignment' or 'post_rotation'"
             )
 
-        moved_anchor = translation(moving_anchor)
-        moving_center_after = _part_center(moved_anchor)
         translation_delta = _translation_delta(
-            moving_center_before, moving_center_after
+            moving_center_before, _part_center(moved_anchor)
         )
 
-        _logger.info(
-            "Placement step: %s aligned to %s via %s; moving_anchor_center=%s; target_anchor_center=%s; moving_part_position=%s; target_part_position=%s; shift=%s",
-            moving_reference_str,
-            target_reference_str,
-            resolved_alignment.name,
-            _format_point(moving_center_before),
-            _format_point(target_center_before),
-            _format_point(moving_part_center_before),
-            _format_point(target_part_center_before),
-            _format_point(translation_delta),
-        )
-
-        _apply_translation_to_scene_parts(
-            scene_parts,
-            moving_assembly_name,
-            translation,
-            transform_record={
-                "kind": "translate",
-                "vector": [float(value) for value in translation_delta],
-                "placement_step": placement_index,
-            },
-        )
-        translation_history.setdefault(moving_assembly_name, []).append(translation)
+        translation_history.setdefault(moving_assembly_name, []).extend(step_transforms)
         for (assembly_name, selector), anchor_part in list(anchor_cache.items()):
             if assembly_name != moving_assembly_name:
                 continue
             if anchor_part is moving_anchor:
                 anchor_cache[(assembly_name, selector)] = moved_anchor
                 continue
-            anchor_cache[(assembly_name, selector)] = translation(anchor_part)
+            anchor_cache[(assembly_name, selector)] = _apply_translation_sequence(
+                anchor_part, step_transforms
+            )
 
     return scene_parts
 
@@ -3029,6 +3291,15 @@ def build_from_file(
                             if injection.placement_offset != (0.0, 0.0, 0.0)
                             else {}
                         ),
+                        **(
+                            {
+                                "source_placement_transforms": list(
+                                    injection.placement_transform_records
+                                )
+                            }
+                            if injection.placement_transform_records
+                            else {}
+                        ),
                     }
                     for injection in dependency_injections
                 ],
@@ -3269,6 +3540,7 @@ def _export_scene_for_assembly(
                 export_stl=bool(export_options.get("export_stl", True)),
                 mesh_cache_dir=repository_dir / "__mesh_cache__" / "obj",
                 plates=export_options.get("plates"),
+                selected_plates=getattr(args, "plate", None),
                 auto_assign_plates=bool(
                     export_options.get("auto_assign_plates", False)
                 ),
@@ -3464,6 +3736,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--process-file",
         help="Override the generated process JSON path for downstream slicer steps",
+    )
+    parser.add_argument(
+        "--plate",
+        action="append",
+        help="Export, slice, upload, and open only the named plate. Repeatable.",
     )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     args = parser.parse_args(argv)

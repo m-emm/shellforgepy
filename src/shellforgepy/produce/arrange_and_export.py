@@ -515,8 +515,11 @@ def _arrange_parts_for_production(
 def _split_parts_into_plates(
     arranged_parts,
     *,
+    gap,
     declared_plates=None,
     auto_assign_plates=False,
+    bed_width=None,
+    bed_depth=None,
 ):
     """Split arranged part entries into named plate groups.
 
@@ -525,8 +528,8 @@ def _split_parts_into_plates(
         declared_plates: Optional declarative plate specification. Supports:
             - [{"name": "plate_a", "parts": ["part_1", "part_2"]}, ...]
             - {"plate_a": ["part_1", "part_2"], "plate_b": ["part_3"]}
-        auto_assign_plates: If True, unassigned parts are appended to auto-generated
-            plate names while preserving the existing arrangement order.
+        auto_assign_plates: If True, unassigned parts are packed onto auto-generated
+            plates using a greedy first-fit decreasing shelf heuristic.
     """
 
     if not declared_plates and not auto_assign_plates:
@@ -584,14 +587,54 @@ def _split_parts_into_plates(
             )
 
         if auto_assign_plates:
-            for entry in remaining_parts:
-                plate_index = len(plates) + 1
-                plates.append((f"plate_{plate_index}", [entry]))
+            if bed_width is None:
+                raise ValueError("bed_width is required when auto_assign_plates=True")
+            if bed_depth is None:
+                bed_depth = bed_width
+            plates.extend(
+                _auto_assign_remaining_parts_to_plates(
+                    remaining_parts,
+                    starting_plate_index=len(plates) + 1,
+                    bed_width=bed_width,
+                    bed_depth=bed_depth,
+                    gap=gap,
+                )
+            )
 
     if not plates:
         raise ValueError("No parts assigned to any plate")
 
     return plates
+
+
+def _filter_plate_groups(plate_groups, selected_plate_names):
+    """Filter named plate groups by requested plate names."""
+
+    if not selected_plate_names:
+        return plate_groups
+
+    requested_names = [str(name) for name in selected_plate_names]
+    available_by_name = {
+        plate_name: plate_parts for plate_name, plate_parts in plate_groups
+    }
+    missing_names = [name for name in requested_names if name not in available_by_name]
+    if missing_names:
+        available_names = ", ".join(name for name, _ in plate_groups)
+        missing_text = ", ".join(missing_names)
+        raise ValueError(
+            "Unknown plate selection: "
+            f"{missing_text}. Available plates: {available_names or '<none>'}"
+        )
+
+    filtered_groups = []
+    seen_names = set()
+    for plate_name in requested_names:
+        if plate_name in seen_names:
+            continue
+        seen_names.add(plate_name)
+        filtered_groups.append((plate_name, available_by_name[plate_name]))
+
+    return filtered_groups
 
 
 def _center_plate_parts_on_bed(
@@ -636,6 +679,193 @@ def _center_plate_parts_on_bed(
     return centered_parts
 
 
+def _plate_entry_dimensions(entry):
+    width = entry.get("width")
+    height = entry.get("height")
+    if width is not None and height is not None:
+        return float(width), float(height)
+
+    part = entry.get("part")
+    if part is None:
+        raise ValueError(
+            f"Part '{entry.get('name', '<unnamed>')}' needs width/height or a part shape"
+        )
+
+    min_point, max_point = get_bounding_box(part)
+    return float(max_point[0] - min_point[0]), float(max_point[1] - min_point[1])
+
+
+def _try_place_on_shelves(
+    shelves,
+    *,
+    width,
+    height,
+    bed_width,
+    bed_depth,
+    gap,
+):
+    for shelf in shelves:
+        needed_width = width if shelf["x_cursor"] == 0.0 else gap + width
+        if shelf["x_cursor"] + needed_width <= bed_width and height <= shelf["height"]:
+            x_pos = (
+                shelf["x_cursor"]
+                if shelf["x_cursor"] == 0.0
+                else shelf["x_cursor"] + gap
+            )
+            shelf["x_cursor"] = x_pos + width
+            return x_pos, shelf["y"]
+
+    y_pos = 0.0
+    if shelves:
+        last_shelf = shelves[-1]
+        y_pos = last_shelf["y"] + last_shelf["height"] + gap
+
+    if width <= bed_width and y_pos + height <= bed_depth:
+        shelves.append({"y": y_pos, "height": height, "x_cursor": width})
+        return 0.0, y_pos
+
+    return None
+
+
+def _auto_assign_remaining_parts_to_plates(
+    remaining_parts,
+    *,
+    starting_plate_index,
+    bed_width,
+    bed_depth,
+    gap,
+):
+    measured_parts = []
+    for original_index, entry in enumerate(remaining_parts):
+        width, height = _plate_entry_dimensions(entry)
+        measured_parts.append(
+            {
+                "entry": entry,
+                "width": width,
+                "height": height,
+                "original_index": original_index,
+            }
+        )
+
+    measured_parts.sort(
+        key=lambda item: (-(item["width"] * item["height"]), item["original_index"])
+    )
+
+    generated_plates = []
+    next_plate_index = starting_plate_index
+    remaining = measured_parts
+    while remaining:
+        shelves = []
+        plate_entries = []
+        unplaced = []
+
+        for item in remaining:
+            placement = _try_place_on_shelves(
+                shelves,
+                width=item["width"],
+                height=item["height"],
+                bed_width=bed_width,
+                bed_depth=bed_depth,
+                gap=gap,
+            )
+            if placement is None:
+                unplaced.append(item)
+            else:
+                plate_entries.append(item["entry"])
+
+        if not plate_entries:
+            plate_entries = [remaining[0]["entry"]]
+            unplaced = remaining[1:]
+
+        generated_plates.append((f"plate_{next_plate_index}", plate_entries))
+        next_plate_index += 1
+        remaining = unplaced
+
+    return generated_plates
+
+
+def _arrange_plate_parts_for_bed(
+    plate_parts,
+    *,
+    bed_width,
+    bed_depth,
+    gap,
+):
+    if not plate_parts:
+        return []
+
+    measured_parts = []
+    for original_index, entry in enumerate(plate_parts):
+        min_point, max_point = get_bounding_box(entry["part"])
+        measured_parts.append(
+            {
+                "entry": entry,
+                "width": float(max_point[0] - min_point[0]),
+                "height": float(max_point[1] - min_point[1]),
+                "min_point": min_point,
+                "original_index": original_index,
+            }
+        )
+
+    measured_parts.sort(
+        key=lambda item: (-(item["width"] * item["height"]), item["original_index"])
+    )
+
+    arranged_entries = []
+    shelves = []
+    for item in measured_parts:
+        placement = _try_place_on_shelves(
+            shelves,
+            width=item["width"],
+            height=item["height"],
+            bed_width=bed_width,
+            bed_depth=bed_depth,
+            gap=gap,
+        )
+        if placement is None:
+            raise ValueError(
+                f"Plate parts do not fit on the bed when packed: {item['entry']['name']}"
+            )
+
+        x_pos, y_pos = placement
+        arranged_entry = dict(item["entry"])
+        arranged_entry["transform_history"] = _copy_transform_history(item["entry"])
+
+        shape = translate(
+            float(-item["min_point"][0]),
+            float(-item["min_point"][1]),
+            float(-item["min_point"][2]),
+        )(item["entry"]["part"])
+        _append_transform_record(
+            arranged_entry,
+            {
+                "kind": "translate",
+                "vector": [
+                    float(-item["min_point"][0]),
+                    float(-item["min_point"][1]),
+                    float(-item["min_point"][2]),
+                ],
+            },
+        )
+
+        shape = translate(x_pos, y_pos, 0)(shape)
+        _append_transform_record(
+            arranged_entry,
+            {
+                "kind": "translate",
+                "vector": [float(x_pos), float(y_pos), 0.0],
+            },
+        )
+        arranged_entry["part"] = shape
+        arranged_entries.append(arranged_entry)
+
+    return _center_plate_parts_on_bed(
+        arranged_entries,
+        bed_width=bed_width,
+        bed_depth=bed_depth,
+    )
+
+
 def arrange_and_export_parts(
     parts,
     prod_gap,
@@ -654,6 +884,7 @@ def arrange_and_export_parts(
     export_stl=True,
     mesh_cache_dir=None,
     plates=None,
+    selected_plates=None,
     auto_assign_plates=False,
     enforce_bed_size=True,
 ):
@@ -754,7 +985,17 @@ def arrange_and_export_parts(
         arranged_parts,
         declared_plates=plates,
         auto_assign_plates=auto_assign_plates,
+        bed_width=bed_width,
+        bed_depth=bed_width,
+        gap=prod_gap,
     )
+    plate_groups = _filter_plate_groups(plate_groups, selected_plates)
+    selected_part_names = {
+        item["name"] for _, plate_parts in plate_groups for item in plate_parts
+    }
+    arranged_parts = [
+        entry for entry in arranged_parts if entry["name"] in selected_part_names
+    ]
 
     export_dir = Path(export_directory) if export_directory is not None else Path.home()
     export_dir = export_dir.expanduser()
@@ -773,10 +1014,11 @@ def arrange_and_export_parts(
 
     for plate_name, plate_parts in plate_groups:
         export_plate_parts = (
-            _center_plate_parts_on_bed(
+            _arrange_plate_parts_for_bed(
                 plate_parts,
                 bed_width=bed_width,
                 bed_depth=bed_width,
+                gap=prod_gap,
             )
             if prod
             else list(plate_parts)
@@ -891,9 +1133,11 @@ def arrange_and_export_parts(
             if isinstance(manifest_plates, list):
                 manifest_plates.append(plate_manifest)
 
-    # Export colored OBJ file
+    # Export colored OBJ file. Keep production arrangement view distinct from the
+    # assembled visualization by suffixing production OBJ/MTL names.
     if export_obj:
-        obj_path = export_dir / f"{base_name}.obj"
+        obj_base_name = f"{base_name}_prod" if prod else base_name
+        obj_path = export_dir / f"{obj_base_name}.obj"
         _logger.info("Exporting colored OBJ to %s", obj_path)
         colored_meshes = _build_colored_meshes(
             arranged_parts,
@@ -961,7 +1205,7 @@ def arrange_and_export_parts(
 def arrange_and_export(
     parts,
     *,
-    prod_gap=1.0,
+    prod_gap=2.0,
     bed_width=200.0,
     script_file=None,
     export_directory=None,

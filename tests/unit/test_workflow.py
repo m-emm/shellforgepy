@@ -9,8 +9,10 @@ from shellforgepy.workflow.workflow import (
     MANIFEST_ENV,
     SubprocessResult,
     WorkflowError,
+    _normalize_run_argv,
     _orca_open_commands,
     complete_workflow_run,
+    main,
     run_workflow,
 )
 
@@ -412,3 +414,49 @@ def test_run_workflow_logs_metrics_report_from_manifest(monkeypatch, tmp_path, c
     assert "Metrics report:" in caplog.text
     assert "Weight metrics:" in caplog.text
     assert "y_axis_moving_mass: 1.174000 kg" in caplog.text
+
+
+def test_normalize_run_argv_moves_workflow_flags_before_target():
+    argv = ["run", "design.py", "--slice", "--open"]
+
+    assert _normalize_run_argv(argv) == ["run", "--slice", "--open", "design.py"]
+
+
+def test_normalize_run_argv_preserves_target_args_after_separator():
+    argv = ["run", "design.py", "--slice", "--", "--open", "--foo"]
+
+    assert _normalize_run_argv(argv) == [
+        "run",
+        "--slice",
+        "design.py",
+        "--",
+        "--open",
+        "--foo",
+    ]
+
+
+def test_main_accepts_workflow_flags_after_target(monkeypatch, tmp_path):
+    target = tmp_path / "design.py"
+    target.write_text("print('hello')\n", encoding="utf-8")
+    captured = {}
+
+    def fake_run_workflow(args):
+        captured["slice"] = args.slice
+        captured["open"] = args.open
+        captured["target"] = args.target
+        captured["target_args"] = list(args.target_args)
+        return 0
+
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.run_workflow", fake_run_workflow
+    )
+
+    result = main(["run", str(target), "--slice", "--open"])
+
+    assert result == 0
+    assert captured == {
+        "slice": True,
+        "open": True,
+        "target": str(target),
+        "target_args": [],
+    }

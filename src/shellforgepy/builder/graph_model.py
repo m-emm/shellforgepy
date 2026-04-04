@@ -15,9 +15,9 @@ class PlacementStep:
     index: int
     spec: Dict[str, Any]
     moving_reference: str
-    target_reference: str
+    target_reference: Optional[str]
     moving_assembly_name: str
-    target_assembly_name: str
+    target_assembly_name: Optional[str]
 
 
 @dataclass(frozen=True)
@@ -237,20 +237,32 @@ def _build_placement_steps(
     for index, alignment in enumerate(placement_alignments(config_data)):
         moving_reference = alignment.get("part")
         target_reference = alignment.get("to")
-        if not moving_reference or not target_reference:
-            raise BuilderError("Each placement alignment requires 'part' and 'to'")
+        has_alignment = alignment.get("alignment") is not None
+        has_post_rotation = alignment.get("post_rotation") is not None
+        if not moving_reference:
+            raise BuilderError("Each placement alignment requires 'part'")
+        if has_alignment and not target_reference:
+            raise BuilderError("Placement steps with 'alignment' also require 'to'")
+        if not has_alignment and not has_post_rotation:
+            raise BuilderError(
+                "Each placement step requires either 'alignment' or 'post_rotation'"
+            )
         moving_assembly_name, _ = parse_part_reference(
             str(moving_reference), known_assembly_names
         )
-        target_assembly_name, _ = parse_part_reference(
-            str(target_reference), known_assembly_names
-        )
+        target_assembly_name = None
+        if target_reference:
+            target_assembly_name, _ = parse_part_reference(
+                str(target_reference), known_assembly_names
+            )
         steps.append(
             PlacementStep(
                 index=index,
                 spec=dict(alignment),
                 moving_reference=str(moving_reference),
-                target_reference=str(target_reference),
+                target_reference=(
+                    str(target_reference) if target_reference is not None else None
+                ),
                 moving_assembly_name=moving_assembly_name,
                 target_assembly_name=target_assembly_name,
             )
@@ -276,9 +288,10 @@ def _build_placement_execution_dag(
         moving_predecessor = latest_move_by_assembly.get(step.moving_assembly_name)
         if moving_predecessor is not None:
             dependencies.add(moving_predecessor)
-        target_predecessor = latest_move_by_assembly.get(step.target_assembly_name)
-        if target_predecessor is not None:
-            dependencies.add(target_predecessor)
+        if step.target_assembly_name is not None:
+            target_predecessor = latest_move_by_assembly.get(step.target_assembly_name)
+            if target_predecessor is not None:
+                dependencies.add(target_predecessor)
 
         for predecessor in sorted(dependencies):
             graph.add_edge(predecessor, step.index)
@@ -326,7 +339,8 @@ def placement_dependency_closure(
     ):
         step = model.placement_steps[step_index]
         needed.add(step.moving_assembly_name)
-        needed.add(step.target_assembly_name)
+        if step.target_assembly_name is not None:
+            needed.add(step.target_assembly_name)
     return sorted(needed)
 
 

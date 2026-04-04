@@ -9,22 +9,46 @@ from shellforgepy.simple import create_box, get_bounding_box, translate
 
 def test_split_parts_into_declared_plates_and_auto_assignment():
     arranged_parts = [
-        {"name": "frame"},
-        {"name": "left_bracket"},
-        {"name": "right_bracket"},
+        {"name": "frame", "width": 80, "height": 80},
+        {"name": "left_bracket", "width": 30, "height": 20},
+        {"name": "right_bracket", "width": 25, "height": 20},
     ]
 
     plates = _split_parts_into_plates(
         arranged_parts,
         declared_plates=[{"name": "critical", "parts": ["frame"]}],
         auto_assign_plates=True,
+        bed_width=120,
+        bed_depth=120,
+        gap=5,
     )
 
-    assert [name for name, _ in plates] == ["critical", "plate_2", "plate_3"]
+    assert [name for name, _ in plates] == ["critical", "plate_2"]
     assert [[part["name"] for part in members] for _, members in plates] == [
         ["frame"],
-        ["left_bracket"],
-        ["right_bracket"],
+        ["left_bracket", "right_bracket"],
+    ]
+
+
+def test_split_parts_into_auto_plates_spills_when_next_part_no_longer_fits():
+    arranged_parts = [
+        {"name": "large", "width": 70, "height": 70},
+        {"name": "medium", "width": 45, "height": 45},
+        {"name": "small", "width": 40, "height": 40},
+    ]
+
+    plates = _split_parts_into_plates(
+        arranged_parts,
+        auto_assign_plates=True,
+        bed_width=100,
+        bed_depth=100,
+        gap=5,
+    )
+
+    assert [name for name, _ in plates] == ["plate_1", "plate_2"]
+    assert [[part["name"] for part in members] for _, members in plates] == [
+        ["large"],
+        ["medium", "small"],
     ]
 
 

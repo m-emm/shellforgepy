@@ -1004,7 +1004,104 @@ def show_config(config: Dict[str, object]) -> None:
             _logger.info(f"{dotted_path:<30}: {'<not set>':<80} -- {doc}")
 
 
+def _normalize_run_argv(argv: Sequence[str]) -> List[str]:
+    """Allow workflow flags to appear after the target path for `run`.
+
+    Arguments after `--` are always forwarded to the target script unchanged.
+    """
+
+    normalized = list(argv)
+    if not normalized:
+        return normalized
+
+    global_options_with_values = {"--config"}
+    command_index: Optional[int] = None
+    index = 0
+    while index < len(normalized):
+        token = normalized[index]
+        if token == "--":
+            return normalized
+        if token in global_options_with_values:
+            index += 2
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        command_index = index
+        break
+
+    if command_index is None or normalized[command_index] != "run":
+        return normalized
+
+    run_tokens = normalized[command_index + 1 :]
+    if not run_tokens:
+        return normalized
+
+    option_flags = {
+        "--run-id",
+        "--runs-dir",
+        "--production",
+        "--slice",
+        "--upload",
+        "--python",
+        "--master-settings-dir",
+        "--orca-executable",
+        "--orca-debug",
+        "--part-file",
+        "--process-file",
+        "--printer",
+        "--open",
+    }
+    option_flags_with_values = {
+        "--run-id",
+        "--runs-dir",
+        "--python",
+        "--master-settings-dir",
+        "--orca-executable",
+        "--orca-debug",
+        "--part-file",
+        "--process-file",
+        "--printer",
+    }
+
+    workflow_args: List[str] = []
+    target: Optional[str] = None
+    target_args: List[str] = []
+
+    index = 0
+    while index < len(run_tokens):
+        token = run_tokens[index]
+        if token == "--":
+            target_args.extend(run_tokens[index + 1 :])
+            break
+        if token in option_flags:
+            workflow_args.append(token)
+            if token in option_flags_with_values and index + 1 < len(run_tokens):
+                workflow_args.append(run_tokens[index + 1])
+                index += 2
+                continue
+            index += 1
+            continue
+        if target is None:
+            target = token
+        else:
+            target_args.append(token)
+        index += 1
+
+    if target is None:
+        return normalized
+
+    reordered = normalized[:command_index] + ["run"] + workflow_args + [target]
+    if target_args:
+        reordered.extend(["--", *target_args])
+    return reordered
+
+
 def main(argv: Optional[List[str]] = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    argv = _normalize_run_argv(argv)
+
     parser = argparse.ArgumentParser(
         description="ShellforgePy workflow command line tool"
     )
@@ -1188,6 +1285,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     build_parser.add_argument(
         "--process-file",
         help="Path to the generated process JSON (override manifest)",
+    )
+    build_parser.add_argument(
+        "--plate",
+        action="append",
+        help="Export, slice, upload, and open only the named plate. Repeatable.",
     )
     build_parser.add_argument(
         "--printer",

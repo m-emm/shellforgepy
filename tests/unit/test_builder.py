@@ -2032,6 +2032,7 @@ def test_apply_placement_alignments_supports_post_translation(monkeypatch, tmp_p
             "target-anchor": (10.0, 20.0, 30.0),
             "moving-leader": (4.0, 5.0, 6.0),
             "target-leader": (40.0, 50.0, 60.0),
+            "moving-anchor|ALIGN": (10.0, 20.0, 30.0),
             "moving-anchor|ALIGN|POST": (11.0, 20.0, 37.0),
         }[part],
     )
@@ -2074,6 +2075,114 @@ def test_apply_placement_alignments_supports_post_translation(monkeypatch, tmp_p
     assert captured_post_translations == [(1.0, 0.0, 7.0)]
     assert placed_parts[0]["part"] == "scene-moving|ALIGN|POST"
     assert placed_parts[1]["part"] == "scene-target"
+
+
+def test_resolve_post_rotation_supports_explicit_vector_center():
+    resolved = builder._resolve_post_rotation(
+        {
+            "post_rotation": {
+                "angle": 90,
+                "axis": [1, 0, 0],
+                "center": [1, {"$expr": {"$sub": "2 + ${gap}"}}, 3],
+            }
+        },
+        {"gap": 5},
+        resolve_anchor=lambda reference: (_ for _ in ()).throw(
+            AssertionError(f"Unexpected anchor lookup for {reference}")
+        ),
+    )
+
+    assert resolved == {
+        "angle": 90.0,
+        "axis": (1.0, 0.0, 0.0),
+        "center": (1.0, 7.0, 3.0),
+    }
+
+
+def test_apply_placement_alignments_supports_post_rotation_without_alignment(
+    monkeypatch, tmp_path
+):
+    moving_leader = tmp_path / "moving_leader.step"
+    moving_leader.write_text("moving-leader", encoding="utf-8")
+    target_anchor = tmp_path / "target_anchor.step"
+    target_anchor.write_text("target-anchor", encoding="utf-8")
+
+    scene_parts = [
+        {"assembly_name": "moving", "part": "scene-moving", "transform_history": []},
+        {"assembly_name": "target", "part": "scene-target", "transform_history": []},
+    ]
+    built_results_by_name = {
+        "moving": {
+            "assembly_name": "moving",
+            "artifacts": {"leader_step": str(moving_leader)},
+        },
+        "target": {
+            "assembly_name": "target",
+            "artifacts": {
+                "leader_step": str(target_anchor),
+                "non_production_parts": [
+                    {"name": "anchor", "path": str(target_anchor)}
+                ],
+            },
+        },
+    }
+
+    monkeypatch.setattr(
+        builder,
+        "_import_dependency_part",
+        lambda path: Path(path).read_text(encoding="utf-8"),
+    )
+    monkeypatch.setattr(
+        builder,
+        "_part_center",
+        lambda part: {
+            "moving-leader": (1.0, 2.0, 3.0),
+            "target-anchor": (10.0, 20.0, 30.0),
+            "moving-leader|ROTATE": (4.0, 5.0, 6.0),
+        }[part],
+    )
+    captured_rotations = []
+    monkeypatch.setattr(
+        builder,
+        "_make_post_rotation",
+        lambda angle, *, axis=None, center=None: captured_rotations.append(
+            (angle, axis, center)
+        )
+        or (lambda part: f"{part}|ROTATE"),
+    )
+
+    placed_parts = builder._apply_placement_alignments(
+        scene_parts,
+        built_results_by_name=built_results_by_name,
+        repository_dir=tmp_path,
+        config_data={
+            "assemblies": [{"name": "moving"}, {"name": "target"}],
+            "placement": {
+                "alignments": [
+                    {
+                        "part": "moving",
+                        "post_rotation": {
+                            "angle": 90,
+                            "center": "target.non_production_parts.anchor.CENTER",
+                        },
+                    }
+                ]
+            },
+        },
+    )
+
+    assert captured_rotations == [(90.0, (0.0, 0.0, 1.0), (10.0, 20.0, 30.0))]
+    assert placed_parts[0]["part"] == "scene-moving|ROTATE"
+    assert placed_parts[1]["part"] == "scene-target"
+    assert placed_parts[0]["transform_history"] == [
+        {
+            "kind": "rotate",
+            "angle": 90.0,
+            "axis": [0.0, 0.0, 1.0],
+            "center": [10.0, 20.0, 30.0],
+            "placement_step": 0,
+        }
+    ]
 
 
 def test_advance_placement_execution_stops_until_missing_assembly_is_built(
@@ -2292,6 +2401,7 @@ def test_advance_placement_execution_supports_post_translation(monkeypatch, tmp_
         lambda part: {
             "profile-a": (0.0, 0.0, 0.0),
             "profile-b": (10.0, 0.0, 0.0),
+            "profile-b|ALIGN": (0.0, 0.0, 0.0),
             "profile-b|ALIGN|POST": (0.0, 5.0, 0.0),
         }[part],
     )
@@ -2322,9 +2432,100 @@ def test_advance_placement_execution_supports_post_translation(monkeypatch, tmp_
     assert captured_post_translations == [(0.0, 5.0, 0.0)]
     assert placement_state.cursor == 1
     assert placement_state.placement_offsets == {"profile_b": (-10.0, 5.0, 0.0)}
-    assert placement_state.translation_history["profile_b"][0]("profile-b") == (
-        "profile-b|ALIGN|POST"
+    assert builder._apply_translation_sequence(
+        "profile-b", placement_state.translation_history["profile_b"]
+    ) == ("profile-b|ALIGN|POST")
+
+
+def test_advance_placement_execution_supports_post_rotation_without_alignment(
+    monkeypatch, tmp_path
+):
+    moving_leader = tmp_path / "moving.step"
+    moving_leader.write_text("moving-leader", encoding="utf-8")
+    target_anchor = tmp_path / "target.step"
+    target_anchor.write_text("target-anchor", encoding="utf-8")
+
+    built_results_by_name = {
+        "moving": {
+            "assembly_name": "moving",
+            "artifacts": {"leader_step": str(moving_leader)},
+        },
+        "target": {
+            "assembly_name": "target",
+            "artifacts": {
+                "leader_step": str(target_anchor),
+                "non_production_parts": [
+                    {"name": "anchor", "path": str(target_anchor)}
+                ],
+            },
+        },
+    }
+    config_data = {
+        "assemblies": [{"name": "moving"}, {"name": "target"}],
+        "placement": {
+            "alignments": [
+                {
+                    "part": "moving",
+                    "post_rotation": {
+                        "angle": 90,
+                        "center": "target.non_production_parts.anchor.CENTER",
+                    },
+                }
+            ]
+        },
+    }
+
+    monkeypatch.setattr(
+        builder,
+        "_import_dependency_part",
+        lambda path: Path(path).read_text(encoding="utf-8"),
     )
+    monkeypatch.setattr(
+        builder,
+        "_part_center",
+        lambda part: {
+            "moving-leader": (1.0, 2.0, 3.0),
+            "target-anchor": (10.0, 20.0, 30.0),
+            "moving-leader|ROTATE": (4.0, 6.0, 8.0),
+        }[part],
+    )
+    captured_rotations = []
+    monkeypatch.setattr(
+        builder,
+        "_make_post_rotation",
+        lambda angle, *, axis=None, center=None: captured_rotations.append(
+            (angle, axis, center)
+        )
+        or (lambda part: f"{part}|ROTATE"),
+    )
+
+    placement_state = builder._initialize_placement_execution_state(
+        config_data, built_results_by_name
+    )
+    placement_state = builder._advance_placement_execution(
+        placement_state,
+        built_results_by_name=built_results_by_name,
+        repository_dir=tmp_path,
+    )
+
+    assert captured_rotations == [(90.0, (0.0, 0.0, 1.0), (10.0, 20.0, 30.0))]
+    assert placement_state.cursor == 1
+    assert placement_state.placement_offsets == {"moving": (3.0, 4.0, 5.0)}
+    assert (
+        builder._apply_translation_sequence(
+            "moving-leader", placement_state.translation_history["moving"]
+        )
+        == "moving-leader|ROTATE"
+    )
+    assert placement_state.transform_records["moving"] == [
+        {
+            "kind": "rotate",
+            "angle": 90.0,
+            "axis": [0.0, 0.0, 1.0],
+            "center": [10.0, 20.0, 30.0],
+            "placement_step": 0,
+        }
+    ]
 
 
 def test_build_from_file_injects_dependencies_after_eager_placement(
@@ -2483,6 +2684,13 @@ def test_build_from_file_injects_dependencies_after_eager_placement(
             "source_version_inputs": results[1]["version_inputs"],
             "step_path": results[1]["artifacts"]["leader_step"],
             "source_placement_offset": [-10.0, 0.0, 0.0],
+            "source_placement_transforms": [
+                {
+                    "kind": "translate",
+                    "vector": [-10.0, 0.0, 0.0],
+                    "placement_step": 0,
+                }
+            ],
         },
     ]
 
