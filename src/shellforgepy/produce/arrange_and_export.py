@@ -884,6 +884,7 @@ def arrange_and_export_parts(
     export_stl=True,
     mesh_cache_dir=None,
     plates=None,
+    plate_process_data_map=None,
     selected_plates=None,
     auto_assign_plates=False,
     enforce_bed_size=True,
@@ -1091,12 +1092,18 @@ def arrange_and_export_parts(
             if assembly_step_path is None:
                 assembly_step_path = current_step_path
 
+        effective_plate_process_data = None
+        if plate_process_data_map is not None:
+            effective_plate_process_data = plate_process_data_map.get(plate_name)
+        if effective_plate_process_data is None:
+            effective_plate_process_data = process_data
+
         if (
-            process_data is not None
+            effective_plate_process_data is not None
             and export_stl
             and current_assembly_path is not None
         ):
-            plate_process_data = deepcopy(process_data)
+            plate_process_data = deepcopy(effective_plate_process_data)
             plate_process_data["part_file"] = current_assembly_path.resolve().as_posix()
             current_process_path = current_assembly_path.with_name(
                 f"{current_assembly_path.stem}_process.json"
@@ -1220,6 +1227,7 @@ def arrange_and_export(
     export_stl=True,
     mesh_cache_dir=None,
     plates=None,
+    plate_process_data_map=None,
     auto_assign_plates=False,
 ):
     """Arrange and export a single part with production support.
@@ -1263,5 +1271,6 @@ def arrange_and_export(
         export_stl=export_stl,
         mesh_cache_dir=mesh_cache_dir,
         plates=plates,
+        plate_process_data_map=plate_process_data_map,
         auto_assign_plates=auto_assign_plates,
     )

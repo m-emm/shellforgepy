@@ -1176,6 +1176,216 @@ def _metadata_resolution_context(metadata: Mapping[str, Any]) -> Dict[str, Any]:
     return context
 
 
+def _process_data_resolution_context(
+    metadata: Mapping[str, Any],
+    config_data: Optional[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    context = resolve_globals(config_data.get("globals", {})) if config_data else {}
+    context.update(_metadata_resolution_context(metadata))
+    return context
+
+
+def _process_data_spec_resolver(
+    metadata: Mapping[str, Any],
+    *,
+    config_data: Optional[Mapping[str, Any]] = None,
+) -> Callable[..., Optional[Dict[str, Any]]]:
+    named_definitions = _process_data_definitions(config_data)
+    named_generators = _process_data_generator_definitions(config_data)
+    named_presets = _process_data_preset_definitions(config_data)
+    context = _process_data_resolution_context(metadata, config_data)
+
+    def resolve_generator_mapping(
+        generator_reference: Any,
+        *,
+        field_name: str,
+    ) -> tuple[str, Dict[str, Any]]:
+        if isinstance(generator_reference, str):
+            if generator_reference in named_generators:
+                generator_mapping = named_generators[generator_reference]
+                if not isinstance(generator_mapping, Mapping):
+                    raise BuilderError(
+                        f"{field_name}.generator '{generator_reference}' must resolve to a mapping"
+                    )
+                function_path = generator_mapping.get("function")
+                if not function_path:
+                    raise BuilderError(
+                        f"{field_name}.generator '{generator_reference}' must declare 'function'"
+                    )
+                base_arguments = generator_mapping.get("arguments")
+                if base_arguments is None:
+                    base_arguments = generator_mapping.get("kwargs", {})
+                if base_arguments is None:
+                    base_arguments = {}
+                if not isinstance(base_arguments, Mapping):
+                    raise BuilderError(
+                        f"{field_name}.generator '{generator_reference}' arguments must be a mapping"
+                    )
+                return str(function_path), _resolve_inline_mapping(
+                    base_arguments, context
+                )
+            if "." not in generator_reference:
+                raise BuilderError(
+                    f"{field_name}.generator '{generator_reference}' is neither a configured generator nor a dotted function path"
+                )
+            return str(generator_reference), {}
+
+        if not isinstance(generator_reference, Mapping):
+            raise BuilderError(f"{field_name}.generator must be a string or mapping")
+
+        function_path = generator_reference.get("function")
+        if not function_path:
+            raise BuilderError(
+                f"{field_name}.generator mapping must declare 'function'"
+            )
+        base_arguments = generator_reference.get("arguments")
+        if base_arguments is None:
+            base_arguments = generator_reference.get("kwargs", {})
+        if base_arguments is None:
+            base_arguments = {}
+        if not isinstance(base_arguments, Mapping):
+            raise BuilderError(f"{field_name}.generator arguments must be a mapping")
+        return str(function_path), _resolve_inline_mapping(base_arguments, context)
+
+    def invoke_generator(
+        generator_reference: Any,
+        *,
+        arguments_spec: Any,
+        field_name: str,
+    ) -> Dict[str, Any]:
+        function_path, base_arguments = resolve_generator_mapping(
+            generator_reference,
+            field_name=field_name,
+        )
+        if arguments_spec is None:
+            arguments_spec = {}
+        if not isinstance(arguments_spec, Mapping):
+            raise BuilderError(f"{field_name}.arguments must be a mapping")
+        generator_context = dict(context)
+        generator_context.update(base_arguments)
+        resolved_arguments = _resolve_inline_mapping(arguments_spec, generator_context)
+        call_arguments = dict(base_arguments)
+        call_arguments.update(resolved_arguments)
+
+        generator_callable = _load_attribute(function_path)
+        if not callable(generator_callable):
+            raise BuilderError(
+                f"Resolved process_data generator '{function_path}' is not callable"
+            )
+        generated = generator_callable(**call_arguments)
+        if not isinstance(generated, Mapping):
+            raise BuilderError(
+                f"Process data generator '{function_path}' must return a mapping, got {type(generated).__name__}"
+            )
+        return deepcopy(dict(generated))
+
+    def apply_process_data_spec(
+        resolved: Optional[Dict[str, Any]],
+        spec: Any,
+        *,
+        field_name: str,
+        definition_stack: tuple[str, ...] = (),
+        preset_stack: tuple[str, ...] = (),
+    ) -> Optional[Dict[str, Any]]:
+        if spec is None:
+            return resolved
+        if not isinstance(spec, Mapping):
+            raise BuilderError(f"{field_name} must be a mapping")
+
+        next_resolved = None if resolved is None else deepcopy(dict(resolved))
+        base_name = spec.get("base")
+        if base_name is None:
+            base_name = spec.get("definition")
+        if base_name is not None:
+            if not isinstance(base_name, str):
+                raise BuilderError(f"{field_name}.base must be a string")
+            if base_name in definition_stack:
+                cycle = " -> ".join((*definition_stack, base_name))
+                raise BuilderError(f"Cyclic process_data base definition: {cycle}")
+            if base_name not in named_definitions:
+                raise BuilderError(
+                    f"{field_name}.base references unknown process_data definition '{base_name}'"
+                )
+            next_resolved = apply_process_data_spec(
+                next_resolved,
+                named_definitions[base_name],
+                field_name=f"{field_name}.base[{base_name}]",
+                definition_stack=(*definition_stack, base_name),
+                preset_stack=preset_stack,
+            )
+
+        preset_name = spec.get("preset")
+        if preset_name is not None:
+            if not isinstance(preset_name, str):
+                raise BuilderError(f"{field_name}.preset must be a string")
+            if preset_name in preset_stack:
+                cycle = " -> ".join((*preset_stack, preset_name))
+                raise BuilderError(f"Cyclic process_data preset definition: {cycle}")
+            if preset_name not in named_presets:
+                raise BuilderError(
+                    f"{field_name}.preset references unknown process_data preset '{preset_name}'"
+                )
+            next_resolved = apply_process_data_spec(
+                next_resolved,
+                named_presets[preset_name],
+                field_name=f"{field_name}.preset[{preset_name}]",
+                definition_stack=definition_stack,
+                preset_stack=(*preset_stack, preset_name),
+            )
+
+        source = spec.get("source")
+        if source:
+            loaded = _load_attribute(str(source))
+            if not isinstance(loaded, Mapping):
+                raise BuilderError(
+                    f"Resolved process_data source '{source}' must be a mapping, got {type(loaded).__name__}"
+                )
+            next_resolved = deepcopy(dict(loaded))
+
+        generator_reference = spec.get("generator")
+        if generator_reference is not None:
+            next_resolved = invoke_generator(
+                generator_reference,
+                arguments_spec=spec.get("arguments", spec.get("generator_args", {})),
+                field_name=field_name,
+            )
+
+        inline_keys = {
+            key: value
+            for key, value in spec.items()
+            if key
+            not in {
+                "base",
+                "definition",
+                "preset",
+                "source",
+                "generator",
+                "arguments",
+                "generator_args",
+                "overrides",
+            }
+        }
+        if inline_keys:
+            resolved_inline = _resolve_inline_mapping(inline_keys, context)
+            if next_resolved is None:
+                next_resolved = {}
+            next_resolved = _merge_mapping(next_resolved, resolved_inline)
+        elif next_resolved is None:
+            raise BuilderError(
+                f"{field_name} must declare 'source', 'preset', 'generator', 'base', or inline process data"
+            )
+
+        overrides = spec.get("overrides", {})
+        if overrides:
+            if not isinstance(overrides, Mapping):
+                raise BuilderError(f"{field_name}.overrides must be a mapping")
+            resolved_overrides = _resolve_inline_mapping(overrides, context)
+            next_resolved = _merge_mapping(next_resolved, resolved_overrides)
+        return next_resolved
+
+    return apply_process_data_spec
+
+
 def _export_artifacts(
     assembly_name: str,
     parameter_hash: str,
@@ -1277,6 +1487,65 @@ def _builder_defaults(config_data: Optional[Mapping[str, Any]]) -> Dict[str, Any
     if not isinstance(raw_defaults, Mapping):
         raise BuilderError("builder_defaults must be a mapping")
     return dict(raw_defaults)
+
+
+def _process_data_definitions(
+    config_data: Optional[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    if not config_data:
+        return {}
+
+    raw_definitions = config_data.get("process_data_definitions")
+    if raw_definitions is None:
+        raw_definitions = config_data.get("ProcessDataDefinitions", {})
+    if raw_definitions is None:
+        return {}
+    if not isinstance(raw_definitions, Mapping):
+        raise BuilderError("process_data_definitions must be a mapping")
+    return {str(key): value for key, value in raw_definitions.items()}
+
+
+def _process_data_generator_definitions(
+    config_data: Optional[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    if not config_data:
+        return {}
+
+    raw_definitions = config_data.get("process_data_generators")
+    if raw_definitions is None:
+        raw_definitions = config_data.get("ProcessDataGenerators", {})
+    if raw_definitions is None:
+        return {}
+    if not isinstance(raw_definitions, Mapping):
+        raise BuilderError("process_data_generators must be a mapping")
+    return {str(key): value for key, value in raw_definitions.items()}
+
+
+def _process_data_preset_definitions(
+    config_data: Optional[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    if not config_data:
+        return {}
+
+    raw_definitions = config_data.get("process_data_presets")
+    if raw_definitions is None:
+        raw_definitions = config_data.get("ProcessDataPresets", {})
+    if raw_definitions is None:
+        return {}
+    if not isinstance(raw_definitions, Mapping):
+        raise BuilderError("process_data_presets must be a mapping")
+    return {str(key): value for key, value in raw_definitions.items()}
+
+
+def _find_assembly_entry(
+    config_data: Optional[Mapping[str, Any]], assembly_name: str
+) -> Optional[Dict[str, Any]]:
+    if not config_data:
+        return None
+    for entry in _get_assemblies(config_data):
+        if str(entry.get("name")) == assembly_name:
+            return entry
+    return None
 
 
 def _builder_section(
@@ -2687,47 +2956,8 @@ def _resolve_process_data(
     *,
     include_prototype_overrides: bool = False,
     config_data: Optional[Mapping[str, Any]] = None,
+    selected_assembly_name: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    def apply_process_data_spec(
-        resolved: Optional[Dict[str, Any]],
-        spec: Any,
-        *,
-        field_name: str,
-    ) -> Optional[Dict[str, Any]]:
-        if spec is None:
-            return resolved
-        if not isinstance(spec, Mapping):
-            raise BuilderError(f"{field_name} must be a mapping")
-
-        next_resolved = None if resolved is None else deepcopy(dict(resolved))
-        source = spec.get("source")
-        if source:
-            loaded = _load_attribute(str(source))
-            if not isinstance(loaded, Mapping):
-                raise BuilderError(
-                    f"Resolved process_data source '{source}' must be a mapping, got {type(loaded).__name__}"
-                )
-            next_resolved = deepcopy(dict(loaded))
-        elif next_resolved is None:
-            raise BuilderError(f"{field_name}.source is required")
-
-        overrides = spec.get("overrides", {})
-        if overrides:
-            if not isinstance(overrides, Mapping):
-                raise BuilderError(f"{field_name}.overrides must be a mapping")
-            context = _metadata_resolution_context(metadata)
-            resolved_overrides = _resolve_inline_mapping(overrides, context)
-            for key, value in resolved_overrides.items():
-                if isinstance(value, Mapping) and isinstance(
-                    next_resolved.get(key), Mapping
-                ):
-                    merged = dict(next_resolved[key])
-                    merged.update(value)
-                    next_resolved[key] = merged
-                else:
-                    next_resolved[key] = value
-        return next_resolved
-
     def stringify_process_override_value(value: Any) -> Any:
         if isinstance(value, bool):
             return "1" if value else "0"
@@ -2742,11 +2972,46 @@ def _resolve_process_data(
             }
         return value
 
+    def normalize_process_data_for_export(
+        resolved_process_data: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        if resolved_process_data is None:
+            return None
+        normalized = deepcopy(dict(resolved_process_data))
+        process_overrides = normalized.get("process_overrides")
+        if isinstance(process_overrides, Mapping):
+            normalized_process_overrides: Dict[str, Any] = {}
+            for key, value in process_overrides.items():
+                normalized_process_overrides[str(key)] = (
+                    stringify_process_override_value(value)
+                )
+            normalized["process_overrides"] = normalized_process_overrides
+        return normalized
+
+    selected_assembly_entry = (
+        None
+        if not selected_assembly_name
+        else _find_assembly_entry(config_data, selected_assembly_name)
+    )
+    apply_process_data_spec = _process_data_spec_resolver(
+        metadata,
+        config_data=config_data,
+    )
+
     production_section = _builder_section(resource_data, "Production", config_data)
     resolved = apply_process_data_spec(
         None,
         production_section.get("process_data"),
         field_name="Builder.Production.process_data",
+    )
+    resolved = apply_process_data_spec(
+        resolved,
+        (
+            None
+            if selected_assembly_entry is None
+            else selected_assembly_entry.get("process_data")
+        ),
+        field_name="assemblies[].process_data",
     )
     if resolved is None:
         return None
@@ -2762,16 +3027,89 @@ def _resolve_process_data(
                 field_name="Builder.Production.prototype.process_data",
             )
 
-    process_overrides = resolved.get("process_overrides")
-    if isinstance(process_overrides, Mapping):
-        normalized_process_overrides: Dict[str, Any] = {}
-        for key, value in process_overrides.items():
-            normalized_process_overrides[str(key)] = stringify_process_override_value(
-                value
-            )
-        resolved["process_overrides"] = normalized_process_overrides
+    return normalize_process_data_for_export(resolved)
 
-    return resolved
+
+def _resolve_plate_process_data_map(
+    metadata: Mapping[str, Any],
+    resource_data: Mapping[str, Any],
+    *,
+    default_process_data: Optional[Dict[str, Any]] = None,
+    config_data: Optional[Mapping[str, Any]] = None,
+    selected_assembly_name: Optional[str] = None,
+) -> Dict[str, Dict[str, Any]]:
+    def stringify_process_override_value(value: Any) -> Any:
+        if isinstance(value, bool):
+            return "1" if value else "0"
+        if isinstance(value, (int, float)):
+            return str(value)
+        if isinstance(value, list):
+            return [stringify_process_override_value(item) for item in value]
+        if isinstance(value, Mapping):
+            return {
+                str(key): stringify_process_override_value(item)
+                for key, item in value.items()
+            }
+        return value
+
+    def normalize_process_data_for_export(
+        resolved_process_data: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        if resolved_process_data is None:
+            return None
+        normalized = deepcopy(dict(resolved_process_data))
+        process_overrides = normalized.get("process_overrides")
+        if isinstance(process_overrides, Mapping):
+            normalized["process_overrides"] = {
+                str(key): stringify_process_override_value(value)
+                for key, value in process_overrides.items()
+            }
+        return normalized
+
+    production_section = _builder_section(resource_data, "Production", config_data)
+    arrange = production_section.get("arrange", {})
+    if arrange is None:
+        return {}
+    if not isinstance(arrange, Mapping):
+        raise BuilderError("Builder.Production.arrange must be a mapping")
+
+    raw_plates = arrange.get("plates")
+    if raw_plates is None:
+        return {}
+    if not isinstance(raw_plates, list):
+        return {}
+
+    apply_process_data_spec = _process_data_spec_resolver(
+        metadata,
+        config_data=config_data,
+    )
+    resolved_by_plate: Dict[str, Dict[str, Any]] = {}
+    for index, plate_entry in enumerate(raw_plates, start=1):
+        if not isinstance(plate_entry, Mapping):
+            raise BuilderError(
+                "Builder.Production.arrange.plates entries must be mappings"
+            )
+        plate_name = str(plate_entry.get("name") or f"plate_{index}")
+        plate_process_spec = plate_entry.get("process_data")
+        if (
+            plate_process_spec is None
+            and plate_entry.get("process_data_preset") is not None
+        ):
+            plate_process_spec = {"preset": plate_entry.get("process_data_preset")}
+        if plate_process_spec is None:
+            continue
+        resolved_by_plate[plate_name] = (
+            normalize_process_data_for_export(
+                apply_process_data_spec(
+                    default_process_data,
+                    plate_process_spec,
+                    field_name=f"Builder.Production.arrange.plates[{plate_name}].process_data",
+                )
+            )
+            or {}
+        )
+
+    return resolved_by_plate
 
 
 def _resolve_export_options(
@@ -3461,16 +3799,25 @@ def _export_scene_for_assembly(
         )
 
     process_data = None
+    plate_process_data_map = None
     if production_mode:
         process_data = _resolve_process_data(
             selected_metadata,
             selected_resource_data,
             include_prototype_overrides=bool(getattr(args, "prototype", False)),
             config_data=config_data,
+            selected_assembly_name=selected_assembly,
         )
-        if process_data is None:
+        plate_process_data_map = _resolve_plate_process_data_map(
+            selected_metadata,
+            selected_resource_data,
+            default_process_data=process_data,
+            config_data=config_data,
+            selected_assembly_name=selected_assembly,
+        )
+        if process_data is None and not plate_process_data_map:
             raise BuilderError(
-                f"Assembly '{selected_assembly}' does not declare Builder.Production.process_data"
+                f"Assembly '{selected_assembly}' does not declare Builder.Production.process_data or per-plate process settings"
             )
 
     export_options = _resolve_export_options(
@@ -3540,6 +3887,7 @@ def _export_scene_for_assembly(
                 export_stl=bool(export_options.get("export_stl", True)),
                 mesh_cache_dir=repository_dir / "__mesh_cache__" / "obj",
                 plates=export_options.get("plates"),
+                plate_process_data_map=plate_process_data_map,
                 selected_plates=getattr(args, "plate", None),
                 auto_assign_plates=bool(
                     export_options.get("auto_assign_plates", False)

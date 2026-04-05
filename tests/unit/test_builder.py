@@ -1719,6 +1719,235 @@ def test_resolve_process_data_applies_prototype_overrides(monkeypatch):
     }
 
 
+def test_resolve_process_data_applies_config_named_base_and_entry_overrides():
+    resolved = builder._resolve_process_data(
+        {
+            "public_parameters": {"bed_temp": 55},
+            "generator_kwargs": {"assembly_name": "feet"},
+        },
+        {
+            "Builder": {
+                "Production": {
+                    "parts": [
+                        {
+                            "source": "self",
+                            "artifact": "leader",
+                            "name": "feet",
+                        }
+                    ]
+                }
+            }
+        },
+        config_data={
+            "process_data_definitions": {
+                "tpu_base": {
+                    "filament": "TPU",
+                    "process_overrides": {
+                        "speed": "100",
+                        "support_top_z_distance": "0.4",
+                    },
+                }
+            },
+            "assemblies": [
+                {
+                    "name": "feet",
+                    "process_data": {
+                        "base": "tpu_base",
+                        "overrides": {
+                            "bed_temperature": {"$ref": "bed_temp"},
+                            "process_overrides": {
+                                "brim_type": "no_brim",
+                                "support_top_z_distance": 0.25,
+                            },
+                        },
+                    },
+                }
+            ],
+        },
+        selected_assembly_name="feet",
+    )
+
+    assert resolved == {
+        "filament": "TPU",
+        "bed_temperature": 55,
+        "process_overrides": {
+            "speed": "100",
+            "brim_type": "no_brim",
+            "support_top_z_distance": "0.25",
+        },
+    }
+
+
+def test_resolve_process_data_supports_named_generator_presets(monkeypatch):
+    class ProcessModule:
+        @staticmethod
+        def generate_settings(*, printer_id, material, nozzle_diameter_mm, strength):
+            return {
+                "filament": f"{material}@{printer_id}",
+                "process_overrides": {
+                    "nozzle_diameter": nozzle_diameter_mm,
+                    "wall_loops": 2 if strength < 0.6 else 3,
+                },
+            }
+
+    real_import_module = importlib.import_module
+    monkeypatch.setattr(
+        builder.importlib,
+        "import_module",
+        lambda module_name: (
+            ProcessModule
+            if module_name == "demo.parametric"
+            else real_import_module(module_name)
+        ),
+    )
+
+    resolved = builder._resolve_process_data(
+        {
+            "public_parameters": {},
+            "generator_kwargs": {},
+        },
+        {
+            "Builder": {
+                "Production": {
+                    "process_data": {
+                        "preset": "petgcf_medium",
+                        "overrides": {
+                            "process_overrides": {
+                                "brim_type": "no_brim",
+                            }
+                        },
+                    }
+                }
+            }
+        },
+        config_data={
+            "process_data_generators": {
+                "demo_parametric": {
+                    "function": "demo.parametric.generate_settings",
+                    "arguments": {
+                        "printer_id": "demo_printer",
+                    },
+                }
+            },
+            "process_data_presets": {
+                "petgcf_medium": {
+                    "generator": "demo_parametric",
+                    "arguments": {
+                        "material": "PETGCF",
+                        "nozzle_diameter_mm": 0.6,
+                        "strength": 0.5,
+                    },
+                }
+            },
+        },
+    )
+
+    assert resolved == {
+        "filament": "PETGCF@demo_printer",
+        "process_overrides": {
+            "nozzle_diameter": "0.6",
+            "wall_loops": "2",
+            "brim_type": "no_brim",
+        },
+    }
+
+
+def test_resolve_plate_process_data_map_supports_plate_presets(monkeypatch):
+    class ProcessModule:
+        @staticmethod
+        def generate_settings(*, label, wall_loops):
+            return {
+                "filament": label,
+                "process_overrides": {
+                    "wall_loops": wall_loops,
+                },
+            }
+
+    real_import_module = importlib.import_module
+    monkeypatch.setattr(
+        builder.importlib,
+        "import_module",
+        lambda module_name: (
+            ProcessModule
+            if module_name == "demo.parametric"
+            else real_import_module(module_name)
+        ),
+    )
+
+    metadata = {
+        "public_parameters": {},
+        "generator_kwargs": {},
+    }
+    resource_data = {
+        "Builder": {
+            "Production": {
+                "process_data": {
+                    "preset": "default_petgcf",
+                },
+                "arrange": {
+                    "plates": [
+                        {
+                            "name": "left",
+                            "parts": ["left_part"],
+                            "process_data": {
+                                "preset": "petgcf_medium",
+                            },
+                        },
+                        {
+                            "name": "right",
+                            "parts": ["right_part"],
+                        },
+                    ]
+                },
+            }
+        }
+    }
+    config_data = {
+        "process_data_generators": {
+            "demo_parametric": {
+                "function": "demo.parametric.generate_settings",
+            }
+        },
+        "process_data_presets": {
+            "default_petgcf": {
+                "generator": "demo_parametric",
+                "arguments": {
+                    "label": "default",
+                    "wall_loops": 3,
+                },
+            },
+            "petgcf_medium": {
+                "generator": "demo_parametric",
+                "arguments": {
+                    "label": "medium",
+                    "wall_loops": 2,
+                },
+            },
+        },
+    }
+
+    default_process_data = builder._resolve_process_data(
+        metadata,
+        resource_data,
+        config_data=config_data,
+    )
+    resolved = builder._resolve_plate_process_data_map(
+        metadata,
+        resource_data,
+        default_process_data=default_process_data,
+        config_data=config_data,
+    )
+
+    assert resolved == {
+        "left": {
+            "filament": "medium",
+            "process_overrides": {
+                "wall_loops": "2",
+            },
+        }
+    }
+
+
 def test_materialize_rule_parts_resolves_declared_scene_dependencies_from_config(
     monkeypatch, tmp_path
 ):

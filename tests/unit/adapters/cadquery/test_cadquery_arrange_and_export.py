@@ -540,6 +540,54 @@ def test_arrange_and_export_with_process_data():
 
 
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
+def test_arrange_and_export_with_plate_specific_process_data():
+    box1 = create_box(10, 10, 10)
+    box2 = create_box(10, 10, 10)
+    parts_list = [
+        {"name": "left_box", "part": box1},
+        {"name": "right_box", "part": box2},
+    ]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        result_path = arrange_and_export_parts(
+            parts_list,
+            prod_gap=2.0,
+            bed_width=100.0,
+            script_file="test_multi_plate.py",
+            export_directory=temp_dir,
+            prod=True,
+            process_data={"filament": "default"},
+            plates=[
+                {"name": "left_plate", "parts": ["left_box"]},
+                {"name": "right_plate", "parts": ["right_box"]},
+            ],
+            plate_process_data_map={
+                "left_plate": {"filament": "left_filament"},
+                "right_plate": {"filament": "right_filament"},
+            },
+        )
+
+        assert result_path.exists()
+
+        left_process_path = Path(temp_dir) / "test_multi_plate_left_plate_process.json"
+        right_process_path = (
+            Path(temp_dir) / "test_multi_plate_right_plate_process.json"
+        )
+        assert left_process_path.exists()
+        assert right_process_path.exists()
+
+        with left_process_path.open() as handle:
+            left_saved = json.load(handle)
+        with right_process_path.open() as handle:
+            right_saved = json.load(handle)
+
+        assert left_saved["filament"] == "left_filament"
+        assert right_saved["filament"] == "right_filament"
+        assert left_saved["part_file"].endswith("test_multi_plate_left_plate.stl")
+        assert right_saved["part_file"].endswith("test_multi_plate_right_plate.stl")
+
+
+@pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_arrange_and_export_skips_process_data_without_stl_in_non_prod():
     """Non-production OBJ-only runs may carry process_data without writing it."""
     box = create_box(10, 10, 10)
