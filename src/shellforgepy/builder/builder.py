@@ -292,6 +292,41 @@ def resolve_globals(globals_mapping: Optional[Mapping[str, Any]]) -> Dict[str, A
     return _resolve_mapping(globals_mapping)
 
 
+def resolve_context(
+    context_mapping: Optional[Mapping[str, Any]],
+    base_context: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    if not context_mapping:
+        return {}
+    return _resolve_mapping(context_mapping, base_context=base_context)
+
+
+def _resolve_config_contexts(
+    config_data: Optional[Mapping[str, Any]],
+) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    global_context = (
+        resolve_globals(config_data.get("globals", {})) if config_data else {}
+    )
+    raw_builder_context = config_data.get("context", {}) if config_data else {}
+
+    if raw_builder_context is None:
+        raw_builder_context = {}
+    if not isinstance(raw_builder_context, Mapping):
+        raise BuilderError("context must be a mapping when provided")
+
+    overlapping_keys = sorted(set(global_context) & set(raw_builder_context))
+    if overlapping_keys:
+        raise BuilderError(
+            "Top-level context keys must not overlap globals: "
+            + ", ".join(overlapping_keys)
+        )
+
+    builder_context = resolve_context(raw_builder_context, base_context=global_context)
+    resolution_context = dict(global_context)
+    resolution_context.update(builder_context)
+    return global_context, builder_context, resolution_context
+
+
 def _resolve_inline_mapping(
     mapping: Optional[Mapping[str, Any]],
     context: Mapping[str, Any],
@@ -576,7 +611,7 @@ def _select_part_definition(
 def _resolve_assembly(
     config_path: Path,
     entry: Mapping[str, Any],
-    global_context: Mapping[str, Any],
+    resolution_context: Mapping[str, Any],
 ) -> _ResolvedAssembly:
     resource_path = _discover_resource_file(config_path, entry)
     resource_data = _load_yaml(resource_path)
@@ -597,7 +632,7 @@ def _resolve_assembly(
     public_parameters = _resolve_public_parameters(
         parameter_definitions,
         parameter_overrides,
-        global_context,
+        resolution_context,
     )
 
     properties = part_definition.get("Properties", {})
@@ -681,8 +716,39 @@ def _generator_accepts_keyword_argument(
     )
 
 
-def _generator_context_payload(global_context: Mapping[str, Any]) -> Dict[str, Any]:
-    return deepcopy(dict(global_context))
+def _generator_context_payload(context_mapping: Mapping[str, Any]) -> Dict[str, Any]:
+    return deepcopy(dict(context_mapping))
+
+
+def _auto_injected_context_kwargs(
+    generator: Callable[..., Any],
+    builder_context: Mapping[str, Any],
+    explicit_generator_kwargs: Mapping[str, Any],
+) -> Dict[str, Any]:
+    if not builder_context:
+        return {}
+
+    try:
+        signature = inspect.signature(generator)
+    except (TypeError, ValueError):
+        return {}
+
+    injected_kwargs: Dict[str, Any] = {}
+    for parameter_name, parameter in signature.parameters.items():
+        if parameter_name == "context":
+            continue
+        if parameter.kind not in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            continue
+        if parameter_name in explicit_generator_kwargs:
+            continue
+        if parameter_name not in builder_context:
+            continue
+        injected_kwargs[parameter_name] = deepcopy(builder_context[parameter_name])
+
+    return injected_kwargs
 
 
 def _generator_source_path(
@@ -1180,7 +1246,10 @@ def _process_data_resolution_context(
     metadata: Mapping[str, Any],
     config_data: Optional[Mapping[str, Any]],
 ) -> Dict[str, Any]:
-    context = resolve_globals(config_data.get("globals", {})) if config_data else {}
+    _, builder_context, resolution_context = _resolve_config_contexts(config_data)
+    context = dict(resolution_context)
+    if builder_context:
+        context.update(builder_context)
     context.update(_metadata_resolution_context(metadata))
     return context
 
@@ -2373,9 +2442,7 @@ def _initialize_placement_execution_state(
     return _PlacementExecutionState(
         alignments=_placement_alignments(config_data),
         known_assembly_names=_known_assembly_names(config_data, built_results_by_name),
-        placement_context=(
-            resolve_globals(config_data.get("globals", {})) if config_data else {}
-        ),
+        placement_context=_resolve_config_contexts(config_data)[2],
         graph_model=graph_model,
     )
 
@@ -2718,9 +2785,7 @@ def _apply_placement_alignments(
             config_data,
         )
     known_assembly_names = _known_assembly_names(config_data, built_results_by_name)
-    placement_context = (
-        resolve_globals(config_data.get("globals", {})) if config_data else {}
-    )
+    placement_context = _resolve_config_contexts(config_data)[2]
     relevant_assemblies = {
         str(item["assembly_name"])
         for item in scene_parts
@@ -3490,7 +3555,9 @@ def build_from_file(
         raise BuilderError("python_paths must be a list when provided")
     _ensure_import_paths(project_root, extra_paths)
 
-    global_context = resolve_globals(config_data.get("globals", {}))
+    global_context, builder_context, resolution_context = _resolve_config_contexts(
+        config_data
+    )
     repository_path = _resolve_repository_dir(config_file, config_data, repository_dir)
     repository_path.mkdir(parents=True, exist_ok=True)
 
@@ -3512,7 +3579,7 @@ def build_from_file(
     )
     for generation_index, generation_entries in enumerate(build_generations):
         for assembly_index, entry in enumerate(generation_entries):
-            resolved = _resolve_assembly(config_file, entry, global_context)
+            resolved = _resolve_assembly(config_file, entry, resolution_context)
             dependency_injections = _resolve_dependency_injections(
                 entry,
                 built_results_by_name,
@@ -3520,9 +3587,17 @@ def build_from_file(
                 placement_state,
             )
             generator = _load_generator_callable(resolved.generator_path)
-            generator_context = (
-                _generator_context_payload(global_context)
-                if _generator_accepts_keyword_argument(generator, "context")
+            injected_context_kwargs = _auto_injected_context_kwargs(
+                generator,
+                builder_context,
+                resolved.generator_kwargs,
+            )
+            generator_context = injected_context_kwargs or None
+            legacy_context_payload = (
+                _generator_context_payload(builder_context)
+                if builder_context
+                and _generator_accepts_keyword_argument(generator, "context")
+                and "context" not in resolved.generator_kwargs
                 else None
             )
             version_inputs = _version_inputs(
@@ -3533,7 +3608,18 @@ def build_from_file(
             parameter_hash = _hash_with_dependencies(
                 resolved.generator_kwargs,
                 dependency_injections,
-                generator_context,
+                (
+                    {
+                        **injected_context_kwargs,
+                        **(
+                            {"context": legacy_context_payload}
+                            if legacy_context_payload is not None
+                            else {}
+                        ),
+                    }
+                    if injected_context_kwargs or legacy_context_payload is not None
+                    else None
+                ),
                 version_inputs,
             )
             artifact_dir = (
@@ -3570,10 +3656,11 @@ def build_from_file(
                 resolved.generator_path,
             )
             generator_kwargs = deepcopy(resolved.generator_kwargs)
+            generator_kwargs.update(deepcopy(injected_context_kwargs))
             for injection in dependency_injections:
                 generator_kwargs[injection.kwarg_name] = injection.part
-            if generator_context is not None:
-                generator_kwargs["context"] = deepcopy(generator_context)
+            if legacy_context_payload is not None:
+                generator_kwargs["context"] = deepcopy(legacy_context_payload)
             reset_metrics()
             try:
                 generated_part = generator(**generator_kwargs)
@@ -3606,7 +3693,18 @@ def build_from_file(
                 "parameter_hash": parameter_hash,
                 "public_parameters": resolved.public_parameters,
                 "generator_kwargs": resolved.generator_kwargs,
-                "generator_context": generator_context,
+                "generator_context": (
+                    {
+                        **(generator_context or {}),
+                        **(
+                            {"context": legacy_context_payload}
+                            if legacy_context_payload is not None
+                            else {}
+                        ),
+                    }
+                    if generator_context or legacy_context_payload is not None
+                    else None
+                ),
                 "version_inputs": version_inputs,
                 "generation": generation_index,
                 "assembly_in_generation": assembly_index,

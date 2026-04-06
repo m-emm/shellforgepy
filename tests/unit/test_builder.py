@@ -416,9 +416,7 @@ def test_build_from_file_rebuilds_legacy_metadata_schema_for_metrics(
     assert exports, "legacy schema metadata should force a rebuild"
 
 
-def test_build_from_file_injects_global_context_when_generator_accepts_it(
-    monkeypatch, tmp_path
-):
+def test_build_from_file_auto_injects_top_level_context_kwargs(monkeypatch, tmp_path):
     project_root = tmp_path / "project"
     src_dir = project_root / "src" / "demo_pkg"
     _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
@@ -427,8 +425,8 @@ def test_build_from_file_injects_global_context_when_generator_accepts_it(
         src_dir / "context_generators.py",
         "\n".join(
             [
-                "def make_widget(*, width, context=None):",
-                "    return f\"widget-{width}-{context.get('BIG_THING', 'missing')}\"",
+                "def make_widget(*, width, BIG_THING):",
+                '    return f"widget-{width}-{BIG_THING}"',
             ]
         ),
     )
@@ -458,11 +456,14 @@ def test_build_from_file_injects_global_context_when_generator_accepts_it(
         "\n".join(
             [
                 "globals:",
+                "  width_source: 10",
+                "  unrelated_global: 123",
+                "context:",
                 "  BIG_THING: 500",
                 "assemblies:",
                 "  - name: context_assembly",
                 "    parameters:",
-                "      width: 10",
+                "      width: !Ref width_source",
             ]
         ),
     )
@@ -493,6 +494,94 @@ def test_build_from_file_injects_global_context_when_generator_accepts_it(
         Path(results[0]["artifacts"]["leader_step"]).read_text(encoding="utf-8")
         == "widget-10.0-500"
     )
+
+
+def test_build_from_file_ignores_unrelated_globals_for_context_injected_generators(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / "demo_pkg"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "context_generators.py",
+        "\n".join(
+            [
+                "def make_widget(*, width, BIG_THING):",
+                '    return f"widget-{width}-{BIG_THING}"',
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(
+        assemblies_dir / "context_assembly.yaml",
+        "\n".join(
+            [
+                "Parameters:",
+                "  width:",
+                "    Type: Float",
+                "Parts:",
+                "  ContextWidget:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.context_generators.make_widget",
+                "      Properties:",
+                "        width:",
+                "          $ref: width",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "globals:",
+                "  width_source: 10",
+                "  unrelated_global: 123",
+                "context:",
+                "  BIG_THING: 500",
+                "assemblies:",
+                "  - name: context_assembly",
+                "    parameters:",
+                "      width: !Ref width_source",
+            ]
+        ),
+    )
+
+    def fake_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+    monkeypatch.delitem(sys.modules, "demo_pkg", raising=False)
+    monkeypatch.delitem(sys.modules, "demo_pkg.context_generators", raising=False)
+
+    initial_results = builder.build_from_file(config_path)
+    initial_hash = initial_results[0]["parameter_hash"]
+
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "globals:",
+                "  width_source: 10",
+                "  unrelated_global: 456",
+                "context:",
+                "  BIG_THING: 500",
+                "assemblies:",
+                "  - name: context_assembly",
+                "    parameters:",
+                "      width: !Ref width_source",
+            ]
+        ),
+    )
+
+    cached_results = builder.build_from_file(config_path)
+
+    assert cached_results[0]["cache_hit"] is True
+    assert cached_results[0]["parameter_hash"] == initial_hash
 
 
 def test_build_from_file_injects_dependency_part_and_hashes_dependency(
