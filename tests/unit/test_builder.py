@@ -1941,6 +1941,66 @@ def test_resolve_process_data_supports_named_generator_presets(monkeypatch):
     }
 
 
+def test_resolve_process_data_supports_production_process_data_preset(monkeypatch):
+    class ProcessModule:
+        @staticmethod
+        def generate_settings(*, label, wall_loops):
+            return {
+                "filament": label,
+                "process_overrides": {
+                    "wall_loops": wall_loops,
+                },
+            }
+
+    real_import_module = importlib.import_module
+    monkeypatch.setattr(
+        builder.importlib,
+        "import_module",
+        lambda module_name: (
+            ProcessModule
+            if module_name == "demo.parametric"
+            else real_import_module(module_name)
+        ),
+    )
+
+    resolved = builder._resolve_process_data(
+        {
+            "public_parameters": {},
+            "generator_kwargs": {},
+        },
+        {
+            "Builder": {
+                "Production": {
+                    "process_data_preset": "petgcf_medium",
+                }
+            }
+        },
+        config_data={
+            "process_data_generators": {
+                "demo_parametric": {
+                    "function": "demo.parametric.generate_settings",
+                }
+            },
+            "process_data_presets": {
+                "petgcf_medium": {
+                    "generator": "demo_parametric",
+                    "arguments": {
+                        "label": "medium",
+                        "wall_loops": 2,
+                    },
+                }
+            },
+        },
+    )
+
+    assert resolved == {
+        "filament": "medium",
+        "process_overrides": {
+            "wall_loops": "2",
+        },
+    }
+
+
 def test_resolve_plate_process_data_map_supports_plate_presets(monkeypatch):
     class ProcessModule:
         @staticmethod
@@ -1970,9 +2030,7 @@ def test_resolve_plate_process_data_map_supports_plate_presets(monkeypatch):
     resource_data = {
         "Builder": {
             "Production": {
-                "process_data": {
-                    "preset": "default_petgcf",
-                },
+                "process_data_preset": "default_petgcf",
                 "arrange": {
                     "plates": [
                         {
@@ -2035,6 +2093,82 @@ def test_resolve_plate_process_data_map_supports_plate_presets(monkeypatch):
             },
         }
     }
+
+
+def test_resolve_plate_process_data_map_requires_process_data_without_global_default(
+    monkeypatch,
+):
+    class ProcessModule:
+        @staticmethod
+        def generate_settings(*, label, wall_loops):
+            return {
+                "filament": label,
+                "process_overrides": {
+                    "wall_loops": wall_loops,
+                },
+            }
+
+    real_import_module = importlib.import_module
+    monkeypatch.setattr(
+        builder.importlib,
+        "import_module",
+        lambda module_name: (
+            ProcessModule
+            if module_name == "demo.parametric"
+            else real_import_module(module_name)
+        ),
+    )
+
+    metadata = {
+        "public_parameters": {},
+        "generator_kwargs": {},
+    }
+    resource_data = {
+        "Builder": {
+            "Production": {
+                "arrange": {
+                    "plates": [
+                        {
+                            "name": "left",
+                            "parts": ["left_part"],
+                            "process_data_preset": "petgcf_medium",
+                        },
+                        {
+                            "name": "right",
+                            "parts": ["right_part"],
+                        },
+                    ]
+                },
+            }
+        }
+    }
+    config_data = {
+        "process_data_generators": {
+            "demo_parametric": {
+                "function": "demo.parametric.generate_settings",
+            }
+        },
+        "process_data_presets": {
+            "petgcf_medium": {
+                "generator": "demo_parametric",
+                "arguments": {
+                    "label": "medium",
+                    "wall_loops": 2,
+                },
+            },
+        },
+    }
+
+    with pytest.raises(
+        builder.BuilderError,
+        match="Missing process data for plates: right",
+    ):
+        builder._resolve_plate_process_data_map(
+            metadata,
+            resource_data,
+            default_process_data=None,
+            config_data=config_data,
+        )
 
 
 def test_materialize_rule_parts_resolves_declared_scene_dependencies_from_config(

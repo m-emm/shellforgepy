@@ -1212,7 +1212,7 @@ def arrange_and_export_parts(
 def arrange_and_export(
     parts,
     *,
-    prod_gap=2.0,
+    prod_gap=3.0,
     bed_width=200.0,
     script_file=None,
     export_directory=None,

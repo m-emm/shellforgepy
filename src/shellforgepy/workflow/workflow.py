@@ -604,9 +604,13 @@ def complete_workflow_run(
     elif plate_jobs:
         slicing_jobs = []
         for job in plate_jobs:
-            resolved_part = _ensure_path(job.get("part_path"), "generated STL")
+            resolved_part = _ensure_path(
+                job.get("part_path"),
+                f"generated STL for plate '{job['name']}'",
+            )
             resolved_process = _ensure_path(
-                job.get("process_path"), "generated process data JSON"
+                job.get("process_path"),
+                f"generated process data JSON for plate '{job['name']}'",
             )
             slicing_jobs.append(
                 {

@@ -3023,6 +3023,16 @@ def _resolve_process_data(
     config_data: Optional[Mapping[str, Any]] = None,
     selected_assembly_name: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
+    def process_data_spec_from_mapping(
+        mapping: Optional[Mapping[str, Any]],
+    ) -> Any:
+        if mapping is None:
+            return None
+        process_data_spec = mapping.get("process_data")
+        if process_data_spec is None and mapping.get("process_data_preset") is not None:
+            process_data_spec = {"preset": mapping.get("process_data_preset")}
+        return process_data_spec
+
     def stringify_process_override_value(value: Any) -> Any:
         if isinstance(value, bool):
             return "1" if value else "0"
@@ -3066,16 +3076,12 @@ def _resolve_process_data(
     production_section = _builder_section(resource_data, "Production", config_data)
     resolved = apply_process_data_spec(
         None,
-        production_section.get("process_data"),
+        process_data_spec_from_mapping(production_section),
         field_name="Builder.Production.process_data",
     )
     resolved = apply_process_data_spec(
         resolved,
-        (
-            None
-            if selected_assembly_entry is None
-            else selected_assembly_entry.get("process_data")
-        ),
+        process_data_spec_from_mapping(selected_assembly_entry),
         field_name="assemblies[].process_data",
     )
     if resolved is None:
@@ -3088,7 +3094,7 @@ def _resolve_process_data(
                 raise BuilderError("Builder.Production.prototype must be a mapping")
             resolved = apply_process_data_spec(
                 resolved,
-                prototype.get("process_data"),
+                process_data_spec_from_mapping(prototype),
                 field_name="Builder.Production.prototype.process_data",
             )
 
@@ -3103,6 +3109,16 @@ def _resolve_plate_process_data_map(
     config_data: Optional[Mapping[str, Any]] = None,
     selected_assembly_name: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
+    def process_data_spec_from_mapping(
+        mapping: Optional[Mapping[str, Any]],
+    ) -> Any:
+        if mapping is None:
+            return None
+        process_data_spec = mapping.get("process_data")
+        if process_data_spec is None and mapping.get("process_data_preset") is not None:
+            process_data_spec = {"preset": mapping.get("process_data_preset")}
+        return process_data_spec
+
     def stringify_process_override_value(value: Any) -> Any:
         if isinstance(value, bool):
             return "1" if value else "0"
@@ -3149,19 +3165,17 @@ def _resolve_plate_process_data_map(
         config_data=config_data,
     )
     resolved_by_plate: Dict[str, Dict[str, Any]] = {}
+    missing_process_data_plates: List[str] = []
     for index, plate_entry in enumerate(raw_plates, start=1):
         if not isinstance(plate_entry, Mapping):
             raise BuilderError(
                 "Builder.Production.arrange.plates entries must be mappings"
             )
         plate_name = str(plate_entry.get("name") or f"plate_{index}")
-        plate_process_spec = plate_entry.get("process_data")
-        if (
-            plate_process_spec is None
-            and plate_entry.get("process_data_preset") is not None
-        ):
-            plate_process_spec = {"preset": plate_entry.get("process_data_preset")}
+        plate_process_spec = process_data_spec_from_mapping(plate_entry)
         if plate_process_spec is None:
+            if default_process_data is None:
+                missing_process_data_plates.append(plate_name)
             continue
         resolved_by_plate[plate_name] = (
             normalize_process_data_for_export(
@@ -3172,6 +3186,14 @@ def _resolve_plate_process_data_map(
                 )
             )
             or {}
+        )
+
+    if missing_process_data_plates:
+        raise BuilderError(
+            "Builder.Production.arrange.plates requires process data for every "
+            "plate when no global Builder.Production.process_data or "
+            "Builder.Production.process_data_preset is declared. Missing process "
+            f"data for plates: {', '.join(missing_process_data_plates)}"
         )
 
     return resolved_by_plate
@@ -3915,7 +3937,7 @@ def _export_scene_for_assembly(
         )
         if process_data is None and not plate_process_data_map:
             raise BuilderError(
-                f"Assembly '{selected_assembly}' does not declare Builder.Production.process_data or per-plate process settings"
+                f"Assembly '{selected_assembly}' does not declare Builder.Production.process_data, Builder.Production.process_data_preset, or per-plate process settings"
             )
 
     export_options = _resolve_export_options(

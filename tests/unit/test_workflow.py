@@ -169,6 +169,77 @@ def test_complete_workflow_run_slices_each_manifest_plate(monkeypatch, tmp_path)
     assert slicer_inputs == ["machine_plate_a.stl", "machine_plate_b.stl"]
 
 
+def test_complete_workflow_run_errors_for_manifest_plate_without_process_data(
+    monkeypatch, tmp_path
+):
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    plate_a_stl = run_directory / "machine_plate_a.stl"
+    plate_b_stl = run_directory / "machine_plate_b.stl"
+    plate_a_stl.write_text("solid a\n", encoding="utf-8")
+    plate_b_stl.write_text("solid b\n", encoding="utf-8")
+    plate_a_process = run_directory / "machine_plate_a_process.json"
+    plate_a_process.write_text("{}", encoding="utf-8")
+
+    orca_exec = tmp_path / "orca"
+    orca_exec.write_text("#!/bin/sh\n", encoding="utf-8")
+    master_settings_dir = tmp_path / "masters"
+    master_settings_dir.mkdir()
+
+    def fake_generate_settings(*, process_data_file, output_dir, master_settings_dir):
+        (Path(output_dir) / "machine_settings.json").write_text("{}", encoding="utf-8")
+
+    def fake_execute_subprocess(cmd, *, env=None, cwd=None, stdin_data=None):
+        return SubprocessResult(0, [], [])
+
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.generate_settings", fake_generate_settings
+    )
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.execute_subprocess",
+        fake_execute_subprocess,
+    )
+
+    args = argparse.Namespace(
+        slice=True,
+        upload=False,
+        open=False,
+        part_file=None,
+        process_file=None,
+        master_settings_dir=str(master_settings_dir),
+        orca_executable=str(orca_exec),
+        orca_debug=None,
+        printer=None,
+    )
+    config = {"orca": {"debug_level": 6}}
+    manifest = {
+        "plates": [
+            {
+                "name": "plate_a",
+                "assembly_path": str(plate_a_stl),
+                "process_data_path": str(plate_a_process),
+            },
+            {
+                "name": "plate_b",
+                "assembly_path": str(plate_b_stl),
+                "process_data_path": None,
+            },
+        ]
+    }
+
+    with pytest.raises(
+        WorkflowError,
+        match="generated process data JSON for plate 'plate_b'",
+    ):
+        complete_workflow_run(
+            args,
+            config=config,
+            run_directory=run_directory,
+            manifest=manifest,
+            target_label="machine",
+        )
+
+
 def test_complete_workflow_run_open_starts_orca_for_each_plate(monkeypatch, tmp_path):
     run_directory = tmp_path / "run"
     run_directory.mkdir()
