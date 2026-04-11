@@ -6,11 +6,13 @@ import hashlib
 import json
 import logging
 import os
+import zipfile
 from copy import deepcopy
 from os import PathLike
 from pathlib import Path
 
 import numpy as np
+from shellforgepy.adapters._adapter import create_box
 from shellforgepy.adapters._adapter import (
     export_solid_to_step as adapter_export_solid_to_step,
 )
@@ -69,6 +71,8 @@ DEFAULT_PART_COLORS = [
     (0.9451, 0.8863, 0.8000),  # Pastel2[6]
     (0.8000, 0.8000, 0.8000),  # Pastel2[7]
 ]
+
+PLATE_BOUNDARY_COLOR = (0.82, 0.82, 0.82)
 
 
 def export_solid_to_stl(
@@ -186,17 +190,43 @@ def _mesh_cache_paths(cache_root: Path, signature: str):
     return cache_root / f"{signature}.npz", cache_root / f"{signature}.json"
 
 
+def _discard_cached_mesh(mesh_path: Path, metadata_path: Path):
+    for path in (mesh_path, metadata_path):
+        if path.exists():
+            path.unlink()
+
+
 def _load_cached_mesh(cache_root: Path, signature: str):
     mesh_path, metadata_path = _mesh_cache_paths(cache_root, signature)
     if not mesh_path.exists():
         return None
-    with np.load(mesh_path) as data:
-        vertices = np.asarray(data["vertices"], dtype=float)
-        triangles = np.asarray(data["triangles"], dtype=np.int64)
+
+    try:
+        with np.load(mesh_path) as data:
+            vertices = np.asarray(data["vertices"], dtype=float)
+            triangles = np.asarray(data["triangles"], dtype=np.int64)
+    except (EOFError, KeyError, OSError, ValueError, zipfile.BadZipFile) as exc:
+        _logger.warning(
+            "Discarding unreadable OBJ mesh cache entry %s: %s",
+            mesh_path,
+            exc,
+        )
+        _discard_cached_mesh(mesh_path, metadata_path)
+        return None
+
     metadata = None
     if metadata_path.exists():
-        with metadata_path.open("r", encoding="utf-8") as handle:
-            metadata = json.load(handle)
+        try:
+            with metadata_path.open("r", encoding="utf-8") as handle:
+                metadata = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            _logger.warning(
+                "Discarding unreadable OBJ mesh cache metadata %s: %s",
+                metadata_path,
+                exc,
+            )
+            _discard_cached_mesh(mesh_path, metadata_path)
+            return None
     return vertices, triangles, metadata
 
 
@@ -679,6 +709,141 @@ def _center_plate_parts_on_bed(
     return centered_parts
 
 
+def _translate_part_entry(entry, *, x=0.0, y=0.0, z=0.0):
+    translated_entry = dict(entry)
+    translated_entry["transform_history"] = _copy_transform_history(entry)
+    translated_part = entry["part"]
+    if x != 0.0 or y != 0.0 or z != 0.0:
+        translated_part = translate(x, y, z)(translated_part)
+        _append_transform_record(
+            translated_entry,
+            {
+                "kind": "translate",
+                "vector": [float(x), float(y), float(z)],
+            },
+        )
+    translated_entry["part"] = translated_part
+    return translated_entry
+
+
+def _build_plate_boundary_parts(
+    plate_name,
+    *,
+    origin_x,
+    origin_y,
+    bed_width,
+    bed_depth,
+    boundary_thickness=1.0,
+    boundary_height=0.2,
+):
+    boundaries = []
+    z_origin = -float(boundary_height)
+    segments = [
+        (
+            "front",
+            create_box(
+                bed_width,
+                boundary_thickness,
+                boundary_height,
+                origin=(origin_x, origin_y, z_origin),
+            ),
+        ),
+        (
+            "back",
+            create_box(
+                bed_width,
+                boundary_thickness,
+                boundary_height,
+                origin=(
+                    origin_x,
+                    origin_y + bed_depth - boundary_thickness,
+                    z_origin,
+                ),
+            ),
+        ),
+        (
+            "left",
+            create_box(
+                boundary_thickness,
+                bed_depth,
+                boundary_height,
+                origin=(origin_x, origin_y, z_origin),
+            ),
+        ),
+        (
+            "right",
+            create_box(
+                boundary_thickness,
+                bed_depth,
+                boundary_height,
+                origin=(
+                    origin_x + bed_width - boundary_thickness,
+                    origin_y,
+                    z_origin,
+                ),
+            ),
+        ),
+    ]
+    boundary = PartCollector()
+    for edge_name, part in segments:
+        boundary = boundary.fuse(part)
+
+    boundaries.append(
+        {
+            "name": f"plate_boundary_{_safe_name(plate_name)}",
+            "part": boundary,
+            "color": PLATE_BOUNDARY_COLOR,
+            "animation": None,
+            "source_path": None,
+            "source_parameter_hash": None,
+            "source_version_inputs": {},
+            "transform_history": [],
+            "obj_metadata": {
+                "visualization_role": "plate_boundary",
+                "plate_name": str(plate_name),
+            },
+        }
+    )
+    return boundaries
+
+
+def _build_production_obj_scene_parts(
+    prepared_plate_groups,
+    *,
+    bed_width,
+    bed_depth,
+    plate_scene_gap,
+    visualize_plate_boundaries,
+):
+    scene_parts = []
+    plate_offset_x = 0.0
+
+    for plate_name, plate_parts in prepared_plate_groups:
+        for entry in plate_parts:
+            translated_entry = _translate_part_entry(entry, x=plate_offset_x)
+            metadata = deepcopy(translated_entry.get("obj_metadata"))
+            if metadata is None:
+                metadata = {}
+            metadata["plate_name"] = str(plate_name)
+            translated_entry["obj_metadata"] = metadata
+            scene_parts.append(translated_entry)
+
+        if visualize_plate_boundaries:
+            scene_parts.extend(
+                _build_plate_boundary_parts(
+                    plate_name,
+                    origin_x=plate_offset_x,
+                    origin_y=0.0,
+                    bed_width=bed_width,
+                    bed_depth=bed_depth,
+                )
+            )
+
+        plate_offset_x += bed_width + plate_scene_gap
+
+    return scene_parts
+
+
 def _plate_entry_dimensions(entry):
     width = entry.get("width")
     height = entry.get("height")
@@ -888,6 +1053,8 @@ def arrange_and_export_parts(
     selected_plates=None,
     auto_assign_plates=False,
     enforce_bed_size=True,
+    plate_scene_gap=20.0,
+    visualize_plate_boundaries=True,
 ):
     """Arrange named parts with production support and export requested formats.
 
@@ -997,6 +1164,23 @@ def arrange_and_export_parts(
     arranged_parts = [
         entry for entry in arranged_parts if entry["name"] in selected_part_names
     ]
+    prepared_plate_groups = []
+    for plate_name, plate_parts in plate_groups:
+        prepared_plate_groups.append(
+            (
+                plate_name,
+                (
+                    _arrange_plate_parts_for_bed(
+                        plate_parts,
+                        bed_width=bed_width,
+                        bed_depth=bed_width,
+                        gap=prod_gap,
+                    )
+                    if prod
+                    else list(plate_parts)
+                ),
+            )
+        )
 
     export_dir = Path(export_directory) if export_directory is not None else Path.home()
     export_dir = export_dir.expanduser()
@@ -1013,17 +1197,7 @@ def arrange_and_export_parts(
     obj_path = None
     needs_fused_export = export_stl or export_step
 
-    for plate_name, plate_parts in plate_groups:
-        export_plate_parts = (
-            _arrange_plate_parts_for_bed(
-                plate_parts,
-                bed_width=bed_width,
-                bed_depth=bed_width,
-                gap=prod_gap,
-            )
-            if prod
-            else list(plate_parts)
-        )
+    for plate_name, export_plate_parts in prepared_plate_groups:
         fused_collector = PartCollector() if needs_fused_export else None
         safe_plate_name = _safe_name(plate_name)
         if needs_fused_export:
@@ -1116,7 +1290,7 @@ def arrange_and_export_parts(
             if export_stl and export_individual_parts:
                 manifest_parts = manifest_data.setdefault("part_files", [])
                 if isinstance(manifest_parts, list):
-                    for item in plate_parts:
+                    for item in export_plate_parts:
                         manifest_parts.append(
                             str(
                                 (
@@ -1146,8 +1320,17 @@ def arrange_and_export_parts(
         obj_base_name = f"{base_name}_prod" if prod else base_name
         obj_path = export_dir / f"{obj_base_name}.obj"
         _logger.info("Exporting colored OBJ to %s", obj_path)
+        obj_scene_parts = arranged_parts
+        if prod:
+            obj_scene_parts = _build_production_obj_scene_parts(
+                prepared_plate_groups,
+                bed_width=bed_width,
+                bed_depth=bed_width,
+                plate_scene_gap=float(plate_scene_gap),
+                visualize_plate_boundaries=bool(visualize_plate_boundaries),
+            )
         colored_meshes = _build_colored_meshes(
-            arranged_parts,
+            obj_scene_parts,
             mesh_cache_dir=mesh_cache_dir,
         )
         export_colored_meshes_to_obj(colored_meshes, str(obj_path))
@@ -1212,7 +1395,7 @@ def arrange_and_export_parts(
 def arrange_and_export(
     parts,
     *,
-    prod_gap=3.0,
+    prod_gap=4.0,
     bed_width=200.0,
     script_file=None,
     export_directory=None,

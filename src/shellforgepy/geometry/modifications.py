@@ -1150,6 +1150,17 @@ def cut_in_two(part, cut_point=None, cut_normal=None, cut_thickness=0):
           around the plane: ``upper_part`` keeps roughly ``d(x) > +cut_thickness/2`` and
           ``lower_part`` keeps roughly ``d(x) < -cut_thickness/2``.
 
+        Examples:
+        ---------
+        Assuming the usual printer coordinates ``x+ = right``, ``y- = front``,
+        ``y+ = back``,
+        and ``z+ = up``, the first returned part is always the side in the
+        ``+cut_normal`` direction:
+
+        - ``right_half, left_half = cut_in_two(part, cut_normal=(1, 0, 0))``
+        - ``back_half, front_half = cut_in_two(part, cut_normal=(0, 1, 0))``
+        - ``top_half, bottom_half = cut_in_two(part, cut_normal=(0, 0, 1))``
+
     Raises:
     -------
     ValueError

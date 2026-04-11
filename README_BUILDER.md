@@ -188,7 +188,7 @@ Builder:
   Production:
     arrange:
       bed_width: 220
-      prod_gap: 3
+      prod_gap: 4
       # Optional: explicit/manual plate declaration
       plates:
         - name: plate_frame

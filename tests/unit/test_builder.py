@@ -2001,6 +2001,76 @@ def test_resolve_process_data_supports_production_process_data_preset(monkeypatc
     }
 
 
+def test_resolve_process_data_supports_preset_shorthand_with_overrides(monkeypatch):
+    class ProcessModule:
+        @staticmethod
+        def generate_settings(*, label, wall_loops):
+            return {
+                "filament": label,
+                "process_overrides": {
+                    "wall_loops": wall_loops,
+                },
+            }
+
+    real_import_module = importlib.import_module
+    monkeypatch.setattr(
+        builder.importlib,
+        "import_module",
+        lambda module_name: (
+            ProcessModule
+            if module_name == "demo.parametric"
+            else real_import_module(module_name)
+        ),
+    )
+
+    resolved = builder._resolve_process_data(
+        {
+            "public_parameters": {},
+            "generator_kwargs": {},
+        },
+        {
+            "Builder": {
+                "Production": {
+                    "process_data_preset": "petgcf_medium",
+                    "process_data": {
+                        "overrides": {
+                            "process_overrides": {
+                                "enable_support": 1,
+                                "support_threshold_angle": 30,
+                            }
+                        }
+                    },
+                }
+            }
+        },
+        config_data={
+            "process_data_generators": {
+                "demo_parametric": {
+                    "function": "demo.parametric.generate_settings",
+                }
+            },
+            "process_data_presets": {
+                "petgcf_medium": {
+                    "generator": "demo_parametric",
+                    "arguments": {
+                        "label": "medium",
+                        "wall_loops": 2,
+                    },
+                }
+            },
+        },
+    )
+
+    assert resolved == {
+        "filament": "medium",
+        "process_overrides": {
+            "wall_loops": "2",
+            "enable_support": "1",
+            "support_threshold_angle": "30",
+        },
+    }
+
+
 def test_resolve_plate_process_data_map_supports_plate_presets(monkeypatch):
     class ProcessModule:
         @staticmethod
@@ -2090,6 +2160,93 @@ def test_resolve_plate_process_data_map_supports_plate_presets(monkeypatch):
             "filament": "medium",
             "process_overrides": {
                 "wall_loops": "2",
+            },
+        }
+    }
+
+
+def test_resolve_plate_process_data_map_supports_plate_preset_shorthand_with_overrides(
+    monkeypatch,
+):
+    class ProcessModule:
+        @staticmethod
+        def generate_settings(*, label, wall_loops):
+            return {
+                "filament": label,
+                "process_overrides": {
+                    "wall_loops": wall_loops,
+                },
+            }
+
+    real_import_module = importlib.import_module
+    monkeypatch.setattr(
+        builder.importlib,
+        "import_module",
+        lambda module_name: (
+            ProcessModule
+            if module_name == "demo.parametric"
+            else real_import_module(module_name)
+        ),
+    )
+
+    metadata = {
+        "public_parameters": {},
+        "generator_kwargs": {},
+    }
+    resource_data = {
+        "Builder": {
+            "Production": {
+                "arrange": {
+                    "plates": [
+                        {
+                            "name": "left",
+                            "parts": ["left_part"],
+                            "process_data_preset": "petgcf_medium",
+                            "process_data": {
+                                "overrides": {
+                                    "process_overrides": {
+                                        "enable_support": 1,
+                                        "support_threshold_angle": 30,
+                                    }
+                                }
+                            },
+                        }
+                    ]
+                },
+            }
+        }
+    }
+    config_data = {
+        "process_data_generators": {
+            "demo_parametric": {
+                "function": "demo.parametric.generate_settings",
+            }
+        },
+        "process_data_presets": {
+            "petgcf_medium": {
+                "generator": "demo_parametric",
+                "arguments": {
+                    "label": "medium",
+                    "wall_loops": 2,
+                },
+            },
+        },
+    }
+
+    resolved = builder._resolve_plate_process_data_map(
+        metadata,
+        resource_data,
+        default_process_data=None,
+        config_data=config_data,
+    )
+
+    assert resolved == {
+        "left": {
+            "filament": "medium",
+            "process_overrides": {
+                "wall_loops": "2",
+                "enable_support": "1",
+                "support_threshold_angle": "30",
             },
         }
     }
@@ -3390,7 +3547,7 @@ def test_resolve_export_options_merges_top_level_builder_defaults():
     )
 
     assert resolved == {
-        "prod_gap": 1.0,
+        "prod_gap": 4.0,
         "bed_width": 220,
         "max_build_height": None,
         "export_step": True,
@@ -3399,6 +3556,8 @@ def test_resolve_export_options_merges_top_level_builder_defaults():
         "export_stl": True,
         "plates": None,
         "auto_assign_plates": False,
+        "plate_scene_gap": 20.0,
+        "visualize_plate_boundaries": True,
     }
 
 
@@ -3406,7 +3565,7 @@ def test_resolve_export_options_uses_lightweight_visualization_defaults():
     resolved = builder._resolve_export_options({}, "visualization", None)
 
     assert resolved == {
-        "prod_gap": 1.0,
+        "prod_gap": 4.0,
         "bed_width": 200.0,
         "max_build_height": None,
         "export_step": False,
@@ -3415,6 +3574,8 @@ def test_resolve_export_options_uses_lightweight_visualization_defaults():
         "export_stl": False,
         "plates": None,
         "auto_assign_plates": False,
+        "plate_scene_gap": 20.0,
+        "visualize_plate_boundaries": True,
     }
 
 
@@ -3447,7 +3608,7 @@ def test_resolve_export_options_supports_plate_configuration():
 def test_apply_prototype_arrange_overrides_merges_prototype_only_settings():
     resolved = builder._apply_prototype_arrange_overrides(
         {
-            "prod_gap": 1.0,
+            "prod_gap": 4.0,
             "bed_width": 220,
             "max_build_height": None,
             "export_step": True,
@@ -3486,7 +3647,7 @@ def test_apply_prototype_arrange_overrides_merges_prototype_only_settings():
     )
 
     assert resolved == {
-        "prod_gap": 1.0,
+        "prod_gap": 4.0,
         "bed_width": 206,
         "max_build_height": None,
         "export_step": True,

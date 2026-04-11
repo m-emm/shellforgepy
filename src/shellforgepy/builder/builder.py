@@ -37,6 +37,8 @@ _logger = logging.getLogger(__name__)
 _REF_PATTERN = re.compile(r"\$\{([A-Za-z0-9_./:-]+)\}")
 _SAFE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 BUILD_METADATA_SCHEMA_VERSION = 2
+DEFAULT_PROD_GAP = 4.0
+DEFAULT_BED_WIDTH = 200.0
 
 
 class _BuilderLoader(yaml.SafeLoader):
@@ -714,6 +716,24 @@ def _generator_accepts_keyword_argument(
         parameter.kind == inspect.Parameter.VAR_KEYWORD
         for parameter in signature.parameters.values()
     )
+
+
+def _generator_required_keyword_arguments(generator: Callable[..., Any]) -> set[str]:
+
+    signature = inspect.signature(generator)
+
+    required_kwargs = set()
+    for parameter_name, parameter in signature.parameters.items():
+        if parameter.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.VAR_POSITIONAL,
+        ):
+            continue
+        if parameter.default is not inspect.Parameter.empty:
+            continue
+        required_kwargs.add(parameter_name)
+
+    return required_kwargs
 
 
 def _generator_context_payload(context_mapping: Mapping[str, Any]) -> Dict[str, Any]:
@@ -3029,8 +3049,11 @@ def _resolve_process_data(
         if mapping is None:
             return None
         process_data_spec = mapping.get("process_data")
-        if process_data_spec is None and mapping.get("process_data_preset") is not None:
-            process_data_spec = {"preset": mapping.get("process_data_preset")}
+        process_data_preset = mapping.get("process_data_preset")
+        if process_data_spec is None and process_data_preset is not None:
+            process_data_spec = {"preset": process_data_preset}
+        elif isinstance(process_data_spec, Mapping) and process_data_preset is not None:
+            process_data_spec = {"preset": process_data_preset, **process_data_spec}
         return process_data_spec
 
     def stringify_process_override_value(value: Any) -> Any:
@@ -3115,8 +3138,11 @@ def _resolve_plate_process_data_map(
         if mapping is None:
             return None
         process_data_spec = mapping.get("process_data")
-        if process_data_spec is None and mapping.get("process_data_preset") is not None:
-            process_data_spec = {"preset": mapping.get("process_data_preset")}
+        process_data_preset = mapping.get("process_data_preset")
+        if process_data_spec is None and process_data_preset is not None:
+            process_data_spec = {"preset": process_data_preset}
+        elif isinstance(process_data_spec, Mapping) and process_data_preset is not None:
+            process_data_spec = {"preset": process_data_preset, **process_data_spec}
         return process_data_spec
 
     def stringify_process_override_value(value: Any) -> Any:
@@ -3214,8 +3240,8 @@ def _resolve_export_options(
 
     if mode == "visualization":
         defaults = {
-            "prod_gap": 1.0,
-            "bed_width": 200.0,
+            "prod_gap": DEFAULT_PROD_GAP,
+            "bed_width": DEFAULT_BED_WIDTH,
             "max_build_height": None,
             "export_step": False,
             "export_obj": True,
@@ -3223,11 +3249,13 @@ def _resolve_export_options(
             "export_stl": False,
             "plates": None,
             "auto_assign_plates": False,
+            "plate_scene_gap": 20.0,
+            "visualize_plate_boundaries": True,
         }
     else:
         defaults = {
-            "prod_gap": 1.0,
-            "bed_width": 200.0,
+            "prod_gap": DEFAULT_PROD_GAP,
+            "bed_width": DEFAULT_BED_WIDTH,
             "max_build_height": None,
             "export_step": True,
             "export_obj": True,
@@ -3235,6 +3263,8 @@ def _resolve_export_options(
             "export_stl": True,
             "plates": None,
             "auto_assign_plates": False,
+            "plate_scene_gap": 20.0,
+            "visualize_plate_boundaries": True,
         }
 
     resolved = dict(defaults)
@@ -3684,6 +3714,7 @@ def build_from_file(
             if legacy_context_payload is not None:
                 generator_kwargs["context"] = deepcopy(legacy_context_payload)
             reset_metrics()
+
             try:
                 generated_part = generator(**generator_kwargs)
                 metrics_snapshot = snapshot_metrics()
@@ -4013,6 +4044,10 @@ def _export_scene_for_assembly(
                     export_options.get("auto_assign_plates", False)
                 ),
                 enforce_bed_size=enforce_bed_size,
+                plate_scene_gap=float(export_options.get("plate_scene_gap", 20.0)),
+                visualize_plate_boundaries=bool(
+                    export_options.get("visualize_plate_boundaries", True)
+                ),
             )
 
     if not manifest_path.exists():
