@@ -142,6 +142,42 @@ def test_arrange_parts_for_production_allows_overflow_for_visualization():
     assert max_point[1] - min_point[1] == pytest.approx(144.0)
 
 
+def test_arrange_plate_parts_for_bed_matches_legacy_production_layout():
+    parts = [
+        {"name": "tall", "part": create_box(60.0, 60.0, 10.0)},
+        {"name": "wide", "part": create_box(60.0, 20.0, 10.0)},
+        {"name": "small", "part": create_box(35.0, 20.0, 10.0)},
+    ]
+
+    arranged_production = _arrange_parts_for_production(
+        parts,
+        gap=5.0,
+        bed_width=100.0,
+        bed_depth=100.0,
+    )
+    arranged_plate = _arrange_plate_parts_for_bed(
+        parts,
+        bed_width=100.0,
+        bed_depth=100.0,
+        gap=5.0,
+    )
+
+    production_bounds = {
+        entry["name"]: get_bounding_box(entry["part"]) for entry in arranged_production
+    }
+    plate_bounds = {
+        entry["name"]: get_bounding_box(entry["part"]) for entry in arranged_plate
+    }
+
+    for part_name in production_bounds:
+        production_min, production_max = production_bounds[part_name]
+        plate_min, plate_max = plate_bounds[part_name]
+        assert plate_min == pytest.approx(production_min)
+        assert plate_max == pytest.approx(production_max)
+
+    assert plate_bounds["small"][0][1] == pytest.approx(72.5)
+
+
 def test_build_production_obj_scene_parts_offsets_each_plate_independently():
     prepared_plate_groups = [
         (

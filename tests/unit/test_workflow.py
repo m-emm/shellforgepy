@@ -487,6 +487,102 @@ def test_run_workflow_logs_metrics_report_from_manifest(monkeypatch, tmp_path, c
     assert "y_axis_moving_mass: 1.174000 kg" in caplog.text
 
 
+def test_complete_workflow_run_generates_obj_previews_when_enabled(
+    monkeypatch, tmp_path
+):
+    from shellforgepy.render.api import PreviewRenderBatchResult, PreviewRenderResult
+
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    obj_path = run_directory / "design.obj"
+    obj_path.write_text("# obj\n", encoding="utf-8")
+
+    render_calls = []
+
+    def fake_render_obj_views_with_stats(
+        obj_path_arg,
+        *,
+        output_dir,
+        views=None,
+        width=512,
+        height=512,
+        filename_prefix=None,
+        background_color=(250, 250, 250),
+    ):
+        render_calls.append(
+            {
+                "obj_path": Path(obj_path_arg),
+                "output_dir": Path(output_dir),
+                "views": views,
+                "width": width,
+                "height": height,
+                "filename_prefix": filename_prefix,
+            }
+        )
+        preview_path = Path(output_dir) / "design_front_angle.ppm"
+        preview_path.parent.mkdir(parents=True, exist_ok=True)
+        preview_path.write_text("preview", encoding="utf-8")
+        return PreviewRenderBatchResult(
+            obj_path=Path(obj_path_arg),
+            scene_load_seconds=0.01,
+            total_seconds=0.11,
+            triangle_count=42,
+            vertex_count=21,
+            object_count=2,
+            results=(
+                PreviewRenderResult(
+                    view="front_angle",
+                    path=preview_path,
+                    width=width,
+                    height=height,
+                    triangle_count=42,
+                    vertex_count=21,
+                    object_count=2,
+                    render_seconds=0.1,
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(
+        "shellforgepy.render.render_obj_views_with_stats",
+        fake_render_obj_views_with_stats,
+    )
+
+    args = argparse.Namespace(
+        slice=False,
+        upload=False,
+        open=False,
+        part_file=None,
+        process_file=None,
+        master_settings_dir=None,
+        orca_executable=None,
+        orca_debug=None,
+        printer=None,
+    )
+    config = {"render": {"enabled": True}}
+    manifest = {"obj_path": str(obj_path)}
+
+    result = complete_workflow_run(
+        args,
+        config=config,
+        run_directory=run_directory,
+        manifest=manifest,
+        target_label="design",
+    )
+
+    assert result == 0
+    assert render_calls == [
+        {
+            "obj_path": obj_path,
+            "output_dir": run_directory / "previews",
+            "views": None,
+            "width": 512,
+            "height": 512,
+            "filename_prefix": "design",
+        }
+    ]
+
+
 def test_normalize_run_argv_moves_workflow_flags_before_target():
     argv = ["run", "design.py", "--slice", "--open"]
 

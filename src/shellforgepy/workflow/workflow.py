@@ -41,6 +41,10 @@ CONFIG_KEYS = {
     "runs_dir": "runs_dir",
     "render_executable": "render.executable",
     "render_args": "render.args",
+    "render_enabled": "render.enabled",
+    "render_views": "render.views",
+    "render_width": "render.width",
+    "render_height": "render.height",
     "orca_debug_level": "orca.debug_level",
     "orca_env": "orca.env",
     "render_script": "render.script",
@@ -57,6 +61,10 @@ CONFIG_KEY_DOCUMENTATION = {
     "runs_dir": "Path to the directory where runs are stored.",
     "render_executable": "Path to the render executable.",
     "render_args": "Arguments to pass to the render executable.",
+    "render_enabled": "Whether workflow should render built-in OBJ preview images when an OBJ artifact is available.",
+    "render_views": "List of named built-in preview views to render (for example: ['front_angle', 'top']).",
+    "render_width": "Output width in pixels for built-in OBJ previews.",
+    "render_height": "Output height in pixels for built-in OBJ previews.",
     "orca_debug_level": "Debug level to use when running OrcaSlicer.",
     "orca_env": "Environment variables to set when running OrcaSlicer.",
     "render_script": "Path to a custom rendering script to generate preview images.",
@@ -84,9 +92,13 @@ def _default_config_template() -> Dict[str, object]:
             "printer": "192.168.0.10:4409",
         },
         "render": {
+            "enabled": False,
             "script": "~/path/to/render.sh",
             "executable": "",
             "args": [],
+            "views": [],
+            "width": 512,
+            "height": 512,
         },
         "viewer": {
             "base_url": "http://localhost:5173",
@@ -468,6 +480,97 @@ def _slugify_name(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value)
 
 
+def _normalize_render_views(configured_views: object) -> list[str] | None:
+    if configured_views is None:
+        return None
+    if isinstance(configured_views, str):
+        tokens = [
+            token.strip()
+            for token in configured_views.replace(",", " ").split()
+            if token.strip()
+        ]
+        return tokens or None
+    if isinstance(configured_views, list):
+        tokens = [
+            str(token).strip() for token in configured_views if str(token).strip()
+        ]
+        return tokens or None
+    return None
+
+
+def _normalize_render_dimension(value: object, *, key_name: str) -> int:
+    if value is None:
+        return 512
+    try:
+        dimension = int(value)
+    except (TypeError, ValueError) as exc:
+        raise WorkflowError(f"Invalid {key_name} value: {value!r}") from exc
+    if dimension <= 0:
+        raise WorkflowError(f"{key_name} must be positive, got {dimension}")
+    return dimension
+
+
+def _generate_obj_previews(
+    *,
+    config: Dict[str, object],
+    manifest: Dict[str, object],
+    run_directory: Path,
+) -> list[Path]:
+    render_enabled = bool(_resolve_config_key_value(config, "render_enabled"))
+    render_views = _normalize_render_views(
+        _resolve_config_key_value(config, "render_views")
+    )
+    if not render_enabled and render_views is None:
+        return []
+
+    obj_path = _resolve_manifest_path(run_directory, manifest.get("obj_path"))
+    if obj_path is None or not obj_path.exists():
+        return []
+
+    from shellforgepy.render import render_obj_views_with_stats
+
+    preview_dir = run_directory / "previews"
+    width = _normalize_render_dimension(
+        _resolve_config_key_value(config, "render_width"),
+        key_name="render.width",
+    )
+    height = _normalize_render_dimension(
+        _resolve_config_key_value(config, "render_height"),
+        key_name="render.height",
+    )
+    batch_result = render_obj_views_with_stats(
+        obj_path,
+        output_dir=preview_dir,
+        views=render_views,
+        width=width,
+        height=height,
+        filename_prefix=obj_path.stem,
+    )
+    preview_paths = [result.path for result in batch_result.results]
+    per_view_seconds = sum(
+        result.render_seconds for result in batch_result.results
+    ) / max(len(batch_result.results), 1)
+    _logger.info(
+        "Generating previews took %.3f seconds total; per view %.3f seconds; "
+        "rendered %s triangles, %s vertices, %s objects at %sx%s",
+        batch_result.total_seconds,
+        per_view_seconds,
+        batch_result.triangle_count,
+        batch_result.vertex_count,
+        batch_result.object_count,
+        width,
+        height,
+    )
+    for result in batch_result.results:
+        _logger.info(
+            "Generated OBJ preview [%s] in %.3f seconds: %s",
+            result.view,
+            result.render_seconds,
+            result.path,
+        )
+    return preview_paths
+
+
 def complete_workflow_run(
     args: argparse.Namespace,
     *,
@@ -570,6 +673,15 @@ def complete_workflow_run(
                 )
         except Exception as exc:  # pragma: no cover - best effort
             _logger.warning("Failed to upload files to viewer backend: %s", exc)
+
+    try:
+        _generate_obj_previews(
+            config=config,
+            manifest=manifest,
+            run_directory=run_directory,
+        )
+    except Exception as exc:  # pragma: no cover - best effort
+        _logger.warning("Failed to generate OBJ previews: %s", exc)
 
     if not slice_requested:
         _logger.info(

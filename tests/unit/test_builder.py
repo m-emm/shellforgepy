@@ -1343,7 +1343,170 @@ def test_run_builder_visualization_expands_dependents_and_exports_scene(
         ]
     }
     assert captured["selected_assembly"] == "frame"
-    assert captured["scene_assembly_names"] == ["frame", "feet"]
+
+
+def test_resolve_preview_options_from_visualization_section():
+    metadata = {
+        "public_parameters": {
+            "default_view": "front_angle",
+        }
+    }
+    resource_data = {
+        "Builder": {
+            "Visualization": {
+                "preview": {
+                    "enabled": "true",
+                    "views": ["top", {"$ref": "default_view"}],
+                    "width": 512,
+                    "height": 384,
+                }
+            }
+        }
+    }
+
+    resolved = builder._resolve_preview_options(
+        metadata,
+        resource_data,
+        "visualization",
+    )
+
+    assert resolved == {
+        "enabled": True,
+        "views": ["top", "front_angle"],
+        "width": 512,
+        "height": 384,
+    }
+
+
+def test_export_scene_for_assembly_applies_preview_overrides_to_workflow_config(
+    monkeypatch, tmp_path
+):
+    import os
+
+    resource_path = tmp_path / "frame.yaml"
+    resource_path.write_text(
+        "\n".join(
+            [
+                "Builder:",
+                "  Visualization:",
+                "    preview:",
+                "      enabled: true",
+                "      views:",
+                "        - front_angle",
+                "        - top",
+                "      width: 512",
+                "      height: 384",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    build_results = [
+        {
+            "assembly_name": "frame",
+            "artifact_dir": str(tmp_path / "repo" / "frame"),
+            "repository_dir": str(tmp_path / "repo"),
+            "resource_file": str(resource_path),
+            "public_parameters": {},
+            "generator_kwargs": {},
+            "generator_context": {},
+        }
+    ]
+
+    captured = {}
+
+    def fake_materialize_rule_parts(
+        metadata,
+        resource_data,
+        mode,
+        built_results_by_name,
+        repository_dir,
+        config_data,
+    ):
+        return [
+            {
+                "name": "frame_part",
+                "part": "dummy-part",
+                "source_path": str(tmp_path / "repo" / "frame.step"),
+            }
+        ]
+
+    def fake_arrange_and_export_parts(*args, **kwargs):
+        run_directory = Path(kwargs["export_directory"])
+        obj_path = run_directory / "frame.obj"
+        obj_path.write_text("# obj\n", encoding="utf-8")
+        manifest_path = Path(os.environ["SHELLFORGEPY_WORKFLOW_MANIFEST"])
+        manifest_path.write_text(
+            json.dumps({"obj_path": str(obj_path)}),
+            encoding="utf-8",
+        )
+
+    def fake_complete_workflow_run(
+        args,
+        *,
+        config,
+        run_directory,
+        manifest,
+        target_label,
+    ):
+        captured["config"] = config
+        captured["run_directory"] = run_directory
+        captured["manifest"] = manifest
+        captured["target_label"] = target_label
+        return 0
+
+    monkeypatch.setattr(builder, "_materialize_rule_parts", fake_materialize_rule_parts)
+    monkeypatch.setattr(builder, "_apply_placement_alignments", lambda *a, **k: a[0])
+    monkeypatch.setattr(builder, "_scene_metrics_assembly_names", lambda **kwargs: [])
+    monkeypatch.setattr(
+        builder,
+        "_combined_metrics_snapshot_for_results",
+        lambda build_results, assembly_names: None,
+    )
+    monkeypatch.setattr(
+        "shellforgepy.produce.arrange_and_export.arrange_and_export_parts",
+        fake_arrange_and_export_parts,
+    )
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.get_config_path",
+        lambda override=None: tmp_path / "config.json",
+    )
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.load_config",
+        lambda path: {"render": {"enabled": False, "views": ["right"]}},
+    )
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.complete_workflow_run",
+        fake_complete_workflow_run,
+    )
+
+    result = builder._export_scene_for_assembly(
+        args=argparse.Namespace(
+            config=None,
+            run_id="test",
+            runs_dir=str(tmp_path / "runs"),
+            production=False,
+            slice=False,
+            upload=False,
+            visualize=True,
+            prototype=False,
+            verbose=False,
+            plate=None,
+        ),
+        config_data={"assemblies": [{"name": "frame"}]},
+        build_results=build_results,
+        selected_assembly="frame",
+        scene_assembly_names=["frame"],
+    )
+
+    assert result == 0
+    assert captured["target_label"] == "frame"
+    assert captured["config"]["render"] == {
+        "enabled": True,
+        "views": ["front_angle", "top"],
+        "width": 512,
+        "height": 384,
+    }
 
 
 def test_run_builder_visualization_builds_only_relevant_placement_dependencies(

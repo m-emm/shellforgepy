@@ -3272,6 +3272,94 @@ def _resolve_export_options(
     return resolved
 
 
+def _normalize_preview_views(value: Any) -> Optional[List[str]]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized = [
+            token.strip() for token in value.replace(",", " ").split() if token.strip()
+        ]
+        return normalized or None
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        normalized = [str(token).strip() for token in value if str(token).strip()]
+        return normalized or None
+    raise BuilderError(
+        "Builder preview views must be a string or a sequence of view names"
+    )
+
+
+def _resolve_preview_options(
+    metadata: Mapping[str, Any],
+    resource_data: Mapping[str, Any],
+    mode: str,
+    config_data: Optional[Mapping[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    section_name = "Visualization" if mode == "visualization" else "Production"
+    section = _builder_section(resource_data, section_name, config_data)
+    preview = section.get("preview")
+    if preview is None:
+        return None
+
+    context = _metadata_resolution_context(metadata)
+    if isinstance(preview, Mapping):
+        resolved = _resolve_inline_mapping(preview, context)
+    else:
+        resolved = _resolve_inline_value(preview, context)
+
+    if isinstance(resolved, bool):
+        return {"enabled": bool(resolved), "views": [] if resolved else None}
+    if isinstance(resolved, str):
+        return {"enabled": True, "views": _normalize_preview_views(resolved)}
+    if isinstance(resolved, Sequence) and not isinstance(resolved, (str, bytes)):
+        return {"enabled": True, "views": _normalize_preview_views(resolved)}
+    if not isinstance(resolved, Mapping):
+        raise BuilderError(f"Builder.{section_name}.preview must resolve to a mapping")
+
+    options: Dict[str, Any] = {}
+    if "enabled" in resolved:
+        options["enabled"] = _normalize_bool(resolved["enabled"])
+    if "views" in resolved:
+        options["views"] = _normalize_preview_views(resolved.get("views"))
+    elif "enabled" in options:
+        # Explicitly clear any global render.views so assembly-local preview config
+        # fully controls whether defaults are used or previews are disabled.
+        options["views"] = []
+    elif "enabled" not in options:
+        options["enabled"] = True
+        options["views"] = []
+    if "width" in resolved:
+        options["width"] = int(resolved["width"])
+    if "height" in resolved:
+        options["height"] = int(resolved["height"])
+
+    return options
+
+
+def _apply_preview_options_to_workflow_config(
+    workflow_config: Dict[str, Any],
+    preview_options: Optional[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    if preview_options is None:
+        return workflow_config
+
+    updated = deepcopy(workflow_config)
+    render_config = updated.get("render")
+    if render_config is None or not isinstance(render_config, dict):
+        render_config = {}
+        updated["render"] = render_config
+
+    if "enabled" in preview_options:
+        render_config["enabled"] = bool(preview_options["enabled"])
+    if "views" in preview_options:
+        views = preview_options["views"]
+        render_config["views"] = [] if views is None else list(views)
+    if "width" in preview_options:
+        render_config["width"] = int(preview_options["width"])
+    if "height" in preview_options:
+        render_config["height"] = int(preview_options["height"])
+    return updated
+
+
 def _apply_prototype_arrange_overrides(
     export_options: Mapping[str, Any],
     *,
@@ -3886,6 +3974,15 @@ def _export_scene_for_assembly(
     selected_metadata = built_results_by_name[selected_assembly]
     selected_resource_data = _load_yaml(
         Path(selected_metadata["resource_file"]).expanduser().resolve()
+    )
+    preview_options = _resolve_preview_options(
+        selected_metadata,
+        selected_resource_data,
+        mode,
+        config_data,
+    )
+    workflow_config = _apply_preview_options_to_workflow_config(
+        workflow_config, preview_options
     )
 
     scene_parts: List[Dict[str, Any]] = []

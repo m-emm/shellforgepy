@@ -302,6 +302,162 @@ def _build_colored_meshes(
     return meshes
 
 
+def _arrange_prepared_parts_on_bed(
+    rects,
+    *,
+    gap,
+    bed_width,
+    bed_depth,
+    enforce_bed_size=True,
+):
+    """Arrange already-prepared part rectangles using the legacy row layout."""
+
+    arranged_rects = [dict(rect) for rect in rects]
+    arranged_rects.sort(key=lambda rect: -(rect["width"] * rect["height"]))
+
+    arranged = []
+    x_cursor = 0.0
+    y_cursor = 0.0
+    row_depth = 0.0
+
+    for rect in arranged_rects:
+        width = rect["width"]
+        height = rect["height"]
+
+        if width > bed_width and enforce_bed_size:
+            raise ValueError(
+                f"Part '{rect['name']}' too wide for bed ({width:.1f}mm > {bed_width}mm)"
+            )
+        elif width > bed_width:
+            _logger.warning(
+                "Part '%s' exceeds bed width for production visualization "
+                "(%0.1fmm > %0.1fmm); keeping it for export",
+                rect["name"],
+                width,
+                bed_width,
+            )
+        else:
+            _logger.info(
+                "Part '%s' fits width-wise: %0.1fmm <= %0.1fmm",
+                rect["name"],
+                width,
+                bed_width,
+            )
+
+        if height > bed_depth and enforce_bed_size:
+            raise ValueError(
+                f"Part '{rect['name']}' too deep for bed ({height:.1f}mm > {bed_depth}mm)"
+            )
+        elif height > bed_depth:
+            _logger.warning(
+                "Part '%s' exceeds bed depth for production visualization "
+                "(%0.1fmm > %0.1fmm); keeping it for export",
+                rect["name"],
+                height,
+                bed_depth,
+            )
+        else:
+            _logger.info(
+                "Part '%s' fits depth-wise: %0.1fmm <= %0.1fmm",
+                rect["name"],
+                height,
+                bed_depth,
+            )
+
+        if arranged and x_cursor + width > bed_width:
+            y_cursor += row_depth + gap
+            x_cursor = 0.0
+            row_depth = 0.0
+
+        _logger.info("Placing '%s' at (%0.1f, %0.1f)", rect["name"], x_cursor, y_cursor)
+
+        shape = rect["shape"]
+        min_point = rect["min_point"]
+
+        shape = translate(-min_point[0], -min_point[1], -min_point[2])(shape)
+        _append_transform_record(
+            rect,
+            {
+                "kind": "translate",
+                "vector": [
+                    float(-min_point[0]),
+                    float(-min_point[1]),
+                    float(-min_point[2]),
+                ],
+            },
+        )
+
+        shape = translate(x_cursor, y_cursor, 0)(shape)
+        _append_transform_record(
+            rect,
+            {
+                "kind": "translate",
+                "vector": [float(x_cursor), float(y_cursor), 0.0],
+            },
+        )
+
+        arranged.append(
+            {
+                "name": rect["name"],
+                "shape": shape,
+                "x": x_cursor,
+                "y": y_cursor,
+                "width": width,
+                "height": height,
+                "color": rect.get("color"),
+                "animation": rect.get("animation"),
+                "source_path": rect.get("source_path"),
+                "source_parameter_hash": rect.get("source_parameter_hash"),
+                "source_version_inputs": deepcopy(
+                    rect.get("source_version_inputs", {})
+                ),
+                "transform_history": _copy_transform_history(rect),
+                "obj_metadata": deepcopy(rect.get("obj_metadata")),
+            }
+        )
+
+        x_cursor += width + gap
+        row_depth = max(row_depth, height)
+
+    if arranged:
+        min_x = min(item["x"] for item in arranged)
+        max_x = max(item["x"] + item["width"] for item in arranged)
+        min_y = min(item["y"] for item in arranged)
+        max_y = max(item["y"] + item["height"] for item in arranged)
+
+        total_width = max_x - min_x
+        total_height = max_y - min_y
+
+        offset_x = (bed_width - total_width) / 2 - min_x
+        offset_y = (bed_depth - total_height) / 2 - min_y
+
+        for item in arranged:
+            item["shape"] = translate(offset_x, offset_y, 0)(item["shape"])
+            _append_transform_record(
+                item,
+                {
+                    "kind": "translate",
+                    "vector": [float(offset_x), float(offset_y), 0.0],
+                },
+            )
+
+    _logger.info("Arranged %d parts for production", len(arranged))
+    return [
+        {
+            "name": item["name"],
+            "part": item["shape"],
+            "color": item.get("color"),
+            "animation": item.get("animation"),
+            "source_path": item.get("source_path"),
+            "source_parameter_hash": item.get("source_parameter_hash"),
+            "source_version_inputs": deepcopy(item.get("source_version_inputs", {})),
+            "transform_history": _copy_transform_history(item),
+            "obj_metadata": deepcopy(item.get("obj_metadata")),
+        }
+        for item in arranged
+    ]
+
+
 def _arrange_parts_for_production(
     parts_list,
     *,
@@ -393,153 +549,13 @@ def _arrange_parts_for_production(
             }
         )
 
-    # Sort parts by area descending (largest first for better packing)
-    rects.sort(key=lambda r: -(r["width"] * r["height"]))
-
-    # Simple shelf-based arrangement algorithm
-    arranged = []
-    x_cursor = 0.0
-    y_cursor = 0.0
-    row_depth = 0.0
-
-    for rect in rects:
-        width = rect["width"]
-        height = rect["height"]
-
-        if width > bed_width and enforce_bed_size:
-            raise ValueError(
-                f"Part '{rect['name']}' too wide for bed ({width:.1f}mm > {bed_width}mm)"
-            )
-        elif width > bed_width:
-            _logger.warning(
-                "Part '%s' exceeds bed width for production visualization "
-                "(%0.1fmm > %0.1fmm); keeping it for export",
-                rect["name"],
-                width,
-                bed_width,
-            )
-        else:
-            _logger.info(
-                f"Part '{rect['name']}' fits width-wise: {width:.1f}mm <= {bed_width}mm"
-            )
-
-        if height > bed_depth and enforce_bed_size:
-            raise ValueError(
-                f"Part '{rect['name']}' too deep for bed ({height:.1f}mm > {bed_depth}mm)"
-            )
-        elif height > bed_depth:
-            _logger.warning(
-                "Part '%s' exceeds bed depth for production visualization "
-                "(%0.1fmm > %0.1fmm); keeping it for export",
-                rect["name"],
-                height,
-                bed_depth,
-            )
-        else:
-            _logger.info(
-                f"Part '{rect['name']}' fits depth-wise: {height:.1f}mm <= {bed_depth}mm"
-            )
-
-        # Check if we need a new row
-        if arranged and x_cursor + width > bed_width:
-            y_cursor += row_depth + gap
-            x_cursor = 0.0
-            row_depth = 0.0
-
-        _logger.info(f"Placing '{rect['name']}' at ({x_cursor:.1f}, {y_cursor:.1f})")
-
-        # Position the part: move to origin first, then to final position
-        shape = rect["shape"]
-        min_point = rect["min_point"]
-
-        # Move so bottom-left-back corner is at origin
-        shape = translate(-min_point[0], -min_point[1], -min_point[2])(shape)
-        _append_transform_record(
-            rect,
-            {
-                "kind": "translate",
-                "vector": [
-                    float(-min_point[0]),
-                    float(-min_point[1]),
-                    float(-min_point[2]),
-                ],
-            },
-        )
-
-        # Move to final position on the bed
-        shape = translate(x_cursor, y_cursor, 0)(shape)
-        _append_transform_record(
-            rect,
-            {
-                "kind": "translate",
-                "vector": [float(x_cursor), float(y_cursor), 0.0],
-            },
-        )
-
-        arranged.append(
-            {
-                "name": rect["name"],
-                "shape": shape,
-                "x": x_cursor,
-                "y": y_cursor,
-                "width": width,
-                "height": height,
-                "color": rect["original"].get("color"),
-                "animation": rect["original"].get("animation"),
-                "source_path": rect.get("source_path"),
-                "source_parameter_hash": rect.get("source_parameter_hash"),
-                "source_version_inputs": deepcopy(
-                    rect.get("source_version_inputs", {})
-                ),
-                "transform_history": _copy_transform_history(rect),
-                "obj_metadata": deepcopy(rect["original"].get("obj_metadata")),
-            }
-        )
-
-        x_cursor += width + gap
-        row_depth = max(row_depth, height)
-
-    # Center the arrangement on the bed
-    if arranged:
-        # Calculate total bounds
-        min_x = min(item["x"] for item in arranged)
-        max_x = max(item["x"] + item["width"] for item in arranged)
-        min_y = min(item["y"] for item in arranged)
-        max_y = max(item["y"] + item["height"] for item in arranged)
-
-        total_width = max_x - min_x
-        total_height = max_y - min_y
-
-        # Calculate centering offset
-        offset_x = (bed_width - total_width) / 2 - min_x
-        offset_y = (bed_depth - total_height) / 2 - min_y
-
-        # Apply centering offset to all parts
-        for item in arranged:
-            item["shape"] = translate(offset_x, offset_y, 0)(item["shape"])
-            _append_transform_record(
-                item,
-                {
-                    "kind": "translate",
-                    "vector": [float(offset_x), float(offset_y), 0.0],
-                },
-            )
-
-    _logger.info(f"Arranged {len(arranged)} parts for production")
-    return [
-        {
-            "name": item["name"],
-            "part": item["shape"],
-            "color": item.get("color"),
-            "animation": item.get("animation"),
-            "source_path": item.get("source_path"),
-            "source_parameter_hash": item.get("source_parameter_hash"),
-            "source_version_inputs": deepcopy(item.get("source_version_inputs", {})),
-            "transform_history": _copy_transform_history(item),
-            "obj_metadata": deepcopy(item.get("obj_metadata")),
-        }
-        for item in arranged
-    ]
+    return _arrange_prepared_parts_on_bed(
+        rects,
+        gap=gap,
+        bed_width=bed_width,
+        bed_depth=bed_depth,
+        enforce_bed_size=enforce_bed_size,
+    )
 
 
 def _split_parts_into_plates(
@@ -959,73 +975,31 @@ def _arrange_plate_parts_for_bed(
     if not plate_parts:
         return []
 
-    measured_parts = []
-    for original_index, entry in enumerate(plate_parts):
+    rects = []
+    for entry in plate_parts:
         min_point, max_point = get_bounding_box(entry["part"])
-        measured_parts.append(
+        rects.append(
             {
-                "entry": entry,
+                "name": entry["name"],
+                "shape": entry["part"],
                 "width": float(max_point[0] - min_point[0]),
                 "height": float(max_point[1] - min_point[1]),
                 "min_point": min_point,
-                "original_index": original_index,
+                "color": entry.get("color"),
+                "animation": entry.get("animation"),
+                "source_path": entry.get("source_path"),
+                "source_parameter_hash": entry.get("source_parameter_hash"),
+                "source_version_inputs": deepcopy(
+                    entry.get("source_version_inputs", {})
+                ),
+                "transform_history": _copy_transform_history(entry),
+                "obj_metadata": deepcopy(entry.get("obj_metadata")),
             }
         )
 
-    measured_parts.sort(
-        key=lambda item: (-(item["width"] * item["height"]), item["original_index"])
-    )
-
-    arranged_entries = []
-    shelves = []
-    for item in measured_parts:
-        placement = _try_place_on_shelves(
-            shelves,
-            width=item["width"],
-            height=item["height"],
-            bed_width=bed_width,
-            bed_depth=bed_depth,
-            gap=gap,
-        )
-        if placement is None:
-            raise ValueError(
-                f"Plate parts do not fit on the bed when packed: {item['entry']['name']}"
-            )
-
-        x_pos, y_pos = placement
-        arranged_entry = dict(item["entry"])
-        arranged_entry["transform_history"] = _copy_transform_history(item["entry"])
-
-        shape = translate(
-            float(-item["min_point"][0]),
-            float(-item["min_point"][1]),
-            float(-item["min_point"][2]),
-        )(item["entry"]["part"])
-        _append_transform_record(
-            arranged_entry,
-            {
-                "kind": "translate",
-                "vector": [
-                    float(-item["min_point"][0]),
-                    float(-item["min_point"][1]),
-                    float(-item["min_point"][2]),
-                ],
-            },
-        )
-
-        shape = translate(x_pos, y_pos, 0)(shape)
-        _append_transform_record(
-            arranged_entry,
-            {
-                "kind": "translate",
-                "vector": [float(x_pos), float(y_pos), 0.0],
-            },
-        )
-        arranged_entry["part"] = shape
-        arranged_entries.append(arranged_entry)
-
-    return _center_plate_parts_on_bed(
-        arranged_entries,
+    return _arrange_prepared_parts_on_bed(
+        rects,
+        gap=gap,
         bed_width=bed_width,
         bed_depth=bed_depth,
     )
