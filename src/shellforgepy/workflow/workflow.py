@@ -571,6 +571,50 @@ def _generate_obj_previews(
     return preview_paths
 
 
+def _generate_obj_gcode_preview(
+    *,
+    config: Dict[str, object],
+    manifest: Dict[str, object],
+    run_directory: Path,
+    destination: Path,
+) -> Path | None:
+    obj_path = _resolve_manifest_path(run_directory, manifest.get("obj_path"))
+    if obj_path is None or not obj_path.exists():
+        return None
+
+    from shellforgepy.render import (
+        DEFAULT_PREVIEW_VIEWS,
+        render_obj_view_to_image_with_stats,
+    )
+
+    render_views = _normalize_render_views(
+        _resolve_config_key_value(config, "render_views")
+    )
+    view_name = (render_views or tuple(DEFAULT_PREVIEW_VIEWS))[0]
+    width = _normalize_render_dimension(
+        _resolve_config_key_value(config, "render_width"),
+        key_name="render.width",
+    )
+    height = _normalize_render_dimension(
+        _resolve_config_key_value(config, "render_height"),
+        key_name="render.height",
+    )
+    result = render_obj_view_to_image_with_stats(
+        obj_path,
+        destination=destination,
+        view=view_name,
+        width=width,
+        height=height,
+    )
+    _logger.info(
+        "Generated G-code preview from OBJ [%s] in %.3f seconds: %s",
+        result.view,
+        result.render_seconds,
+        result.path,
+    )
+    return result.path
+
+
 def complete_workflow_run(
     args: argparse.Namespace,
     *,
@@ -795,6 +839,7 @@ def complete_workflow_run(
         orca_env["QT_QPA_PLATFORM"] = "offscreen"
 
     render_script = _resolve_config_key_value(config, "render_script")
+    can_use_obj_preview_for_gcode = len(slicing_jobs) == 1
     for index, job in enumerate(slicing_jobs, start=1):
         current_part_path = Path(job["part_path"])
         current_process_path = Path(job["process_path"])
@@ -909,6 +954,20 @@ def complete_workflow_run(
                 preview_generated = preview_path.exists()
             except WorkflowError as exc:
                 _logger.warning("Preview generation failed: %s", exc)
+
+        if not preview_generated and can_use_obj_preview_for_gcode:
+            try:
+                generated_preview_path = _generate_obj_gcode_preview(
+                    config=config,
+                    manifest=manifest,
+                    run_directory=run_directory,
+                    destination=preview_path,
+                )
+                preview_generated = bool(
+                    generated_preview_path and generated_preview_path.exists()
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                _logger.warning("OBJ G-code preview generation failed: %s", exc)
 
         if not preview_generated and current_part_path.suffix.lower() == ".stl":
             try:

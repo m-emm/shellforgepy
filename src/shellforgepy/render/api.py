@@ -41,6 +41,84 @@ class PreviewRenderBatchResult:
     results: tuple[PreviewRenderResult, ...]
 
 
+def _render_scene_view_to_path(
+    scene,
+    *,
+    destination: str | Path,
+    view_name: str,
+    width: int,
+    height: int,
+    background_color: tuple[int, int, int],
+) -> PreviewRenderResult:
+    triangle_count = scene.triangle_count()
+    vertex_count = scene.vertex_count()
+    object_count = scene.object_count()
+    render_start = time.perf_counter()
+    image = render_scene(
+        scene,
+        view_name=view_name,
+        width=width,
+        height=height,
+        background_color=background_color,
+    )
+    output_path = write_image(image, destination)
+    render_seconds = time.perf_counter() - render_start
+    return PreviewRenderResult(
+        view=view_name,
+        path=output_path,
+        width=width,
+        height=height,
+        triangle_count=triangle_count,
+        vertex_count=vertex_count,
+        object_count=object_count,
+        render_seconds=render_seconds,
+    )
+
+
+def render_obj_view_to_image_with_stats(
+    obj_path: str | Path,
+    *,
+    destination: str | Path,
+    view: str = DEFAULT_PREVIEW_VIEWS[0],
+    width: int = 512,
+    height: int = 512,
+    background_color: tuple[int, int, int] = (250, 250, 250),
+) -> PreviewRenderResult:
+    """Render a single named OBJ view to an explicit image destination."""
+
+    scene = load_obj_scene(obj_path)
+    return _render_scene_view_to_path(
+        scene,
+        destination=destination,
+        view_name=view,
+        width=width,
+        height=height,
+        background_color=background_color,
+    )
+
+
+def render_obj_view_to_image(
+    obj_path: str | Path,
+    *,
+    destination: str | Path,
+    view: str = DEFAULT_PREVIEW_VIEWS[0],
+    width: int = 512,
+    height: int = 512,
+    background_color: tuple[int, int, int] = (250, 250, 250),
+) -> Path:
+    """Render a single named OBJ view to an explicit image destination."""
+
+    result = render_obj_view_to_image_with_stats(
+        obj_path,
+        destination=destination,
+        view=view,
+        width=width,
+        height=height,
+        background_color=background_color,
+    )
+    return result.path
+
+
 def render_obj_views_with_stats(
     obj_path: str | Path,
     *,
@@ -71,27 +149,15 @@ def render_obj_views_with_stats(
     results: list[PreviewRenderResult] = []
 
     for view_name in actual_views:
-        render_start = time.perf_counter()
-        image = render_scene(
-            scene,
-            view_name=view_name,
-            width=width,
-            height=height,
-            background_color=background_color,
-        )
         destination = output_dir / f"{base_name}_{view_name}{suffix}"
-        output_path = write_image(image, destination)
-        render_seconds = time.perf_counter() - render_start
         results.append(
-            PreviewRenderResult(
-                view=view_name,
-                path=output_path,
+            _render_scene_view_to_path(
+                scene,
+                destination=destination,
+                view_name=view_name,
                 width=width,
                 height=height,
-                triangle_count=triangle_count,
-                vertex_count=vertex_count,
-                object_count=object_count,
-                render_seconds=render_seconds,
+                background_color=background_color,
             )
         )
 
@@ -135,6 +201,8 @@ __all__ = [
     "DEFAULT_PREVIEW_VIEWS",
     "PreviewRenderBatchResult",
     "PreviewRenderResult",
+    "render_obj_view_to_image",
+    "render_obj_view_to_image_with_stats",
     "render_obj_views",
     "render_obj_views_with_stats",
 ]

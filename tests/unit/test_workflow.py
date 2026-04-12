@@ -583,6 +583,130 @@ def test_complete_workflow_run_generates_obj_previews_when_enabled(
     ]
 
 
+def test_complete_workflow_run_uses_obj_renderer_for_single_plate_gcode_preview(
+    monkeypatch, tmp_path
+):
+    from shellforgepy.render.api import PreviewRenderResult
+
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    obj_path = run_directory / "machine.obj"
+    obj_path.write_text("# obj\n", encoding="utf-8")
+    stl_path = run_directory / "machine_plate_a.stl"
+    stl_path.write_text("solid machine\n", encoding="utf-8")
+    process_path = run_directory / "machine_plate_a_process.json"
+    process_path.write_text("{}", encoding="utf-8")
+
+    orca_exec = tmp_path / "orca"
+    orca_exec.write_text("#!/bin/sh\n", encoding="utf-8")
+    master_settings_dir = tmp_path / "masters"
+    master_settings_dir.mkdir()
+
+    render_calls = []
+
+    def fake_generate_settings(*, process_data_file, output_dir, master_settings_dir):
+        (Path(output_dir) / "machine_settings.json").write_text("{}", encoding="utf-8")
+
+    def fake_execute_subprocess(cmd, *, env=None, cwd=None, stdin_data=None):
+        if "--load-settings" in cmd:
+            (run_directory / "plate_1.gcode").write_text("gcode", encoding="utf-8")
+        return SubprocessResult(0, [], [])
+
+    def fake_render_obj_view_to_image_with_stats(
+        obj_path_arg,
+        *,
+        destination,
+        view="front_angle",
+        width=512,
+        height=512,
+        background_color=(250, 250, 250),
+    ):
+        output_path = Path(destination)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("preview", encoding="utf-8")
+        render_calls.append(
+            {
+                "obj_path": Path(obj_path_arg),
+                "destination": output_path,
+                "view": view,
+                "width": width,
+                "height": height,
+            }
+        )
+        return PreviewRenderResult(
+            view=view,
+            path=output_path,
+            width=width,
+            height=height,
+            triangle_count=42,
+            vertex_count=21,
+            object_count=2,
+            render_seconds=0.1,
+        )
+
+    def fail_render_stl_to_png(**kwargs):
+        raise AssertionError("STL preview fallback should not be used")
+
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.generate_settings", fake_generate_settings
+    )
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.execute_subprocess",
+        fake_execute_subprocess,
+    )
+    monkeypatch.setattr(
+        "shellforgepy.render.render_obj_view_to_image_with_stats",
+        fake_render_obj_view_to_image_with_stats,
+    )
+    monkeypatch.setattr(
+        "shellforgepy.workflow.preview_generator.render_stl_to_png",
+        fail_render_stl_to_png,
+    )
+
+    args = argparse.Namespace(
+        slice=True,
+        upload=False,
+        open=False,
+        part_file=None,
+        process_file=None,
+        master_settings_dir=str(master_settings_dir),
+        orca_executable=str(orca_exec),
+        orca_debug=None,
+        printer=None,
+    )
+    config = {"orca": {"debug_level": 6}, "render": {"width": 512, "height": 512}}
+    manifest = {
+        "obj_path": str(obj_path),
+        "plates": [
+            {
+                "name": "plate_a",
+                "assembly_path": str(stl_path),
+                "process_data_path": str(process_path),
+            }
+        ],
+    }
+
+    result = complete_workflow_run(
+        args,
+        config=config,
+        run_directory=run_directory,
+        manifest=manifest,
+        target_label="machine",
+    )
+
+    assert result == 0
+    assert render_calls == [
+        {
+            "obj_path": obj_path,
+            "destination": run_directory / "machine_plate_a_preview.png",
+            "view": "front_angle",
+            "width": 512,
+            "height": 512,
+        }
+    ]
+    assert (run_directory / "machine_plate_a_preview.png").exists()
+
+
 def test_normalize_run_argv_moves_workflow_flags_before_target():
     argv = ["run", "design.py", "--slice", "--open"]
 

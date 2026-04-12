@@ -61,6 +61,17 @@ def _wrap_base64(data: str, line_length: int = 78) -> Iterable[str]:
     return (data[i : i + line_length] for i in range(0, len(data), line_length))
 
 
+def find_preview_image_path(gcode_path: Path) -> Optional[Path]:
+    """Return the neighbouring preview image path for a G-code file, if any."""
+
+    base_name = f"{gcode_path.stem}_preview"
+    for suffix in (".png", ".ppm"):
+        candidate = gcode_path.with_name(f"{base_name}{suffix}")
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def embed_preview_image(
     gcode_path: Path,
     image_path: Path,
@@ -68,10 +79,16 @@ def embed_preview_image(
 ) -> None:
     """Embed thumbnail previews into a G-code file if an image is available."""
 
-    from PIL import Image
-
     if not image_path.is_file():
         LOGGER.debug("No preview image at %s; skipping thumbnail embed.", image_path)
+        return
+
+    try:
+        from PIL import Image
+    except Exception:  # pragma: no cover - optional dependency
+        LOGGER.info(
+            "Pillow is not available; skipping thumbnail embed for %s", image_path
+        )
         return
 
     try:
@@ -295,8 +312,9 @@ def upload_to_printer(gcode_file: Path | str, printer: Optional[str] = None) -> 
     patch_generated_by_line(gcode_path)
     patch_gcode_for_moonraker(gcode_path, metadata)
 
-    preview_path = gcode_path.with_name(f"{gcode_path.stem}_preview.png")
-    embed_preview_image(gcode_path, preview_path)
+    preview_path = find_preview_image_path(gcode_path)
+    if preview_path is not None:
+        embed_preview_image(gcode_path, preview_path)
 
     remote_filename = f"{model_name}_{estimated_time}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.gcode"
 
