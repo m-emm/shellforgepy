@@ -180,8 +180,9 @@ Useful options:
 ## Production plates (optional)
 
 When `Builder.Production.arrange` is used, you can now split output into
-multiple **plates**. Each plate gets its own STL and process JSON, and the
-workflow slices each plate independently (resulting in separate G-code files).
+multiple **plates**. Each plate gets its own STL, OBJ/MTL, and process JSON,
+and the workflow slices each plate independently (resulting in separate G-code
+files and per-plate previews).
 
 ```yaml
 Builder:
@@ -208,6 +209,69 @@ Behavior notes:
 - If `auto_assign_plates` is `true`, remaining parts are assigned to additional
   auto-generated plates in build order.
 - If neither option is used, behavior remains unchanged (single plate export).
+
+### Per-plate process data overrides
+
+Production exports can declare a global process-data default and then override
+it per plate.
+
+```yaml
+Builder:
+  Production:
+    process_data_preset: default_petgcf
+    arrange:
+      bed_width: 220
+      prod_gap: 4
+      plates:
+        - name: motion
+          parts: [x_axis, y_axis]
+          process_data:
+            overrides:
+              process_overrides:
+                sparse_infill_density: 25%
+                enable_support: 1
+        - name: frame
+          parts: [printer_frame, feet]
+```
+
+How this works:
+
+- `Builder.Production.process_data` or `Builder.Production.process_data_preset`
+  defines the default process data for the whole production export.
+- `Builder.Production.arrange.plates[].process_data` or
+  `Builder.Production.arrange.plates[].process_data_preset` applies only to that
+  plate.
+- Plate-level process data is resolved on top of the global default.
+- Nested mappings such as `process_overrides` are merged, so unspecified keys
+  are inherited from the global default.
+- If a plate omits `process_data`, it simply uses the global production process
+  data unchanged.
+- If there is no global production process data, every declared plate must
+  provide its own `process_data` or `process_data_preset`.
+
+This means you can keep shared printer/material settings global and only vary
+plate-local values such as support settings, infill density, wall count, or
+brim configuration where needed.
+
+Shorthand with presets also works at plate level:
+
+```yaml
+Builder:
+  Production:
+    process_data_preset: default_petgcf
+    arrange:
+      plates:
+        - name: flexible_parts
+          parts: [belt_clip]
+          process_data_preset: tpu_fast
+          process_data:
+            overrides:
+              process_overrides:
+                sparse_infill_density: 95%
+```
+
+In that example, the plate uses `tpu_fast` as its base, then applies the extra
+inline overrides shown above.
 
 ## Working example in this repository
 

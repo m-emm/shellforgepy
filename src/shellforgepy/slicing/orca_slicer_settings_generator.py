@@ -10,6 +10,27 @@ import yaml
 _logger = logging.getLogger(__name__)
 
 
+def _first_list_value(value):
+    if isinstance(value, list) and value:
+        return value[0]
+    return value
+
+
+def _sync_machine_default_filament(machine_data, filament_data):
+    """Keep the machine preset's default filament metadata aligned with the export.
+
+    Orca persists these machine-level defaults into the 3MF project. If they are left
+    at the static machine master values, the GUI can show a stale material label even
+    when the actual filament profile embedded for the plate is correct.
+    """
+
+    machine_data["default_filament_profile"] = [str(filament_data["name"])]
+
+    filament_colour = _first_list_value(filament_data.get("default_filament_colour"))
+    if filament_colour is not None:
+        machine_data["default_filament_colour"] = [str(filament_colour)]
+
+
 def _resolve_process_override_targets(process_overrides, used_master_configs):
     missing_keys = []
     ambiguous_keys = {}
@@ -100,6 +121,7 @@ def generate_settings(
 
     filament_found = False
     filament_filename = None
+    selected_filament_master = None
     settings_files_used = []
     used_master_configs = []
     for config_file in sorted(master_settings_dir.glob("*.yaml")):
@@ -119,6 +141,7 @@ def generate_settings(
                 continue
             filament_found = True
             filament_filename = config_file.absolute().as_posix()
+            selected_filament_master = master_data
 
         settings_files_used.append(config_file.absolute().as_posix())
         used_master_configs.append(
@@ -144,6 +167,8 @@ def generate_settings(
         name = master_data["name"]
 
         if master_data["type"] == "machine":
+            _sync_machine_default_filament(master_data, selected_filament_master)
+
             print_host = master_data.get("print_host")
             if print_host is not None:
 

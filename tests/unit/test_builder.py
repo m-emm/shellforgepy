@@ -1509,6 +1509,151 @@ def test_export_scene_for_assembly_applies_preview_overrides_to_workflow_config(
     }
 
 
+def test_export_scene_for_assembly_passes_merged_plate_process_data_to_export(
+    monkeypatch, tmp_path
+):
+    import os
+
+    resource_path = tmp_path / "frame.yaml"
+    resource_path.write_text(
+        "\n".join(
+            [
+                "Builder:",
+                "  Production:",
+                "    process_data:",
+                "      filament: default_petg",
+                "      process_overrides:",
+                "        wall_loops: 3",
+                "        brim_type: outer_and_inner",
+                "    arrange:",
+                "      bed_width: 220",
+                "      prod_gap: 4",
+                "      plates:",
+                "        - name: motion",
+                "          parts: [left_part]",
+                "          process_data:",
+                "            overrides:",
+                "              process_overrides:",
+                "                wall_loops: 2",
+                "                enable_support: 1",
+                "        - name: frame",
+                "          parts: [right_part]",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    build_results = [
+        {
+            "assembly_name": "frame",
+            "artifact_dir": str(tmp_path / "repo" / "frame"),
+            "repository_dir": str(tmp_path / "repo"),
+            "resource_file": str(resource_path),
+            "public_parameters": {},
+            "generator_kwargs": {},
+            "generator_context": {},
+        }
+    ]
+
+    captured = {}
+
+    def fake_materialize_rule_parts(
+        metadata,
+        resource_data,
+        mode,
+        built_results_by_name,
+        repository_dir,
+        config_data,
+    ):
+        return [
+            {
+                "name": "left_part",
+                "part": "left-dummy",
+                "source_path": str(tmp_path / "repo" / "left.step"),
+            },
+            {
+                "name": "right_part",
+                "part": "right-dummy",
+                "source_path": str(tmp_path / "repo" / "right.step"),
+            },
+        ]
+
+    def fake_arrange_and_export_parts(*args, **kwargs):
+        captured["process_data"] = kwargs["process_data"]
+        captured["plate_process_data_map"] = kwargs["plate_process_data_map"]
+        run_directory = Path(kwargs["export_directory"])
+        obj_path = run_directory / "frame.obj"
+        obj_path.write_text("# obj\n", encoding="utf-8")
+        manifest_path = Path(os.environ["SHELLFORGEPY_WORKFLOW_MANIFEST"])
+        manifest_path.write_text(
+            json.dumps({"obj_path": str(obj_path)}),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(builder, "_materialize_rule_parts", fake_materialize_rule_parts)
+    monkeypatch.setattr(builder, "_apply_placement_alignments", lambda *a, **k: a[0])
+    monkeypatch.setattr(builder, "_scene_metrics_assembly_names", lambda **kwargs: [])
+    monkeypatch.setattr(
+        builder,
+        "_combined_metrics_snapshot_for_results",
+        lambda build_results, assembly_names: None,
+    )
+    monkeypatch.setattr(
+        "shellforgepy.produce.arrange_and_export.arrange_and_export_parts",
+        fake_arrange_and_export_parts,
+    )
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.get_config_path",
+        lambda override=None: tmp_path / "config.json",
+    )
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.load_config",
+        lambda path: {"render": {"enabled": False}},
+    )
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.complete_workflow_run",
+        lambda *args, **kwargs: 0,
+    )
+
+    result = builder._export_scene_for_assembly(
+        args=argparse.Namespace(
+            config=None,
+            run_id="test",
+            runs_dir=str(tmp_path / "runs"),
+            production=True,
+            slice=False,
+            upload=False,
+            visualize=False,
+            prototype=False,
+            verbose=False,
+            plate=None,
+        ),
+        config_data={"assemblies": [{"name": "frame"}]},
+        build_results=build_results,
+        selected_assembly="frame",
+        scene_assembly_names=["frame"],
+    )
+
+    assert result == 0
+    assert captured["process_data"] == {
+        "filament": "default_petg",
+        "process_overrides": {
+            "wall_loops": "3",
+            "brim_type": "outer_and_inner",
+        },
+    }
+    assert captured["plate_process_data_map"] == {
+        "motion": {
+            "filament": "default_petg",
+            "process_overrides": {
+                "wall_loops": "2",
+                "brim_type": "outer_and_inner",
+                "enable_support": "1",
+            },
+        }
+    }
+
+
 def test_run_builder_visualization_builds_only_relevant_placement_dependencies(
     monkeypatch, tmp_path
 ):

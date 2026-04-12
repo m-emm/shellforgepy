@@ -169,6 +169,103 @@ def test_complete_workflow_run_slices_each_manifest_plate(monkeypatch, tmp_path)
     assert slicer_inputs == ["machine_plate_a.stl", "machine_plate_b.stl"]
 
 
+def test_complete_workflow_run_loads_only_current_plate_filament(monkeypatch, tmp_path):
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    filaments_dir = run_directory / "filaments"
+    filaments_dir.mkdir()
+
+    plate_a_stl = run_directory / "machine_plate_a.stl"
+    plate_b_stl = run_directory / "machine_plate_b.stl"
+    plate_a_stl.write_text("solid a\n", encoding="utf-8")
+    plate_b_stl.write_text("solid b\n", encoding="utf-8")
+
+    plate_a_process = run_directory / "machine_plate_a_process.json"
+    plate_b_process = run_directory / "machine_plate_b_process.json"
+    plate_a_process.write_text(
+        json.dumps({"filament": "FilamentPETGCF"}), encoding="utf-8"
+    )
+    plate_b_process.write_text(
+        json.dumps({"filament": "FilamenteSunTPU95A"}), encoding="utf-8"
+    )
+
+    orca_exec = tmp_path / "orca"
+    orca_exec.write_text("#!/bin/sh\n", encoding="utf-8")
+    master_settings_dir = tmp_path / "masters"
+    master_settings_dir.mkdir()
+
+    slicer_filament_args = []
+
+    def fake_generate_settings(*, process_data_file, output_dir, master_settings_dir):
+        output_dir = Path(output_dir)
+        process_name = "ProcessMegeMaster.json"
+        machine_name = "MegeMasterMachine.json"
+        (output_dir / machine_name).write_text("{}", encoding="utf-8")
+        (output_dir / process_name).write_text("{}", encoding="utf-8")
+
+        filament_name = json.loads(Path(process_data_file).read_text(encoding="utf-8"))[
+            "filament"
+        ]
+        (output_dir / "filaments" / f"{filament_name}.json").write_text(
+            json.dumps({"name": filament_name}),
+            encoding="utf-8",
+        )
+
+    def fake_execute_subprocess(cmd, *, env=None, cwd=None, stdin_data=None):
+        if "--load-filaments" in cmd:
+            slicer_filament_args.append(cmd[cmd.index("--load-filaments") + 1])
+        return SubprocessResult(0, [], [])
+
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.generate_settings", fake_generate_settings
+    )
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.execute_subprocess",
+        fake_execute_subprocess,
+    )
+
+    args = argparse.Namespace(
+        slice=True,
+        upload=False,
+        open=False,
+        part_file=None,
+        process_file=None,
+        master_settings_dir=str(master_settings_dir),
+        orca_executable=str(orca_exec),
+        orca_debug=None,
+        printer=None,
+    )
+    config = {"orca": {"debug_level": 6}}
+    manifest = {
+        "plates": [
+            {
+                "name": "plate_a",
+                "assembly_path": str(plate_a_stl),
+                "process_data_path": str(plate_a_process),
+            },
+            {
+                "name": "plate_b",
+                "assembly_path": str(plate_b_stl),
+                "process_data_path": str(plate_b_process),
+            },
+        ]
+    }
+
+    result = complete_workflow_run(
+        args,
+        config=config,
+        run_directory=run_directory,
+        manifest=manifest,
+        target_label="machine",
+    )
+
+    assert result == 0
+    assert slicer_filament_args == [
+        str(run_directory / "filaments" / "FilamentPETGCF.json"),
+        str(run_directory / "filaments" / "FilamenteSunTPU95A.json"),
+    ]
+
+
 def test_complete_workflow_run_errors_for_manifest_plate_without_process_data(
     monkeypatch, tmp_path
 ):
@@ -705,6 +802,129 @@ def test_complete_workflow_run_uses_obj_renderer_for_single_plate_gcode_preview(
         }
     ]
     assert (run_directory / "machine_plate_a_preview.png").exists()
+
+
+def test_complete_workflow_run_uses_plate_obj_for_multi_plate_gcode_previews(
+    monkeypatch, tmp_path
+):
+    from shellforgepy.render.api import PreviewRenderResult
+
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    plate_a_stl = run_directory / "machine_plate_a.stl"
+    plate_b_stl = run_directory / "machine_plate_b.stl"
+    plate_a_stl.write_text("solid a\n", encoding="utf-8")
+    plate_b_stl.write_text("solid b\n", encoding="utf-8")
+    plate_a_obj = run_directory / "machine_plate_a.obj"
+    plate_b_obj = run_directory / "machine_plate_b.obj"
+    plate_a_obj.write_text("# obj a\n", encoding="utf-8")
+    plate_b_obj.write_text("# obj b\n", encoding="utf-8")
+    plate_a_process = run_directory / "machine_plate_a_process.json"
+    plate_b_process = run_directory / "machine_plate_b_process.json"
+    plate_a_process.write_text("{}", encoding="utf-8")
+    plate_b_process.write_text("{}", encoding="utf-8")
+
+    orca_exec = tmp_path / "orca"
+    orca_exec.write_text("#!/bin/sh\n", encoding="utf-8")
+    master_settings_dir = tmp_path / "masters"
+    master_settings_dir.mkdir()
+
+    render_calls = []
+
+    def fake_generate_settings(*, process_data_file, output_dir, master_settings_dir):
+        (Path(output_dir) / "machine_settings.json").write_text("{}", encoding="utf-8")
+
+    def fake_execute_subprocess(cmd, *, env=None, cwd=None, stdin_data=None):
+        if "--load-settings" in cmd:
+            source_name = Path(cmd[-1]).stem
+            (run_directory / "plate_1.gcode").write_text(source_name, encoding="utf-8")
+        return SubprocessResult(0, [], [])
+
+    def fake_render_obj_view_to_image_with_stats(
+        obj_path_arg,
+        *,
+        destination,
+        view="front_angle",
+        width=512,
+        height=512,
+        background_color=(250, 250, 250),
+    ):
+        output_path = Path(destination)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("preview", encoding="utf-8")
+        render_calls.append((Path(obj_path_arg).name, output_path.name, view))
+        return PreviewRenderResult(
+            view=view,
+            path=output_path,
+            width=width,
+            height=height,
+            triangle_count=42,
+            vertex_count=21,
+            object_count=2,
+            render_seconds=0.1,
+        )
+
+    def fail_render_stl_to_png(**kwargs):
+        raise AssertionError("STL preview fallback should not be used")
+
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.generate_settings", fake_generate_settings
+    )
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.execute_subprocess",
+        fake_execute_subprocess,
+    )
+    monkeypatch.setattr(
+        "shellforgepy.render.render_obj_view_to_image_with_stats",
+        fake_render_obj_view_to_image_with_stats,
+    )
+    monkeypatch.setattr(
+        "shellforgepy.workflow.preview_generator.render_stl_to_png",
+        fail_render_stl_to_png,
+    )
+
+    args = argparse.Namespace(
+        slice=True,
+        upload=False,
+        open=False,
+        part_file=None,
+        process_file=None,
+        master_settings_dir=str(master_settings_dir),
+        orca_executable=str(orca_exec),
+        orca_debug=None,
+        printer=None,
+    )
+    config = {"orca": {"debug_level": 6}}
+    manifest = {
+        "plates": [
+            {
+                "name": "plate_a",
+                "assembly_path": str(plate_a_stl),
+                "process_data_path": str(plate_a_process),
+                "obj_path": str(plate_a_obj),
+            },
+            {
+                "name": "plate_b",
+                "assembly_path": str(plate_b_stl),
+                "process_data_path": str(plate_b_process),
+                "obj_path": str(plate_b_obj),
+            },
+        ]
+    }
+
+    result = complete_workflow_run(
+        args,
+        config=config,
+        run_directory=run_directory,
+        manifest=manifest,
+        target_label="machine",
+    )
+
+    assert result == 0
+    assert render_calls == [
+        ("machine_plate_a.obj", "machine_plate_a_preview.png", "front_angle"),
+        ("machine_plate_b.obj", "machine_plate_b_preview.png", "front_angle"),
+    ]
 
 
 def test_normalize_run_argv_moves_workflow_flags_before_target():

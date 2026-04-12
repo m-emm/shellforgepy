@@ -230,6 +230,44 @@ def test_generate_settings_stringifies_numeric_process_overrides(tmp_path):
     assert generated_process["support_object_first_layer_gap"] == "0.8"
 
 
+def test_generate_settings_syncs_machine_default_filament_metadata(tmp_path):
+    master_dir = tmp_path / "masters"
+    master_dir.mkdir()
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    part_file = tmp_path / "part.stl"
+    part_file.write_text("solid part\nendsolid part\n", encoding="utf-8")
+    process_data_file = tmp_path / "process.json"
+
+    _write_master_settings(
+        master_dir,
+        filament_name="TestTPU",
+        filament_data={
+            "default_filament_colour": ["#00FF00"],
+            "filament_flow_ratio": ["1.0"],
+        },
+        machine_data={
+            "default_filament_profile": ["Creality Generic PLA @Ender-3V3-all"],
+            "default_filament_colour": ["#FF0000"],
+        },
+    )
+    _write_process_data(
+        process_data_file,
+        filament_name="TestTPU",
+        part_file=part_file,
+        process_overrides={},
+    )
+
+    generate_settings(process_data_file, output_dir, master_dir)
+
+    generated_machine = json.loads(
+        (output_dir / "TestMachine.json").read_text(encoding="utf-8")
+    )
+
+    assert generated_machine["default_filament_profile"] == ["TestTPU"]
+    assert generated_machine["default_filament_colour"] == ["#00FF00"]
+
+
 def test_generate_settings_allows_disabled_pressure_advance_override(tmp_path):
     master_dir = tmp_path / "masters"
     master_dir.mkdir()

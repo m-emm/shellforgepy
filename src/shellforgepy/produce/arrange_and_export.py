@@ -1223,6 +1223,8 @@ def arrange_and_export_parts(
         current_assembly_path = None
         current_step_path = None
         current_process_path = None
+        current_obj_path = None
+        current_mtl_path = None
 
         if export_stl:
             assert fused_shape is not None
@@ -1260,6 +1262,17 @@ def arrange_and_export_parts(
                 json.dump(plate_process_data, handle, indent=4)
             _logger.info("Exported process data to %s", current_process_path)
 
+        if export_obj and plate_suffix:
+            current_obj_path = export_dir / f"{base_name}{plate_suffix}.obj"
+            _logger.info("Exporting plate OBJ to %s", current_obj_path)
+            plate_colored_meshes = _build_colored_meshes(
+                export_plate_parts,
+                mesh_cache_dir=mesh_cache_dir,
+            )
+            export_colored_meshes_to_obj(plate_colored_meshes, str(current_obj_path))
+            current_mtl_path = current_obj_path.with_suffix(".mtl")
+            _logger.info("Exported plate OBJ to %s", current_obj_path)
+
         if manifest_data is not None:
             if export_stl and export_individual_parts:
                 manifest_parts = manifest_data.setdefault("part_files", [])
@@ -1282,6 +1295,16 @@ def arrange_and_export_parts(
             plate_manifest["process_data_path"] = (
                 str(current_process_path.resolve())
                 if current_process_path is not None
+                else None
+            )
+            plate_manifest["obj_path"] = (
+                str(current_obj_path.resolve())
+                if current_obj_path is not None
+                else None
+            )
+            plate_manifest["mtl_path"] = (
+                str(current_mtl_path.resolve())
+                if current_mtl_path is not None
                 else None
             )
             manifest_plates = manifest_data.get("plates")

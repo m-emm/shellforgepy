@@ -328,6 +328,26 @@ def _gather_filament_jsons(directory: Path) -> List[Path]:
     return sorted(p for p in filaments_dir.glob("*.json") if p.is_file())
 
 
+def _resolve_current_filament_jsons(
+    *, directory: Path, process_data_path: Path
+) -> List[Path]:
+    try:
+        with process_data_path.open("r", encoding="utf-8") as handle:
+            process_data = json.load(handle)
+    except Exception:
+        return _gather_filament_jsons(directory)
+
+    filament_name = process_data.get("filament")
+    if not isinstance(filament_name, str) or not filament_name:
+        return _gather_filament_jsons(directory)
+
+    candidate = directory / "filaments" / f"{filament_name}.json"
+    if candidate.is_file():
+        return [candidate]
+
+    return _gather_filament_jsons(directory)
+
+
 def _list_created_files(directory: Path) -> List[Path]:
     files: List[Path] = []
     for item in sorted(directory.rglob("*")):
@@ -574,11 +594,9 @@ def _generate_obj_previews(
 def _generate_obj_gcode_preview(
     *,
     config: Dict[str, object],
-    manifest: Dict[str, object],
-    run_directory: Path,
+    obj_path: Path | None,
     destination: Path,
 ) -> Path | None:
-    obj_path = _resolve_manifest_path(run_directory, manifest.get("obj_path"))
     if obj_path is None or not obj_path.exists():
         return None
 
@@ -645,6 +663,9 @@ def complete_workflow_run(
                     "name": plate_name,
                     "part_path": part_entry,
                     "process_path": process_entry,
+                    "obj_path": _resolve_manifest_path(
+                        run_directory, entry.get("obj_path")
+                    ),
                 }
             )
 
@@ -773,6 +794,7 @@ def complete_workflow_run(
                     "name": str(job["name"]),
                     "part_path": resolved_part,
                     "process_path": resolved_process,
+                    "obj_path": job.get("obj_path"),
                 }
             )
     else:
@@ -787,6 +809,9 @@ def complete_workflow_run(
                 "name": "plate_1",
                 "part_path": _ensure_path(part_path, "generated STL"),
                 "process_path": resolved_process_path,
+                "obj_path": _resolve_manifest_path(
+                    run_directory, manifest.get("obj_path")
+                ),
             }
         ]
 
@@ -839,11 +864,15 @@ def complete_workflow_run(
         orca_env["QT_QPA_PLATFORM"] = "offscreen"
 
     render_script = _resolve_config_key_value(config, "render_script")
-    can_use_obj_preview_for_gcode = len(slicing_jobs) == 1
     for index, job in enumerate(slicing_jobs, start=1):
         current_part_path = Path(job["part_path"])
         current_process_path = Path(job["process_path"])
         current_plate_name = str(job["name"])
+        current_obj_path = job.get("obj_path")
+        if current_obj_path is None:
+            current_obj_path = _resolve_manifest_path(
+                run_directory, manifest.get("obj_path")
+            )
         gcode_snapshot_before = _snapshot_matching_files(run_directory, "*.gcode")
         _logger.info(
             "Detected part file for %s: %s", current_plate_name, current_part_path
@@ -865,7 +894,10 @@ def complete_workflow_run(
             ) from exc
 
         settings_files = _gather_jsons(run_directory)
-        filament_files = _gather_filament_jsons(run_directory)
+        filament_files = _resolve_current_filament_jsons(
+            directory=run_directory,
+            process_data_path=current_process_path,
+        )
 
         if not settings_files:
             raise WorkflowError(
@@ -955,12 +987,11 @@ def complete_workflow_run(
             except WorkflowError as exc:
                 _logger.warning("Preview generation failed: %s", exc)
 
-        if not preview_generated and can_use_obj_preview_for_gcode:
+        if not preview_generated:
             try:
                 generated_preview_path = _generate_obj_gcode_preview(
                     config=config,
-                    manifest=manifest,
-                    run_directory=run_directory,
+                    obj_path=current_obj_path,
                     destination=preview_path,
                 )
                 preview_generated = bool(

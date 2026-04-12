@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import numpy as np
@@ -278,6 +279,73 @@ def test_arrange_and_export_parts_can_add_plate_boundaries_to_obj_scene(
     assert min_y == pytest.approx(0.0)
     assert max_x == pytest.approx(100.0)
     assert max_y == pytest.approx(100.0)
+
+
+def test_arrange_and_export_exports_plate_obj_files_and_manifest_entries(
+    monkeypatch, tmp_path
+):
+    import shellforgepy.produce.arrange_and_export as arrange_and_export_module
+
+    export_calls = []
+    manifest_path = tmp_path / "workflow_manifest.json"
+
+    def fake_build_colored_meshes(parts, **kwargs):
+        return [{"parts": [entry["name"] for entry in parts]}]
+
+    def fake_export_colored_meshes_to_obj(meshes, destination):
+        destination_path = Path(destination)
+        export_calls.append((destination_path.name, meshes[0]["parts"]))
+        destination_path.write_text("obj", encoding="utf-8")
+        destination_path.with_suffix(".mtl").write_text("mtl", encoding="utf-8")
+
+    monkeypatch.setattr(
+        arrange_and_export_module,
+        "_build_colored_meshes",
+        fake_build_colored_meshes,
+    )
+    monkeypatch.setattr(
+        arrange_and_export_module,
+        "export_colored_meshes_to_obj",
+        fake_export_colored_meshes_to_obj,
+    )
+
+    monkeypatch.setenv("SHELLFORGEPY_WORKFLOW_MANIFEST", str(manifest_path))
+
+    arrange_and_export_parts(
+        [
+            {"name": "left_box", "part": create_box(10, 10, 10)},
+            {"name": "right_box", "part": create_box(10, 10, 10)},
+        ],
+        prod_gap=2.0,
+        bed_width=100.0,
+        script_file="test_multi_plate.py",
+        export_directory=tmp_path,
+        export_stl=False,
+        export_step=False,
+        export_obj=True,
+        plates=[
+            {"name": "left_plate", "parts": ["left_box"]},
+            {"name": "right_plate", "parts": ["right_box"]},
+        ],
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert export_calls == [
+        ("test_multi_plate_left_plate.obj", ["left_box"]),
+        ("test_multi_plate_right_plate.obj", ["right_box"]),
+        ("test_multi_plate.obj", ["left_box", "right_box"]),
+    ]
+    assert manifest["obj_path"].endswith("test_multi_plate.obj")
+    assert manifest["mtl_path"].endswith("test_multi_plate.mtl")
+    assert manifest["plates"][0]["obj_path"].endswith("test_multi_plate_left_plate.obj")
+    assert manifest["plates"][0]["mtl_path"].endswith("test_multi_plate_left_plate.mtl")
+    assert manifest["plates"][1]["obj_path"].endswith(
+        "test_multi_plate_right_plate.obj"
+    )
+    assert manifest["plates"][1]["mtl_path"].endswith(
+        "test_multi_plate_right_plate.mtl"
+    )
 
 
 def test_arrange_and_export_uses_four_millimeter_default_gap(monkeypatch):
