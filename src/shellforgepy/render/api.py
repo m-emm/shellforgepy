@@ -49,6 +49,7 @@ def _render_scene_view_to_path(
     width: int,
     height: int,
     background_color: tuple[int, int, int],
+    disable_numba: bool,
 ) -> PreviewRenderResult:
     triangle_count = scene.triangle_count()
     vertex_count = scene.vertex_count()
@@ -60,6 +61,7 @@ def _render_scene_view_to_path(
         width=width,
         height=height,
         background_color=background_color,
+        disable_numba=disable_numba,
     )
     output_path = write_image(image, destination)
     render_seconds = time.perf_counter() - render_start
@@ -83,6 +85,7 @@ def render_obj_view_to_image_with_stats(
     width: int = 512,
     height: int = 512,
     background_color: tuple[int, int, int] = (250, 250, 250),
+    disable_numba: bool = False,
 ) -> PreviewRenderResult:
     """Render a single named OBJ view to an explicit image destination."""
 
@@ -94,6 +97,7 @@ def render_obj_view_to_image_with_stats(
         width=width,
         height=height,
         background_color=background_color,
+        disable_numba=disable_numba,
     )
 
 
@@ -105,6 +109,7 @@ def render_obj_view_to_image(
     width: int = 512,
     height: int = 512,
     background_color: tuple[int, int, int] = (250, 250, 250),
+    disable_numba: bool = False,
 ) -> Path:
     """Render a single named OBJ view to an explicit image destination."""
 
@@ -115,6 +120,7 @@ def render_obj_view_to_image(
         width=width,
         height=height,
         background_color=background_color,
+        disable_numba=disable_numba,
     )
     return result.path
 
@@ -128,6 +134,7 @@ def render_obj_views_with_stats(
     height: int = 512,
     background_color: tuple[int, int, int] = (250, 250, 250),
     filename_prefix: str | None = None,
+    disable_numba: bool = False,
 ) -> PreviewRenderBatchResult:
     """Render one or more named views of an OBJ scene and collect timing stats."""
 
@@ -158,6 +165,7 @@ def render_obj_views_with_stats(
                 width=width,
                 height=height,
                 background_color=background_color,
+                disable_numba=disable_numba,
             )
         )
 
@@ -182,6 +190,7 @@ def render_obj_views(
     height: int = 512,
     background_color: tuple[int, int, int] = (250, 250, 250),
     filename_prefix: str | None = None,
+    disable_numba: bool = False,
 ) -> list[Path]:
     """Render one or more named views of an OBJ scene."""
 
@@ -193,6 +202,7 @@ def render_obj_views(
         height=height,
         background_color=background_color,
         filename_prefix=filename_prefix,
+        disable_numba=disable_numba,
     )
     return [result.path for result in batch.results]
 

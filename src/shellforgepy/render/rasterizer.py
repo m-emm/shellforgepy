@@ -6,6 +6,14 @@ import numpy as np
 from shellforgepy.render.model import Scene
 from shellforgepy.render.presets import view_direction_for_name
 
+try:
+    from numba import njit
+
+    HAVE_NUMBA = True
+except Exception:  # pragma: no cover - optional dependency
+    HAVE_NUMBA = False
+    njit = None
+
 
 def _pick_stable_up(direction: np.ndarray) -> np.ndarray:
     up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
@@ -194,6 +202,109 @@ def _rasterize_triangles(
     return rgb
 
 
+if HAVE_NUMBA:
+
+    @njit(cache=True)
+    def _rasterize_triangles_numba_impl(
+        screen_triangles: np.ndarray,
+        face_colors_u8: np.ndarray,
+        width: int,
+        height: int,
+        background_r: int,
+        background_g: int,
+        background_b: int,
+    ) -> np.ndarray:
+        depth = np.empty((height, width), dtype=np.float32)
+        rgb = np.empty((height, width, 3), dtype=np.uint8)
+
+        for y in range(height):
+            for x in range(width):
+                depth[y, x] = np.inf
+                rgb[y, x, 0] = background_r
+                rgb[y, x, 1] = background_g
+                rgb[y, x, 2] = background_b
+
+        for triangle_index in range(screen_triangles.shape[0]):
+            triangle = screen_triangles[triangle_index]
+            color = face_colors_u8[triangle_index]
+
+            x0 = triangle[0, 0]
+            y0 = triangle[0, 1]
+            z0 = triangle[0, 2]
+            x1 = triangle[1, 0]
+            y1 = triangle[1, 1]
+            z1 = triangle[1, 2]
+            x2 = triangle[2, 0]
+            y2 = triangle[2, 1]
+            z2 = triangle[2, 2]
+
+            min_x = max(int(math.floor(min(x0, x1, x2))), 0)
+            max_x = min(int(math.ceil(max(x0, x1, x2))), width - 1)
+            min_y = max(int(math.floor(min(y0, y1, y2))), 0)
+            max_y = min(int(math.ceil(max(y0, y1, y2))), height - 1)
+            if min_x > max_x or min_y > max_y:
+                continue
+
+            denom = (y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2)
+            if abs(denom) < 1e-12:
+                continue
+
+            for py in range(min_y, max_y + 1):
+                yy = float(py)
+                for px in range(min_x, max_x + 1):
+                    xx = float(px)
+                    w0 = ((y1 - y2) * (xx - x2) + (x2 - x1) * (yy - y2)) / denom
+                    w1 = ((y2 - y0) * (xx - x2) + (x0 - x2) * (yy - y2)) / denom
+                    w2 = 1.0 - w0 - w1
+
+                    if w0 < 0.0 or w1 < 0.0 or w2 < 0.0:
+                        continue
+
+                    z_box = w0 * z0 + w1 * z1 + w2 * z2
+                    if z_box >= depth[py, px]:
+                        continue
+
+                    depth[py, px] = z_box
+                    rgb[py, px, 0] = color[0]
+                    rgb[py, px, 1] = color[1]
+                    rgb[py, px, 2] = color[2]
+
+        return rgb
+
+
+def _rasterize_triangles_numba(
+    screen_triangles: np.ndarray,
+    face_colors: np.ndarray,
+    width: int,
+    height: int,
+    background_color: tuple[int, int, int],
+) -> np.ndarray:
+    face_colors_u8 = np.clip(face_colors * 255.0 + 0.5, 0, 255).astype(np.uint8)
+    return _rasterize_triangles_numba_impl(
+        np.asarray(screen_triangles, dtype=np.float32),
+        face_colors_u8,
+        width,
+        height,
+        int(background_color[0]),
+        int(background_color[1]),
+        int(background_color[2]),
+    )
+
+
+def render_backend_name(*, disable_numba: bool = False) -> str:
+    """Resolve the rasterizer backend name for the current render call."""
+
+    if disable_numba or not HAVE_NUMBA:
+        return "numpy"
+    return "numba"
+
+
+def numba_renderer_available() -> bool:
+    """Return whether the optional numba renderer backend is available."""
+
+    return HAVE_NUMBA
+
+
 def render_scene(
     scene: Scene,
     *,
@@ -201,9 +312,9 @@ def render_scene(
     width: int = 1024,
     height: int = 1024,
     background_color: tuple[int, int, int] = (250, 250, 250),
+    disable_numba: bool = False,
 ) -> np.ndarray:
     """Render a mesh scene to an RGB numpy image."""
-
     triangles, face_colors = _scene_triangles(scene)
     if len(triangles) == 0:
         image = np.empty((height, width, 3), dtype=np.uint8)
@@ -224,6 +335,16 @@ def render_scene(
     normals_view = (_face_normals(triangles) @ view_rotation.T).astype(np.float32)
     normals_view /= np.linalg.norm(normals_view, axis=1, keepdims=True) + 1e-12
     shaded_colors = _shade_colors(face_colors, normals_view)
+
+    backend_name = render_backend_name(disable_numba=disable_numba)
+    if backend_name == "numba":
+        return _rasterize_triangles_numba(
+            screen_triangles,
+            shaded_colors,
+            width,
+            height,
+            background_color,
+        )
 
     return _rasterize_triangles(
         screen_triangles,
