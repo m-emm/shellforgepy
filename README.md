@@ -122,6 +122,9 @@ pip install shellforgepy
 Optional extras:
 
 ```bash
+# Optional renderer acceleration
+pip install shellforgepy[numba]
+
 # CadQuery adapter
 pip install shellforgepy[cadquery]
 
@@ -140,6 +143,12 @@ cd shellforgepy
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[testing]"
+```
+
+For development or CI runs that should exercise both renderer backends, install:
+
+```bash
+pip install -e ".[testing,numba]"
 ```
 
 ---

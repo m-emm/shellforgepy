@@ -30,8 +30,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install setuptools wheel
-          # Install the package in development mode with test dependencies and CadQuery
-          pip install -e .[testing,cadquery]
+          # Install the package in development mode with test dependencies, CadQuery,
+          # and optional numba acceleration so renderer tests cover both backends in CI.
+          pip install -e .[testing,cadquery,numba]
           # Install additional test dependencies
           pip install matplotlib
 
@@ -58,8 +59,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install setuptools wheel
-          # Install the package in development mode with test dependencies and CadQuery
-          pip install -e .[testing,cadquery]
+          # Install the package in development mode with test dependencies, CadQuery,
+          # and optional numba acceleration so renderer tests cover both backends in CI.
+          pip install -e .[testing,cadquery,numba]
           # Install additional test dependencies
           pip install matplotlib
 
