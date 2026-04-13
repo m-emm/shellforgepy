@@ -401,6 +401,10 @@ def _resolve_public_parameters(
     parameter_definitions: Mapping[str, Any],
     parameter_overrides: Mapping[str, Any],
     context: Mapping[str, Any],
+    *,
+    assembly_name: Optional[str] = None,
+    config_path: Optional[Path] = None,
+    resource_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     resolved_overrides = _resolve_inline_mapping(parameter_overrides, context)
     public_parameters: Dict[str, Any] = {}
@@ -422,8 +426,24 @@ def _resolve_public_parameters(
         )
     extra_parameters = sorted(set(resolved_overrides) - set(parameter_definitions))
     if extra_parameters:
+        context_parts = []
+        if assembly_name:
+            context_parts.append(f"assembly '{assembly_name}'")
+        if config_path:
+            context_parts.append(f"top-level config {config_path}")
+        if resource_path:
+            context_parts.append(f"resource file {resource_path}")
+        context_suffix = (
+            f" while resolving {'; '.join(context_parts)}" if context_parts else ""
+        )
+        declaration_hint = (
+            f" These names are not declared in the Parameters section of {resource_path}."
+            if resource_path
+            else ""
+        )
         raise BuilderError(
-            f"Unknown parameter override(s): {', '.join(extra_parameters)}"
+            f"Unknown parameter override(s){context_suffix}: {', '.join(extra_parameters)}."
+            f"{declaration_hint}"
         )
     return public_parameters
 
@@ -635,6 +655,9 @@ def _resolve_assembly(
         parameter_definitions,
         parameter_overrides,
         resolution_context,
+        assembly_name=str(entry["name"]),
+        config_path=config_path,
+        resource_path=resource_path,
     )
 
     properties = part_definition.get("Properties", {})
@@ -738,6 +761,100 @@ def _generator_required_keyword_arguments(generator: Callable[..., Any]) -> set[
 
 def _generator_context_payload(context_mapping: Mapping[str, Any]) -> Dict[str, Any]:
     return deepcopy(dict(context_mapping))
+
+
+def _missing_required_generator_arguments(
+    generator: Callable[..., Any],
+    provided_kwargs: Mapping[str, Any],
+) -> List[str]:
+    return sorted(
+        _generator_required_keyword_arguments(generator) - set(provided_kwargs)
+    )
+
+
+def _missing_generator_argument_hints(
+    *,
+    missing_argument_names: Sequence[str],
+    resolved: _ResolvedAssembly,
+    entry: Mapping[str, Any],
+    config_file: Path,
+    assemblies: Sequence[Mapping[str, Any]],
+    builder_context: Mapping[str, Any],
+) -> List[str]:
+    declared_parameters = set(resolved.public_parameters)
+    explicit_generator_kwargs = set(resolved.generator_kwargs)
+    declared_injections = _resolve_injected_parts_config(entry)
+    declared_injection_names = set(declared_injections)
+    dependency_names = {str(name) for name in list(entry.get("depends_on") or [])}
+    known_assembly_names = {str(item.get("name")) for item in assemblies}
+    hint_lines: List[str] = []
+
+    for argument_name in missing_argument_names:
+        if (
+            argument_name in declared_parameters
+            and argument_name not in explicit_generator_kwargs
+        ):
+            hint_lines.append(
+                f"'{argument_name}' is declared in the Parameters section of {resolved.resource_path} and was resolved from YAML, but it is not forwarded in Parts.{resolved.logical_part_name}.Properties.Properties."
+            )
+            continue
+
+        if argument_name in known_assembly_names:
+            if (
+                argument_name in dependency_names
+                and argument_name not in declared_injection_names
+            ):
+                hint_lines.append(
+                    f"'{argument_name}' matches top-level assembly '{argument_name}' and is already listed in depends_on for assembly '{resolved.name}', but it is not wired through inject_parts in {config_file}."
+                )
+                continue
+            if argument_name not in declared_injection_names:
+                hint_lines.append(
+                    f"'{argument_name}' matches top-level assembly '{argument_name}'. If this generator expects an injected assembly or artifact, add inject_parts.{argument_name}: {argument_name} in {config_file} and add it to depends_on if needed."
+                )
+                continue
+
+        if argument_name in builder_context:
+            hint_lines.append(
+                f"'{argument_name}' exists in the builder context, but it was not provided to the generator. Check explicit generator properties and context injection behavior."
+            )
+            continue
+
+        hint_lines.append(
+            f"'{argument_name}' is not present in resolved generator kwargs, inject_parts, or auto-injected builder context values."
+        )
+
+    return hint_lines
+
+
+def _raise_missing_generator_arguments_error(
+    *,
+    generator: Callable[..., Any],
+    resolved: _ResolvedAssembly,
+    entry: Mapping[str, Any],
+    config_file: Path,
+    assemblies: Sequence[Mapping[str, Any]],
+    builder_context: Mapping[str, Any],
+    provided_kwargs: Mapping[str, Any],
+) -> None:
+    missing_argument_names = _missing_required_generator_arguments(
+        generator, provided_kwargs
+    )
+    if not missing_argument_names:
+        return
+
+    hint_lines = _missing_generator_argument_hints(
+        missing_argument_names=missing_argument_names,
+        resolved=resolved,
+        entry=entry,
+        config_file=config_file,
+        assemblies=assemblies,
+        builder_context=builder_context,
+    )
+    details = " ".join(hint_lines)
+    raise BuilderError(
+        f"Could not call generator '{resolved.generator_path}' for assembly '{resolved.name}' because required keyword argument(s) were not provided: {', '.join(missing_argument_names)}. Top-level config {config_file}. Resource file {resolved.resource_path}. {details}"
+    )
 
 
 def _auto_injected_context_kwargs(
@@ -3801,6 +3918,15 @@ def build_from_file(
                 generator_kwargs[injection.kwarg_name] = injection.part
             if legacy_context_payload is not None:
                 generator_kwargs["context"] = deepcopy(legacy_context_payload)
+            _raise_missing_generator_arguments_error(
+                generator=generator,
+                resolved=resolved,
+                entry=entry,
+                config_file=config_file,
+                assemblies=assemblies,
+                builder_context=builder_context,
+                provided_kwargs=generator_kwargs,
+            )
             reset_metrics()
 
             try:
@@ -4122,6 +4248,7 @@ def _export_scene_for_assembly(
                 prod_gap=float(export_options["prod_gap"]),
                 bed_width=float(export_options["bed_width"]),
                 script_file=str(Path(selected_metadata["resource_file"]).resolve()),
+                export_base_name=selected_assembly,
                 export_directory=run_directory,
                 prod=production_mode,
                 process_data=process_data,

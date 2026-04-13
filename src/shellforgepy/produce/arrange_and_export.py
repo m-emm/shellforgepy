@@ -1011,6 +1011,7 @@ def arrange_and_export_parts(
     bed_width,
     script_file,
     *,
+    export_base_name=None,
     export_directory=None,
     prod=False,
     process_data=None,
@@ -1033,6 +1034,7 @@ def arrange_and_export_parts(
     """Arrange named parts with production support and export requested formats.
 
     Args:
+        export_base_name: Optional basename override for exported assembly files.
         export_stl: If True (default), export STL files for individual parts and the assembly.
         export_step: If True, also export STEP files alongside STL files.
         export_obj: If True (default), export OBJ files with colors/materials.
@@ -1164,7 +1166,14 @@ def arrange_and_export_parts(
         manifest_data["export_dir"] = str(export_dir.resolve())
         manifest_data["plates"] = []
 
-    base_name = Path(script_file).stem or "cadquery_parts"
+    base_name = (
+        str(export_base_name).strip()
+        if export_base_name is not None and str(export_base_name).strip()
+        else (Path(script_file).stem or "cadquery_parts")
+    )
+    single_selected_plate_name = None
+    if selected_plates and len(prepared_plate_groups) == 1:
+        single_selected_plate_name = _safe_name(prepared_plate_groups[0][0])
     fused_shape = None
     assembly_path = None
     assembly_step_path = None
@@ -1262,7 +1271,7 @@ def arrange_and_export_parts(
                 json.dump(plate_process_data, handle, indent=4)
             _logger.info("Exported process data to %s", current_process_path)
 
-        if export_obj and plate_suffix:
+        if export_obj and plate_suffix and single_selected_plate_name is None:
             current_obj_path = export_dir / f"{base_name}{plate_suffix}.obj"
             _logger.info("Exporting plate OBJ to %s", current_obj_path)
             plate_colored_meshes = _build_colored_meshes(
@@ -1314,7 +1323,10 @@ def arrange_and_export_parts(
     # Export colored OBJ file. Keep production arrangement view distinct from the
     # assembled visualization by suffixing production OBJ/MTL names.
     if export_obj:
-        obj_base_name = f"{base_name}_prod" if prod else base_name
+        if single_selected_plate_name is not None:
+            obj_base_name = f"{base_name}_{single_selected_plate_name}"
+        else:
+            obj_base_name = f"{base_name}_prod" if prod else base_name
         obj_path = export_dir / f"{obj_base_name}.obj"
         _logger.info("Exporting colored OBJ to %s", obj_path)
         obj_scene_parts = arranged_parts
@@ -1337,6 +1349,11 @@ def arrange_and_export_parts(
             manifest_data["obj_path"] = str(obj_path.resolve())
             mtl_path = obj_path.with_suffix(".mtl")
             manifest_data["mtl_path"] = str(mtl_path.resolve())
+            if single_selected_plate_name is not None:
+                manifest_plates = manifest_data.get("plates")
+                if isinstance(manifest_plates, list) and len(manifest_plates) == 1:
+                    manifest_plates[0]["obj_path"] = str(obj_path.resolve())
+                    manifest_plates[0]["mtl_path"] = str(mtl_path.resolve())
 
             # Generate viewer URL if base URL is configured
             if viewer_base_url:
@@ -1395,6 +1412,7 @@ def arrange_and_export(
     prod_gap=4.0,
     bed_width=200.0,
     script_file=None,
+    export_base_name=None,
     export_directory=None,
     prod=False,
     process_data=None,
@@ -1439,6 +1457,7 @@ def arrange_and_export(
         prod_gap=prod_gap,
         bed_width=bed_width,
         script_file=script_file,
+        export_base_name=export_base_name,
         export_directory=export_directory,
         prod=prod,
         process_data=process_data,

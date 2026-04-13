@@ -124,6 +124,152 @@ def test_build_from_file_falls_back_to_same_named_globals_for_missing_parameters
     )
 
 
+def test_resolve_assembly_reports_config_and_resource_for_unknown_parameter_override(
+    tmp_path,
+):
+    project_root = tmp_path / "project"
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    resource_path = assemblies_dir / "sample_assembly.yaml"
+    _write_file(
+        resource_path,
+        "\n".join(
+            [
+                'ShellforgepyBuilderVersion: "2026-03-27"',
+                "Parameters:",
+                "  width:",
+                "    Type: Float",
+                "Parts:",
+                "  Sample:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.widget_generator.make_widget",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: sample_assembly",
+                "    parameters:",
+                "      width: 10",
+                "      unexpected_parameter: 123",
+            ]
+        ),
+    )
+
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder._resolve_assembly(
+            config_path,
+            {
+                "name": "sample_assembly",
+                "parameters": {"width": 10, "unexpected_parameter": 123},
+            },
+            {},
+        )
+
+    message = str(excinfo.value)
+    assert "Unknown parameter override(s)" in message
+    assert "sample_assembly" in message
+    assert str(config_path) in message
+    assert str(resource_path) in message
+    assert "unexpected_parameter" in message
+    assert "Parameters section" in message
+
+
+def test_build_from_file_reports_missing_injected_generator_argument_with_yaml_context(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "project"
+    package_name = "missing_injection_demo_pkg"
+    src_dir = project_root / "src" / package_name
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "widget_generator.py",
+        "\n".join(
+            [
+                "def make_dependency():",
+                "    return 'dependency-part'",
+                "",
+                "def make_target(*, dependency_assembly):",
+                "    return dependency_assembly",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    dependency_resource = assemblies_dir / "dependency_assembly.yaml"
+    target_resource = assemblies_dir / "target_assembly.yaml"
+    _write_file(
+        dependency_resource,
+        "\n".join(
+            [
+                'ShellforgepyBuilderVersion: "2026-03-27"',
+                "Parts:",
+                "  Dependency:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                f"      Generator: {package_name}.widget_generator.make_dependency",
+            ]
+        ),
+    )
+    _write_file(
+        target_resource,
+        "\n".join(
+            [
+                'ShellforgepyBuilderVersion: "2026-03-27"',
+                "Parts:",
+                "  Target:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                f"      Generator: {package_name}.widget_generator.make_target",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: dependency_assembly",
+                "    resource_file: dependency_assembly.yaml",
+                "  - name: target_assembly",
+                "    resource_file: target_assembly.yaml",
+                "    depends_on:",
+                "      - dependency_assembly",
+            ]
+        ),
+    )
+
+    def fake_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+    monkeypatch.delitem(sys.modules, package_name, raising=False)
+    monkeypatch.delitem(sys.modules, f"{package_name}.widget_generator", raising=False)
+
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder.build_from_file(
+            config_path,
+            assembly_names=["target_assembly"],
+            force=True,
+        )
+
+    message = str(excinfo.value)
+    assert (
+        "required keyword argument(s) were not provided: dependency_assembly" in message
+    )
+    assert str(config_path) in message
+    assert str(target_resource) in message
+    assert "inject_parts" in message
+    assert "depends_on" in message
+
+
 def test_build_from_file_writes_hashed_metadata_and_reuses_cache(monkeypatch, tmp_path):
     project_root = tmp_path / "project"
     src_dir = project_root / "src" / "demo_pkg"
@@ -1652,6 +1798,108 @@ def test_export_scene_for_assembly_passes_merged_plate_process_data_to_export(
             },
         }
     }
+
+
+def test_export_scene_for_assembly_uses_selected_assembly_for_export_base_name(
+    monkeypatch, tmp_path
+):
+    import os
+
+    resource_path = tmp_path / "x_axis_endstop_assembly.yaml"
+    resource_path.write_text(
+        "Builder:\n  Visualization:\n    parts: []\n",
+        encoding="utf-8",
+    )
+
+    build_results = [
+        {
+            "assembly_name": "x_axis_endstop_left_assembly",
+            "artifact_dir": str(tmp_path / "repo" / "x_axis_endstop_left_assembly"),
+            "repository_dir": str(tmp_path / "repo"),
+            "resource_file": str(resource_path),
+            "public_parameters": {},
+            "generator_kwargs": {},
+            "generator_context": {},
+        }
+    ]
+
+    captured = {}
+
+    def fake_materialize_rule_parts(
+        metadata,
+        resource_data,
+        mode,
+        built_results_by_name,
+        repository_dir,
+        config_data,
+    ):
+        return [
+            {
+                "name": "x_axis_endstop",
+                "part": "dummy-part",
+                "source_path": str(tmp_path / "repo" / "x_axis_endstop.step"),
+            }
+        ]
+
+    def fake_arrange_and_export_parts(*args, **kwargs):
+        captured["script_file"] = kwargs["script_file"]
+        captured["export_base_name"] = kwargs["export_base_name"]
+        run_directory = Path(kwargs["export_directory"])
+        obj_path = run_directory / f"{kwargs['export_base_name']}.obj"
+        obj_path.write_text("# obj\n", encoding="utf-8")
+        manifest_path = Path(os.environ["SHELLFORGEPY_WORKFLOW_MANIFEST"])
+        manifest_path.write_text(
+            json.dumps({"obj_path": str(obj_path)}),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(builder, "_materialize_rule_parts", fake_materialize_rule_parts)
+    monkeypatch.setattr(builder, "_apply_placement_alignments", lambda *a, **k: a[0])
+    monkeypatch.setattr(builder, "_scene_metrics_assembly_names", lambda **kwargs: [])
+    monkeypatch.setattr(
+        builder,
+        "_combined_metrics_snapshot_for_results",
+        lambda build_results, assembly_names: None,
+    )
+    monkeypatch.setattr(
+        "shellforgepy.produce.arrange_and_export.arrange_and_export_parts",
+        fake_arrange_and_export_parts,
+    )
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.get_config_path",
+        lambda override=None: tmp_path / "config.json",
+    )
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.load_config",
+        lambda path: {"render": {"enabled": False}},
+    )
+    monkeypatch.setattr(
+        "shellforgepy.workflow.workflow.complete_workflow_run",
+        lambda *args, **kwargs: 0,
+    )
+
+    result = builder._export_scene_for_assembly(
+        args=argparse.Namespace(
+            config=None,
+            run_id="test",
+            runs_dir=str(tmp_path / "runs"),
+            production=False,
+            slice=False,
+            upload=False,
+            visualize=True,
+            prototype=False,
+            verbose=False,
+            plate=None,
+        ),
+        config_data={"assemblies": [{"name": "x_axis_endstop_left_assembly"}]},
+        build_results=build_results,
+        selected_assembly="x_axis_endstop_left_assembly",
+        scene_assembly_names=["x_axis_endstop_left_assembly"],
+    )
+
+    assert result == 0
+    assert captured["script_file"] == str(resource_path.resolve())
+    assert captured["export_base_name"] == "x_axis_endstop_left_assembly"
 
 
 def test_run_builder_visualization_builds_only_relevant_placement_dependencies(
