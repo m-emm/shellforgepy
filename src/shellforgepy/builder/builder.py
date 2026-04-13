@@ -750,6 +750,7 @@ def _generator_required_keyword_arguments(generator: Callable[..., Any]) -> set[
         if parameter.kind in (
             inspect.Parameter.POSITIONAL_ONLY,
             inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
         ):
             continue
         if parameter.default is not inspect.Parameter.empty:

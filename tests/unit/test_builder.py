@@ -270,6 +270,64 @@ def test_build_from_file_reports_missing_injected_generator_argument_with_yaml_c
     assert "depends_on" in message
 
 
+def test_build_from_file_allows_generators_with_var_keyword_arguments(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / "demo_pkg"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "var_keyword_generator.py",
+        "\n".join(
+            [
+                "def make_widget(**_kwargs):",
+                "    return 'widget-from-var-keyword'",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(
+        assemblies_dir / "var_keyword_assembly.yaml",
+        "\n".join(
+            [
+                'ShellforgepyBuilderVersion: "2026-03-27"',
+                "Parts:",
+                "  VarKeywordWidget:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.var_keyword_generator.make_widget",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: var_keyword_assembly",
+            ]
+        ),
+    )
+
+    def fake_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+    monkeypatch.delitem(sys.modules, "demo_pkg", raising=False)
+    monkeypatch.delitem(sys.modules, "demo_pkg.var_keyword_generator", raising=False)
+
+    results = builder.build_from_file(config_path)
+
+    assert (
+        Path(results[0]["artifacts"]["leader_step"]).read_text(encoding="utf-8")
+        == "widget-from-var-keyword"
+    )
+
+
 def test_build_from_file_writes_hashed_metadata_and_reuses_cache(monkeypatch, tmp_path):
     project_root = tmp_path / "project"
     src_dir = project_root / "src" / "demo_pkg"
