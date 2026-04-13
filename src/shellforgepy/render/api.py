@@ -18,6 +18,28 @@ def _normalize_views(views: Sequence[str] | None) -> tuple[str, ...]:
     return normalized or tuple(DEFAULT_PREVIEW_VIEWS)
 
 
+def _normalize_name_prefixes(
+    prefixes: Sequence[str] | None,
+) -> tuple[str, ...]:
+    if prefixes is None:
+        return ()
+    return tuple(str(prefix).strip() for prefix in prefixes if str(prefix).strip())
+
+
+def _filter_scene_by_name_prefixes(scene, prefixes: Sequence[str]):
+    normalized_prefixes = _normalize_name_prefixes(prefixes)
+    if not normalized_prefixes:
+        return scene
+
+    return type(scene)(
+        [
+            obj
+            for obj in scene.objects
+            if not any(obj.name.startswith(prefix) for prefix in normalized_prefixes)
+        ]
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class PreviewRenderResult:
     view: str
@@ -85,11 +107,13 @@ def render_obj_view_to_image_with_stats(
     width: int = 512,
     height: int = 512,
     background_color: tuple[int, int, int] = (250, 250, 250),
+    exclude_object_name_prefixes: Sequence[str] | None = None,
     disable_numba: bool = False,
 ) -> PreviewRenderResult:
     """Render a single named OBJ view to an explicit image destination."""
 
     scene = load_obj_scene(obj_path)
+    scene = _filter_scene_by_name_prefixes(scene, exclude_object_name_prefixes)
     return _render_scene_view_to_path(
         scene,
         destination=destination,
@@ -109,6 +133,7 @@ def render_obj_view_to_image(
     width: int = 512,
     height: int = 512,
     background_color: tuple[int, int, int] = (250, 250, 250),
+    exclude_object_name_prefixes: Sequence[str] | None = None,
     disable_numba: bool = False,
 ) -> Path:
     """Render a single named OBJ view to an explicit image destination."""
@@ -120,6 +145,7 @@ def render_obj_view_to_image(
         width=width,
         height=height,
         background_color=background_color,
+        exclude_object_name_prefixes=exclude_object_name_prefixes,
         disable_numba=disable_numba,
     )
     return result.path

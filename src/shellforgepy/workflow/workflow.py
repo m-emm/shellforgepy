@@ -623,6 +623,7 @@ def _generate_obj_gcode_preview(
         view=view_name,
         width=width,
         height=height,
+        exclude_object_name_prefixes=("plate_boundary_",),
     )
     _logger.info(
         "Generated G-code preview from OBJ [%s] in %.3f seconds: %s",

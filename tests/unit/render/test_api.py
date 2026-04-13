@@ -8,6 +8,7 @@ import pytest
 from shellforgepy.produce.obj_file_export import export_colored_meshes_to_obj
 from shellforgepy.render.api import (
     DEFAULT_PREVIEW_VIEWS,
+    render_obj_view_to_image_with_stats,
     render_obj_views,
     render_obj_views_with_stats,
 )
@@ -360,6 +361,33 @@ def test_render_obj_views_with_stats_reports_geometry_and_dimensions(
     assert batch.results[0].width == 512
     assert batch.results[0].height == 512
     assert batch.results[0].render_seconds >= 0.0
+
+
+def test_render_obj_view_to_image_with_stats_can_exclude_named_objects(
+    tmp_path, disable_numba
+):
+    obj_path = tmp_path / "filtered.obj"
+    vertices = [(0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (0.0, 10.0, 0.0)]
+    faces = [(0, 1, 2)]
+    export_colored_meshes_to_obj(
+        [
+            (vertices, faces, "triangle", (0.9, 0.3, 0.2)),
+            (vertices, faces, "plate_boundary_plate_a", (0.8, 0.8, 0.8)),
+        ],
+        obj_path,
+    )
+
+    result = render_obj_view_to_image_with_stats(
+        obj_path,
+        destination=tmp_path / "filtered.png",
+        disable_numba=disable_numba,
+        exclude_object_name_prefixes=("plate_boundary_",),
+    )
+
+    assert result.object_count == 1
+    assert result.triangle_count == 1
+    assert result.vertex_count == 3
+    assert result.path.exists()
 
 
 def test_render_scene_prefers_numba_when_available():

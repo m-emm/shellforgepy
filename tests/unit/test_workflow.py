@@ -717,6 +717,7 @@ def test_complete_workflow_run_uses_obj_renderer_for_single_plate_gcode_preview(
         width=512,
         height=512,
         background_color=(250, 250, 250),
+        exclude_object_name_prefixes=(),
     ):
         output_path = Path(destination)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -728,6 +729,7 @@ def test_complete_workflow_run_uses_obj_renderer_for_single_plate_gcode_preview(
                 "view": view,
                 "width": width,
                 "height": height,
+                "exclude_object_name_prefixes": tuple(exclude_object_name_prefixes),
             }
         )
         return PreviewRenderResult(
@@ -799,6 +801,7 @@ def test_complete_workflow_run_uses_obj_renderer_for_single_plate_gcode_preview(
             "view": "front_angle",
             "width": 512,
             "height": 512,
+            "exclude_object_name_prefixes": ("plate_boundary_",),
         }
     ]
     assert (run_directory / "machine_plate_a_preview.png").exists()
@@ -848,11 +851,19 @@ def test_complete_workflow_run_uses_plate_obj_for_multi_plate_gcode_previews(
         width=512,
         height=512,
         background_color=(250, 250, 250),
+        exclude_object_name_prefixes=(),
     ):
         output_path = Path(destination)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text("preview", encoding="utf-8")
-        render_calls.append((Path(obj_path_arg).name, output_path.name, view))
+        render_calls.append(
+            (
+                Path(obj_path_arg).name,
+                output_path.name,
+                view,
+                tuple(exclude_object_name_prefixes),
+            )
+        )
         return PreviewRenderResult(
             view=view,
             path=output_path,
@@ -922,8 +933,18 @@ def test_complete_workflow_run_uses_plate_obj_for_multi_plate_gcode_previews(
 
     assert result == 0
     assert render_calls == [
-        ("machine_plate_a.obj", "machine_plate_a_preview.png", "front_angle"),
-        ("machine_plate_b.obj", "machine_plate_b_preview.png", "front_angle"),
+        (
+            "machine_plate_a.obj",
+            "machine_plate_a_preview.png",
+            "front_angle",
+            ("plate_boundary_",),
+        ),
+        (
+            "machine_plate_b.obj",
+            "machine_plate_b_preview.png",
+            "front_angle",
+            ("plate_boundary_",),
+        ),
     ]
 
 
