@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
+import networkx as nx
 import yaml
 from shellforgepy.construct.part_parameters import PartParameters
 from shellforgepy.metrics import (
@@ -104,6 +105,7 @@ class _PlacementExecutionState:
     alignments: List[Dict[str, Any]]
     known_assembly_names: List[str]
     placement_context: Dict[str, Any]
+    active_assembly_names: set[str] = field(default_factory=set)
     graph_model: Optional[builder_graph_model.BuilderGraphModel] = None
     cursor: int = 0
     executed_alignment_indices: set[int] = field(default_factory=set)
@@ -114,6 +116,7 @@ class _PlacementExecutionState:
     placement_offsets: Dict[str, tuple[float, float, float]] = field(
         default_factory=dict
     )
+    rigidity_graph: nx.Graph = field(default_factory=nx.Graph)
 
 
 def _utc_now_iso() -> str:
@@ -2369,6 +2372,7 @@ def _placement_dependency_closure(
     *,
     stop_index: Optional[int] = None,
     graph_model: Optional[builder_graph_model.BuilderGraphModel] = None,
+    include_rigid_effects: bool = False,
 ) -> set[str]:
     model = graph_model
     if model is None:
@@ -2379,6 +2383,7 @@ def _placement_dependency_closure(
             model,
             root_assemblies,
             stop_index=stop_index,
+            include_rigid_effects=include_rigid_effects,
         )
     )
 
@@ -2390,6 +2395,7 @@ def _relevant_placement_alignment_indices(
     *,
     stop_index: Optional[int] = None,
     graph_model: Optional[builder_graph_model.BuilderGraphModel] = None,
+    include_rigid_effects: bool = False,
 ) -> List[int]:
     model = graph_model
     if model is None:
@@ -2399,6 +2405,7 @@ def _relevant_placement_alignment_indices(
         model,
         root_assemblies,
         stop_index=stop_index,
+        include_rigid_effects=include_rigid_effects,
     )
 
 
@@ -2643,6 +2650,21 @@ def _apply_transform_to_scene_parts(
             item["transform_history"] = history
 
 
+def _apply_transform_to_scene_assemblies(
+    scene_parts: List[Dict[str, Any]],
+    assembly_names: Iterable[str],
+    transform: Callable[[Any], Any],
+    transform_record: Optional[Mapping[str, Any]] = None,
+) -> None:
+    for assembly_name in sorted(set(str(name) for name in assembly_names)):
+        _apply_transform_to_scene_parts(
+            scene_parts,
+            assembly_name,
+            transform,
+            transform_record=transform_record,
+        )
+
+
 def _part_center(part: Any) -> tuple[float, float, float]:
     from shellforgepy.simple import get_bounding_box_center
 
@@ -2678,6 +2700,7 @@ def _initialize_placement_execution_state(
     config_data: Optional[Mapping[str, Any]],
     built_results_by_name: Mapping[str, Dict[str, Any]],
     *,
+    active_assembly_names: Optional[Iterable[str]] = None,
     graph_model: Optional[builder_graph_model.BuilderGraphModel] = None,
 ) -> _PlacementExecutionState:
     if graph_model is None:
@@ -2691,12 +2714,58 @@ def _initialize_placement_execution_state(
                 [{"name": str(name)} for name in sorted(built_results_by_name)],
                 config_data,
             )
+    known_assembly_names = _known_assembly_names(config_data, built_results_by_name)
+    active_names = {
+        str(name)
+        for name in (
+            active_assembly_names
+            if active_assembly_names is not None
+            else known_assembly_names
+        )
+    }
     return _PlacementExecutionState(
         alignments=_placement_alignments(config_data),
-        known_assembly_names=_known_assembly_names(config_data, built_results_by_name),
+        known_assembly_names=known_assembly_names,
         placement_context=_resolve_config_contexts(config_data)[2],
+        active_assembly_names=active_names,
         graph_model=graph_model,
+        rigidity_graph=nx.Graph(),
     )
+
+
+def _restrict_placement_model_to_active_assemblies(
+    graph_model: builder_graph_model.BuilderGraphModel,
+    active_assemblies: Iterable[str],
+) -> builder_graph_model.BuilderGraphModel:
+    return builder_graph_model.restrict_to_active_assemblies(
+        graph_model,
+        active_assemblies,
+    )
+
+
+def _rigid_group_members(rigidity_graph: nx.Graph, assembly_name: str) -> List[str]:
+    if assembly_name not in rigidity_graph:
+        rigidity_graph.add_node(assembly_name)
+    return sorted(nx.node_connected_component(rigidity_graph, assembly_name))
+
+
+def _validate_rigid_group_motion(
+    rigidity_graph: nx.Graph,
+    *,
+    moving_assembly_name: str,
+    target_assembly_name: Optional[str],
+    placement_step_index: int,
+) -> List[str]:
+    moving_group = _rigid_group_members(rigidity_graph, moving_assembly_name)
+    if target_assembly_name is None:
+        return moving_group
+    if target_assembly_name in moving_group:
+        raise BuilderError(
+            "Placement step "
+            f"{placement_step_index} attempts to move rigidly attached assemblies "
+            f"'{moving_assembly_name}' and '{target_assembly_name}' relative to each other"
+        )
+    return moving_group
 
 
 def _apply_translation_sequence(
@@ -2779,39 +2848,18 @@ def _advance_placement_execution(
     built_results_by_name: Mapping[str, Dict[str, Any]],
     repository_dir: Path,
 ) -> _PlacementExecutionState:
-    placement_steps = (
-        placement_state.graph_model.placement_steps
-        if placement_state.graph_model is not None
-        else [
-            builder_graph_model.PlacementStep(
-                index=index,
-                spec=dict(alignment),
-                moving_reference=str(alignment["part"]),
-                target_reference=(
-                    str(alignment["to"]) if alignment.get("to") is not None else None
-                ),
-                moving_assembly_name=_parse_part_reference(
-                    str(alignment["part"]), placement_state.known_assembly_names
-                )[0],
-                target_assembly_name=(
-                    _parse_part_reference(
-                        str(alignment["to"]), placement_state.known_assembly_names
-                    )[0]
-                    if alignment.get("to") is not None
-                    else None
-                ),
-            )
-            for index, alignment in enumerate(placement_state.alignments)
-        ]
-    )
-    placement_dag = (
-        placement_state.graph_model.placement_execution_dag
-        if placement_state.graph_model is not None
-        else builder_graph_model.build_graph_model(
+    if placement_state.graph_model is None:
+        placement_state.graph_model = builder_graph_model.build_graph_model(
             [{"name": name} for name in placement_state.known_assembly_names],
             {"placement": {"alignments": placement_state.alignments}},
-        ).placement_execution_dag
+        )
+
+    active_graph_model = _restrict_placement_model_to_active_assemblies(
+        placement_state.graph_model,
+        placement_state.active_assembly_names or built_results_by_name,
     )
+    placement_steps = active_graph_model.placement_steps
+    placement_dag = active_graph_model.placement_execution_dag
 
     while True:
         progress = False
@@ -2827,6 +2875,12 @@ def _advance_placement_execution(
             target_reference_str = placement_step.target_reference
             moving_assembly_name = placement_step.moving_assembly_name
             target_assembly_name = placement_step.target_assembly_name
+            moving_group = _validate_rigid_group_motion(
+                placement_state.rigidity_graph,
+                moving_assembly_name=moving_assembly_name,
+                target_assembly_name=target_assembly_name,
+                placement_step_index=placement_step.index,
+            )
 
             if moving_assembly_name not in built_results_by_name:
                 continue
@@ -2835,6 +2889,18 @@ def _advance_placement_execution(
                 and target_assembly_name not in built_results_by_name
             ):
                 continue
+            if any(name not in built_results_by_name for name in moving_group):
+                continue
+
+            moving_group_parts_before = {
+                assembly_name: _resolve_placement_anchor(
+                    assembly_name,
+                    placement_state=placement_state,
+                    built_results_by_name=built_results_by_name,
+                    repository_dir=repository_dir,
+                )[2]
+                for assembly_name in moving_group
+            }
 
             _, _, moving_anchor = _resolve_placement_anchor(
                 moving_reference_str,
@@ -2995,20 +3061,35 @@ def _advance_placement_execution(
 
             delta = _translation_delta(moving_center_before, _part_center(moved_anchor))
 
-            placement_state.translation_history.setdefault(
-                moving_assembly_name, []
-            ).extend(step_transforms)
-            placement_state.transform_records.setdefault(
-                moving_assembly_name, []
-            ).extend(step_records)
-            placement_state.placement_offsets[moving_assembly_name] = (
-                _add_translation_delta(
-                    placement_state.placement_offsets.get(
-                        moving_assembly_name, (0.0, 0.0, 0.0)
-                    ),
-                    delta,
+            for assembly_name in moving_group:
+                placement_state.translation_history.setdefault(
+                    assembly_name, []
+                ).extend(step_transforms)
+                placement_state.transform_records.setdefault(assembly_name, []).extend(
+                    step_records
                 )
-            )
+                moved_part = _apply_translation_sequence(
+                    moving_group_parts_before[assembly_name], step_transforms
+                )
+                assembly_delta = _translation_delta(
+                    _part_center(moving_group_parts_before[assembly_name]),
+                    _part_center(moved_part),
+                )
+                placement_state.placement_offsets[assembly_name] = (
+                    _add_translation_delta(
+                        placement_state.placement_offsets.get(
+                            assembly_name, (0.0, 0.0, 0.0)
+                        ),
+                        assembly_delta,
+                    )
+                )
+
+            if placement_step.rigid_attach and target_assembly_name is not None:
+                placement_state.rigidity_graph.add_edge(
+                    moving_assembly_name,
+                    target_assembly_name,
+                )
+
             placement_state.executed_alignment_indices.add(placement_step.index)
             placement_state.cursor = len(placement_state.executed_alignment_indices)
             progress = True
@@ -3030,25 +3111,34 @@ def _apply_placement_alignments(
     if not alignments:
         return scene_parts
 
-    graph_model: Optional[builder_graph_model.BuilderGraphModel] = None
-    if config_data is not None and config_data.get("assemblies") is not None:
-        graph_model = builder_graph_model.build_graph_model(
-            _get_assemblies(config_data),
-            config_data,
-        )
     known_assembly_names = _known_assembly_names(config_data, built_results_by_name)
+    graph_model = builder_graph_model.build_graph_model(
+        (
+            _get_assemblies(config_data)
+            if config_data is not None and config_data.get("assemblies") is not None
+            else [{"name": name} for name in known_assembly_names]
+        ),
+        (
+            config_data
+            if config_data is not None and config_data.get("assemblies") is not None
+            else {"placement": {"alignments": alignments}}
+        ),
+    )
     placement_context = _resolve_config_contexts(config_data)[2]
     relevant_assemblies = {
         str(item["assembly_name"])
         for item in scene_parts
         if item.get("assembly_name") is not None
     }
+    active_graph_model = _restrict_placement_model_to_active_assemblies(
+        graph_model,
+        relevant_assemblies,
+    )
     relevant_alignment_indices = set(
-        _relevant_placement_alignment_indices(
-            config_data,
-            known_assembly_names,
+        builder_graph_model.relevant_placement_alignment_indices(
+            active_graph_model,
             relevant_assemblies,
-            graph_model=graph_model,
+            include_rigid_effects=True,
         )
     )
 
@@ -3058,6 +3148,8 @@ def _apply_placement_alignments(
 
     anchor_cache: Dict[tuple[str, str], Any] = {}
     translation_history: Dict[str, List[Callable[[Any], Any]]] = {}
+    rigidity_graph = nx.Graph()
+    rigidity_graph.add_nodes_from(known_assembly_names)
 
     def resolve_metadata(assembly_name: str) -> Dict[str, Any]:
         metadata = metadata_by_name.get(assembly_name)
@@ -3097,9 +3189,11 @@ def _apply_placement_alignments(
             anchor_cache[cache_key] = imported_anchor
         return assembly_name, selector, anchor_cache[cache_key]
 
-    for placement_index, alignment_spec in enumerate(alignments):
+    for placement_step in active_graph_model.placement_steps:
+        placement_index = placement_step.index
         if placement_index not in relevant_alignment_indices:
             continue
+        alignment_spec = placement_step.spec
         moving_reference = alignment_spec.get("part")
         target_reference = alignment_spec.get("to")
         if not moving_reference:
@@ -3107,6 +3201,12 @@ def _apply_placement_alignments(
 
         moving_reference_str = str(moving_reference)
         moving_assembly_name, _, moving_anchor = resolve_anchor(moving_reference_str)
+        moving_group = _validate_rigid_group_motion(
+            rigidity_graph,
+            moving_assembly_name=moving_assembly_name,
+            target_assembly_name=placement_step.target_assembly_name,
+            placement_step_index=placement_index,
+        )
         moving_center_before = _part_center(moving_anchor)
         moved_anchor = moving_anchor
         step_transforms: List[Callable[[Any], Any]] = []
@@ -3165,9 +3265,9 @@ def _apply_placement_alignments(
                 _format_point(alignment_delta),
             )
 
-            _apply_transform_to_scene_parts(
+            _apply_transform_to_scene_assemblies(
                 scene_parts,
-                moving_assembly_name,
+                moving_group,
                 alignment_transform,
                 transform_record={
                     "kind": "translate",
@@ -3200,9 +3300,9 @@ def _apply_placement_alignments(
                 center=resolved_post_rotation["center"],
             )
             moved_anchor = rotation_transform(moved_anchor)
-            _apply_transform_to_scene_parts(
+            _apply_transform_to_scene_assemblies(
                 scene_parts,
-                moving_assembly_name,
+                moving_group,
                 rotation_transform,
                 transform_record={
                     "kind": "rotate",
@@ -3232,9 +3332,9 @@ def _apply_placement_alignments(
                 resolved_post_translation
             )
             moved_anchor = post_translation_transform(moved_anchor)
-            _apply_transform_to_scene_parts(
+            _apply_transform_to_scene_assemblies(
                 scene_parts,
-                moving_assembly_name,
+                moving_group,
                 post_translation_transform,
                 transform_record={
                     "kind": "translate",
@@ -3253,15 +3353,25 @@ def _apply_placement_alignments(
             moving_center_before, _part_center(moved_anchor)
         )
 
-        translation_history.setdefault(moving_assembly_name, []).extend(step_transforms)
+        for assembly_name in moving_group:
+            translation_history.setdefault(assembly_name, []).extend(step_transforms)
         for (assembly_name, selector), anchor_part in list(anchor_cache.items()):
-            if assembly_name != moving_assembly_name:
+            if assembly_name not in moving_group:
                 continue
             if anchor_part is moving_anchor:
                 anchor_cache[(assembly_name, selector)] = moved_anchor
                 continue
             anchor_cache[(assembly_name, selector)] = _apply_translation_sequence(
                 anchor_part, step_transforms
+            )
+
+        if (
+            placement_step.rigid_attach
+            and placement_step.target_assembly_name is not None
+        ):
+            rigidity_graph.add_edge(
+                moving_assembly_name,
+                placement_step.target_assembly_name,
             )
 
     return scene_parts
@@ -3935,11 +4045,30 @@ def build_from_file(
 
     assemblies = _get_assemblies(config_data)
     graph_model = builder_graph_model.build_graph_model(assemblies, config_data)
+    if assembly_names is not None:
+        active_placement_assemblies = {str(name) for name in assembly_names}
+        for assembly_name in list(active_placement_assemblies):
+            if assembly_name in graph_model.assembly_dependency_graph:
+                active_placement_assemblies.update(
+                    nx.ancestors(graph_model.assembly_dependency_graph, assembly_name)
+                )
+        graph_model = _restrict_placement_model_to_active_assemblies(
+            graph_model,
+            active_placement_assemblies,
+        )
     build_generations = _resolve_build_generations(
         assemblies,
         assembly_names,
         config_data,
         graph_model=graph_model,
+    )
+    active_build_assembly_names = sorted(
+        {
+            str(entry["name"])
+            for generation in build_generations
+            for entry in generation
+            if entry.get("name") is not None
+        }
     )
 
     results: List[Dict[str, Any]] = []
@@ -3947,6 +4076,7 @@ def build_from_file(
     placement_state = _initialize_placement_execution_state(
         config_data,
         built_results_by_name,
+        active_assembly_names=active_build_assembly_names,
         graph_model=graph_model,
     )
     for generation_index, generation_entries in enumerate(build_generations):
@@ -4274,6 +4404,7 @@ def _export_scene_for_assembly(
         placement_state = _initialize_placement_execution_state(
             config_data,
             built_results_by_name,
+            active_assembly_names=scene_assembly_names,
         )
         placement_state = _advance_placement_execution(
             placement_state,
@@ -4446,12 +4577,15 @@ def run_builder(args: argparse.Namespace) -> int:
         implicit_scene_dependencies = set(
             _scene_dependency_names(selected_resource_data, scene_mode, config_data)
         )
+        scene_root_assemblies = set(requested_assemblies) | implicit_scene_dependencies
+        scene_graph_model = builder_graph_model.without_rigid_attach_effects(
+            graph_model
+        )
         implicit_scene_dependencies.update(
-            _placement_dependency_closure(
-                config_data,
-                sorted(assemblies_by_name),
-                set(requested_assemblies) | implicit_scene_dependencies,
-                graph_model=graph_model,
+            builder_graph_model.placement_dependency_closure(
+                scene_graph_model,
+                scene_root_assemblies,
+                include_rigid_effects=False,
             )
         )
         if implicit_scene_dependencies:

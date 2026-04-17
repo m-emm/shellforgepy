@@ -2742,6 +2742,135 @@ def test_resolve_build_generations_uses_only_reachable_placement_dependencies():
     ]
 
 
+def test_resolve_build_generations_does_not_pull_later_moves_of_rigidly_attached_injected_parts():
+    generations = builder._resolve_build_generations(
+        [
+            {"name": "frame", "depends_on": []},
+            {"name": "x_axis", "depends_on": []},
+            {"name": "extruder", "depends_on": []},
+            {
+                "name": "bracket",
+                "depends_on": [],
+                "inject_parts": {"extruder": "extruder"},
+            },
+        ],
+        ["bracket"],
+        {
+            "placement": {
+                "alignments": [
+                    {
+                        "part": "extruder",
+                        "to": "x_axis",
+                        "alignment": "CENTER",
+                        "rigid_attach": True,
+                    },
+                    {
+                        "part": "x_axis",
+                        "to": "frame",
+                        "alignment": "CENTER",
+                    },
+                ]
+            }
+        },
+    )
+
+    assert [[entry["name"] for entry in generation] for generation in generations] == [
+        ["extruder", "x_axis"],
+        ["bracket"],
+    ]
+
+
+def test_run_builder_visualization_rigid_attach_does_not_widen_build_subset(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / "assemblies.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: extruder",
+                "    depends_on: []",
+                "  - name: x_axis",
+                "    depends_on: []",
+                "  - name: frame",
+                "    depends_on: []",
+                "placement:",
+                "  alignments:",
+                "    - part: extruder",
+                "      to: x_axis",
+                "      alignment: CENTER",
+                "      rigid_attach: true",
+                "    - part: x_axis",
+                "      to: frame",
+                "      alignment: CENTER",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "extruder.yaml").write_text("Builder: {}\n", encoding="utf-8")
+
+    captured = {}
+
+    def fake_build_from_file(
+        config_file, *, assembly_names=None, repository_dir=None, force=False
+    ):
+        captured["assembly_names"] = assembly_names
+        return [
+            {
+                "assembly_name": "extruder",
+                "artifact_dir": str(tmp_path / "repo" / "extruder"),
+                "repository_dir": str(tmp_path / "repo"),
+                "resource_file": str(tmp_path / "extruder.yaml"),
+                "cache_hit": False,
+            },
+            {
+                "assembly_name": "x_axis",
+                "artifact_dir": str(tmp_path / "repo" / "x_axis"),
+                "repository_dir": str(tmp_path / "repo"),
+                "resource_file": str(tmp_path / "x_axis.yaml"),
+                "cache_hit": False,
+            },
+            {
+                "assembly_name": "frame",
+                "artifact_dir": str(tmp_path / "repo" / "frame"),
+                "repository_dir": str(tmp_path / "repo"),
+                "resource_file": str(tmp_path / "frame.yaml"),
+                "cache_hit": False,
+            },
+        ]
+
+    monkeypatch.setattr(builder, "build_from_file", fake_build_from_file)
+    monkeypatch.setattr(builder, "_export_scene_for_assembly", lambda **kwargs: 0)
+
+    result = builder.run_builder(
+        argparse.Namespace(
+            config_file=str(config_path),
+            assembly=["extruder"],
+            repository_dir=str(tmp_path / "repo"),
+            force=False,
+            visualize=True,
+            with_dependents=False,
+            production=False,
+            slice=False,
+            upload=False,
+            open=False,
+            run_id=None,
+            runs_dir=None,
+            master_settings_dir=None,
+            orca_executable=None,
+            orca_debug=None,
+            printer=None,
+            part_file=None,
+            process_file=None,
+            config=None,
+            verbose=False,
+        )
+    )
+
+    assert result == 0
+    assert captured["assembly_names"] == ["extruder", "x_axis"]
+
+
 def test_resolve_process_data_applies_overrides(monkeypatch):
     class ProcessModule:
         PROCESS_DATA = {
@@ -3636,6 +3765,329 @@ def test_apply_placement_alignments_moves_only_the_owning_assembly(
     ]
 
 
+def test_apply_placement_alignments_rigid_attach_moves_group_when_target_moves_later(
+    monkeypatch, tmp_path
+):
+    extruder_leader = tmp_path / "extruder_leader.step"
+    extruder_leader.write_text("extruder-leader", encoding="utf-8")
+    x_axis_leader = tmp_path / "x_axis_leader.step"
+    x_axis_leader.write_text("x-axis-leader", encoding="utf-8")
+    frame_leader = tmp_path / "frame_leader.step"
+    frame_leader.write_text("frame-leader", encoding="utf-8")
+
+    scene_parts = [
+        {
+            "assembly_name": "extruder",
+            "part": "scene-extruder",
+            "transform_history": [],
+        },
+        {"assembly_name": "x_axis", "part": "scene-x-axis", "transform_history": []},
+        {"assembly_name": "frame", "part": "scene-frame", "transform_history": []},
+    ]
+    built_results_by_name = {
+        "extruder": {
+            "assembly_name": "extruder",
+            "artifacts": {"leader_step": str(extruder_leader)},
+        },
+        "x_axis": {
+            "assembly_name": "x_axis",
+            "artifacts": {"leader_step": str(x_axis_leader)},
+        },
+        "frame": {
+            "assembly_name": "frame",
+            "artifacts": {"leader_step": str(frame_leader)},
+        },
+    }
+
+    monkeypatch.setattr(
+        builder,
+        "_import_dependency_part",
+        lambda path: Path(path).read_text(encoding="utf-8"),
+    )
+
+    centers = {
+        "extruder-leader": (1.0, 2.0, 3.0),
+        "x-axis-leader": (10.0, 20.0, 30.0),
+        "frame-leader": (40.0, 50.0, 60.0),
+        "extruder-leader|CENTER:extruder-leader->x-axis-leader:None:0": (
+            10.0,
+            20.0,
+            30.0,
+        ),
+        "x-axis-leader|STACK_TOP:x-axis-leader->frame-leader:None:10": (
+            10.0,
+            20.0,
+            70.0,
+        ),
+        "extruder-leader|CENTER:extruder-leader->x-axis-leader:None:0|STACK_TOP:x-axis-leader->frame-leader:None:10": (
+            10.0,
+            20.0,
+            70.0,
+        ),
+    }
+
+    monkeypatch.setattr(builder, "_part_center", lambda part: centers[part])
+
+    def fake_make_translation(
+        moving_anchor, target_anchor, *, alignment, axes=None, stack_gap=0
+    ):
+        label = f"{alignment.name}:{moving_anchor}->{target_anchor}:{axes}:{stack_gap}"
+        return lambda part: f"{part}|{label}"
+
+    monkeypatch.setattr(builder, "_make_placement_translation", fake_make_translation)
+
+    placed_parts = builder._apply_placement_alignments(
+        scene_parts,
+        built_results_by_name=built_results_by_name,
+        repository_dir=tmp_path,
+        config_data={
+            "assemblies": [
+                {"name": "extruder"},
+                {"name": "x_axis"},
+                {"name": "frame"},
+            ],
+            "placement": {
+                "alignments": [
+                    {
+                        "part": "extruder",
+                        "to": "x_axis",
+                        "alignment": "CENTER",
+                        "rigid_attach": True,
+                    },
+                    {
+                        "part": "x_axis",
+                        "to": "frame",
+                        "alignment": "STACK_TOP",
+                        "stack_gap": 10,
+                    },
+                ]
+            },
+        },
+    )
+
+    assert placed_parts[0]["part"] == (
+        "scene-extruder"
+        "|CENTER:extruder-leader->x-axis-leader:None:0"
+        "|STACK_TOP:x-axis-leader->frame-leader:None:10"
+    )
+    assert placed_parts[1]["part"] == (
+        "scene-x-axis|STACK_TOP:x-axis-leader->frame-leader:None:10"
+    )
+    assert placed_parts[2]["part"] == "scene-frame"
+    assert placed_parts[0]["transform_history"] == [
+        {"kind": "translate", "vector": [9.0, 18.0, 27.0], "placement_step": 0},
+        {"kind": "translate", "vector": [0.0, 0.0, 40.0], "placement_step": 1},
+    ]
+    assert placed_parts[1]["transform_history"] == [
+        {"kind": "translate", "vector": [0.0, 0.0, 40.0], "placement_step": 1}
+    ]
+    assert placed_parts[2]["transform_history"] == []
+
+
+def test_apply_placement_alignments_ignores_missing_rigid_predecessors_outside_scene_subset(
+    monkeypatch, tmp_path
+):
+    left_leader = tmp_path / "left.step"
+    left_leader.write_text("left-leader", encoding="utf-8")
+    right_leader = tmp_path / "right.step"
+    right_leader.write_text("right-leader", encoding="utf-8")
+    rail_leader = tmp_path / "rail.step"
+    rail_leader.write_text("rail-leader", encoding="utf-8")
+    frame_leader = tmp_path / "frame.step"
+    frame_leader.write_text("frame-leader", encoding="utf-8")
+
+    scene_parts = [
+        {"assembly_name": "right", "part": "scene-right", "transform_history": []},
+        {"assembly_name": "rail", "part": "scene-rail", "transform_history": []},
+        {"assembly_name": "frame", "part": "scene-frame", "transform_history": []},
+    ]
+    built_results_by_name = {
+        "left": {
+            "assembly_name": "left",
+            "artifacts": {"leader_step": str(left_leader)},
+        },
+        "right": {
+            "assembly_name": "right",
+            "artifacts": {"leader_step": str(right_leader)},
+        },
+        "rail": {
+            "assembly_name": "rail",
+            "artifacts": {"leader_step": str(rail_leader)},
+        },
+        "frame": {
+            "assembly_name": "frame",
+            "artifacts": {"leader_step": str(frame_leader)},
+        },
+    }
+
+    monkeypatch.setattr(
+        builder,
+        "_import_dependency_part",
+        lambda path: Path(path).read_text(encoding="utf-8"),
+    )
+
+    base_centers = {
+        "left-leader": (0.0, 0.0, 0.0),
+        "right-leader": (10.0, 0.0, 0.0),
+        "rail-leader": (20.0, 0.0, 0.0),
+        "frame-leader": (30.0, 0.0, 0.0),
+    }
+    monkeypatch.setattr(
+        builder,
+        "_part_center",
+        lambda part: (
+            base_centers[part.split("|", 1)[0]][0] + 10.0 * part.count("|MOVE"),
+            0.0,
+            0.0,
+        ),
+    )
+    monkeypatch.setattr(
+        builder,
+        "_make_placement_translation",
+        lambda moving_anchor, target_anchor, *, alignment, axes=None, stack_gap=0: (
+            lambda part: f"{part}|MOVE"
+        ),
+    )
+    captured_logs = []
+    monkeypatch.setattr(
+        builder._logger,
+        "info",
+        lambda message, *args: captured_logs.append(message % args),
+    )
+
+    placed_parts = builder._apply_placement_alignments(
+        scene_parts,
+        built_results_by_name=built_results_by_name,
+        repository_dir=tmp_path,
+        config_data={
+            "assemblies": [
+                {"name": "left"},
+                {"name": "right"},
+                {"name": "rail"},
+                {"name": "frame"},
+            ],
+            "placement": {
+                "alignments": [
+                    {
+                        "part": "left",
+                        "to": "rail",
+                        "alignment": "CENTER",
+                        "rigid_attach": True,
+                    },
+                    {
+                        "part": "right",
+                        "to": "rail",
+                        "alignment": "CENTER",
+                        "rigid_attach": True,
+                    },
+                    {
+                        "part": "rail",
+                        "to": "frame",
+                        "alignment": "CENTER",
+                    },
+                ]
+            },
+        },
+    )
+
+    assert placed_parts[0]["part"] == "scene-right|MOVE|MOVE"
+    assert placed_parts[1]["part"] == "scene-rail|MOVE"
+    assert placed_parts[2]["part"] == "scene-frame"
+    assert placed_parts[0]["transform_history"] == [
+        {"kind": "translate", "vector": [10.0, 0.0, 0.0], "placement_step": 1},
+        {"kind": "translate", "vector": [10.0, 0.0, 0.0], "placement_step": 2},
+    ]
+    assert placed_parts[1]["transform_history"] == [
+        {"kind": "translate", "vector": [10.0, 0.0, 0.0], "placement_step": 2}
+    ]
+    assert placed_parts[2]["transform_history"] == []
+    assert all("left aligned" not in message for message in captured_logs)
+    assert any(
+        "Placement step: right aligned to rail via CENTER" in message
+        for message in captured_logs
+    )
+    assert any(
+        "Placement step: rail aligned to frame via CENTER" in message
+        for message in captured_logs
+    )
+
+
+def test_apply_placement_alignments_rigid_attach_rejects_relative_motion_inside_group(
+    monkeypatch, tmp_path
+):
+    left_leader = tmp_path / "left.step"
+    left_leader.write_text("left-leader", encoding="utf-8")
+    right_leader = tmp_path / "right.step"
+    right_leader.write_text("right-leader", encoding="utf-8")
+
+    monkeypatch.setattr(
+        builder,
+        "_import_dependency_part",
+        lambda path: Path(path).read_text(encoding="utf-8"),
+    )
+    monkeypatch.setattr(
+        builder,
+        "_part_center",
+        lambda part: {
+            "left-leader": (0.0, 0.0, 0.0),
+            "right-leader": (10.0, 0.0, 0.0),
+            "left-leader|ALIGN": (10.0, 0.0, 0.0),
+        }[part],
+    )
+    monkeypatch.setattr(
+        builder,
+        "_make_placement_translation",
+        lambda moving_anchor, target_anchor, *, alignment, axes=None, stack_gap=0: (
+            lambda part: f"{part}|ALIGN"
+        ),
+    )
+
+    with pytest.raises(builder.BuilderError, match="rigidly attached assemblies"):
+        builder._apply_placement_alignments(
+            [
+                {
+                    "assembly_name": "left",
+                    "part": "scene-left",
+                    "transform_history": [],
+                },
+                {
+                    "assembly_name": "right",
+                    "part": "scene-right",
+                    "transform_history": [],
+                },
+            ],
+            built_results_by_name={
+                "left": {
+                    "assembly_name": "left",
+                    "artifacts": {"leader_step": str(left_leader)},
+                },
+                "right": {
+                    "assembly_name": "right",
+                    "artifacts": {"leader_step": str(right_leader)},
+                },
+            },
+            repository_dir=tmp_path,
+            config_data={
+                "assemblies": [{"name": "left"}, {"name": "right"}],
+                "placement": {
+                    "alignments": [
+                        {
+                            "part": "left",
+                            "to": "right",
+                            "alignment": "CENTER",
+                            "rigid_attach": True,
+                        },
+                        {
+                            "part": "right",
+                            "to": "left",
+                            "alignment": "TOP",
+                        },
+                    ]
+                },
+            },
+        )
+
+
 def test_apply_placement_alignments_supports_post_translation(monkeypatch, tmp_path):
     moving_leader = tmp_path / "moving_leader.step"
     moving_leader.write_text("moving-leader", encoding="utf-8")
@@ -3904,7 +4356,8 @@ def test_advance_placement_execution_stops_until_missing_assembly_is_built(
     )
 
     placement_state = builder._initialize_placement_execution_state(
-        config_data, built_results_by_name
+        config_data,
+        built_results_by_name,
     )
     placement_state = builder._advance_placement_execution(
         placement_state,
@@ -3995,7 +4448,8 @@ def test_advance_placement_execution_runs_ready_steps_without_waiting_for_unrela
     )
 
     placement_state = builder._initialize_placement_execution_state(
-        config_data, built_results_by_name
+        config_data,
+        built_results_by_name,
     )
     placement_state = builder._advance_placement_execution(
         placement_state,
@@ -4073,7 +4527,8 @@ def test_advance_placement_execution_supports_post_translation(monkeypatch, tmp_
     )
 
     placement_state = builder._initialize_placement_execution_state(
-        config_data, built_results_by_name
+        config_data,
+        built_results_by_name,
     )
     placement_state = builder._advance_placement_execution(
         placement_state,
@@ -4152,7 +4607,8 @@ def test_advance_placement_execution_supports_post_rotation_without_alignment(
     )
 
     placement_state = builder._initialize_placement_execution_state(
-        config_data, built_results_by_name
+        config_data,
+        built_results_by_name,
     )
     placement_state = builder._advance_placement_execution(
         placement_state,
@@ -4178,6 +4634,236 @@ def test_advance_placement_execution_supports_post_rotation_without_alignment(
             "placement_step": 0,
         }
     ]
+
+
+def test_advance_placement_execution_rigid_attach_moves_groups_transitively(
+    monkeypatch, tmp_path
+):
+    leaders = {}
+    for name, label in {
+        "a": "a-leader",
+        "b": "b-leader",
+        "c": "c-leader",
+        "frame": "frame-leader",
+    }.items():
+        step_path = tmp_path / f"{name}.step"
+        step_path.write_text(label, encoding="utf-8")
+        leaders[name] = step_path
+
+    built_results_by_name = {
+        name: {
+            "assembly_name": name,
+            "artifacts": {"leader_step": str(path)},
+        }
+        for name, path in leaders.items()
+    }
+    config_data = {
+        "assemblies": [
+            {"name": "a"},
+            {"name": "b"},
+            {"name": "c"},
+            {"name": "frame"},
+        ],
+        "placement": {
+            "alignments": [
+                {
+                    "part": "a",
+                    "to": "b",
+                    "alignment": "CENTER",
+                    "rigid_attach": True,
+                },
+                {
+                    "part": "b",
+                    "to": "c",
+                    "alignment": "CENTER",
+                    "rigid_attach": True,
+                },
+                {
+                    "part": "c",
+                    "to": "frame",
+                    "alignment": "CENTER",
+                },
+            ]
+        },
+    }
+
+    monkeypatch.setattr(
+        builder,
+        "_import_dependency_part",
+        lambda path: Path(path).read_text(encoding="utf-8"),
+    )
+
+    base_centers = {
+        "a-leader": (0.0, 0.0, 0.0),
+        "b-leader": (10.0, 0.0, 0.0),
+        "c-leader": (20.0, 0.0, 0.0),
+        "frame-leader": (30.0, 0.0, 0.0),
+    }
+
+    def fake_center(part):
+        move_count = part.count("|MOVE")
+        root = part.split("|", 1)[0]
+        base_x, base_y, base_z = base_centers[root]
+        return (base_x + move_count, base_y, base_z)
+
+    monkeypatch.setattr(builder, "_part_center", fake_center)
+    monkeypatch.setattr(
+        builder,
+        "_make_placement_translation",
+        lambda moving_anchor, target_anchor, *, alignment, axes=None, stack_gap=0: (
+            lambda part: f"{part}|MOVE"
+        ),
+    )
+
+    placement_state = builder._initialize_placement_execution_state(
+        config_data,
+        built_results_by_name,
+    )
+    placement_state = builder._advance_placement_execution(
+        placement_state,
+        built_results_by_name=built_results_by_name,
+        repository_dir=tmp_path,
+    )
+
+    assert placement_state.cursor == 3
+    assert placement_state.placement_offsets == {
+        "a": (3.0, 0.0, 0.0),
+        "b": (2.0, 0.0, 0.0),
+        "c": (1.0, 0.0, 0.0),
+    }
+    assert (
+        builder._apply_translation_sequence(
+            "a-leader", placement_state.translation_history["a"]
+        )
+        == "a-leader|MOVE|MOVE|MOVE"
+    )
+    assert (
+        builder._apply_translation_sequence(
+            "b-leader", placement_state.translation_history["b"]
+        )
+        == "b-leader|MOVE|MOVE"
+    )
+    assert (
+        builder._apply_translation_sequence(
+            "c-leader", placement_state.translation_history["c"]
+        )
+        == "c-leader|MOVE"
+    )
+
+
+def test_advance_placement_execution_ignores_missing_rigid_predecessors_outside_active_subset(
+    monkeypatch, tmp_path
+):
+    left_leader = tmp_path / "left.step"
+    left_leader.write_text("left-leader", encoding="utf-8")
+    right_leader = tmp_path / "right.step"
+    right_leader.write_text("right-leader", encoding="utf-8")
+    rail_leader = tmp_path / "rail.step"
+    rail_leader.write_text("rail-leader", encoding="utf-8")
+    frame_leader = tmp_path / "frame.step"
+    frame_leader.write_text("frame-leader", encoding="utf-8")
+
+    built_results_by_name = {
+        "right": {
+            "assembly_name": "right",
+            "artifacts": {"leader_step": str(right_leader)},
+        },
+        "rail": {
+            "assembly_name": "rail",
+            "artifacts": {"leader_step": str(rail_leader)},
+        },
+        "frame": {
+            "assembly_name": "frame",
+            "artifacts": {"leader_step": str(frame_leader)},
+        },
+    }
+    config_data = {
+        "assemblies": [
+            {"name": "left"},
+            {"name": "right"},
+            {"name": "rail"},
+            {"name": "frame"},
+        ],
+        "placement": {
+            "alignments": [
+                {
+                    "part": "left",
+                    "to": "rail",
+                    "alignment": "CENTER",
+                    "rigid_attach": True,
+                },
+                {
+                    "part": "right",
+                    "to": "rail",
+                    "alignment": "CENTER",
+                    "rigid_attach": True,
+                },
+                {
+                    "part": "rail",
+                    "to": "frame",
+                    "alignment": "CENTER",
+                },
+            ]
+        },
+    }
+
+    monkeypatch.setattr(
+        builder,
+        "_import_dependency_part",
+        lambda path: Path(path).read_text(encoding="utf-8"),
+    )
+
+    base_centers = {
+        "left-leader": (0.0, 0.0, 0.0),
+        "right-leader": (10.0, 0.0, 0.0),
+        "rail-leader": (20.0, 0.0, 0.0),
+        "frame-leader": (30.0, 0.0, 0.0),
+    }
+
+    def fake_center(part):
+        move_count = part.count("|MOVE")
+        root = part.split("|", 1)[0]
+        base_x, base_y, base_z = base_centers[root]
+        return (base_x + 10.0 * move_count, base_y, base_z)
+
+    monkeypatch.setattr(builder, "_part_center", fake_center)
+    monkeypatch.setattr(
+        builder,
+        "_make_placement_translation",
+        lambda moving_anchor, target_anchor, *, alignment, axes=None, stack_gap=0: (
+            lambda part: f"{part}|MOVE"
+        ),
+    )
+
+    placement_state = builder._initialize_placement_execution_state(
+        config_data,
+        built_results_by_name,
+        active_assembly_names={"right", "rail", "frame"},
+    )
+    placement_state = builder._advance_placement_execution(
+        placement_state,
+        built_results_by_name=built_results_by_name,
+        repository_dir=tmp_path,
+    )
+
+    assert placement_state.cursor == 2
+    assert placement_state.executed_alignment_indices == {1, 2}
+    assert placement_state.placement_offsets == {
+        "right": (20.0, 0.0, 0.0),
+        "rail": (10.0, 0.0, 0.0),
+    }
+    assert (
+        builder._apply_translation_sequence(
+            "right-leader", placement_state.translation_history["right"]
+        )
+        == "right-leader|MOVE|MOVE"
+    )
+    assert (
+        builder._apply_translation_sequence(
+            "rail-leader", placement_state.translation_history["rail"]
+        )
+        == "rail-leader|MOVE"
+    )
 
 
 def test_build_from_file_injects_dependencies_after_eager_placement(

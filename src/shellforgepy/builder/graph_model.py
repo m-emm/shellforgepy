@@ -18,6 +18,8 @@ class PlacementStep:
     target_reference: Optional[str]
     moving_assembly_name: str
     target_assembly_name: Optional[str]
+    rigid_attach: bool
+    affected_assembly_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,7 @@ class BuilderGraphModel:
     placement_steps: List[PlacementStep]
     placement_execution_dag: nx.DiGraph
     first_moving_alignment_index: Dict[str, int]
+    first_involved_alignment_index: Dict[str, int]
     placement_build_dependencies: Dict[str, List[str]]
 
 
@@ -239,6 +242,7 @@ def _build_placement_steps(
         target_reference = alignment.get("to")
         has_alignment = alignment.get("alignment") is not None
         has_post_rotation = alignment.get("post_rotation") is not None
+        rigid_attach = alignment.get("rigid_attach", False)
         if not moving_reference:
             raise BuilderError("Each placement alignment requires 'part'")
         if has_alignment and not target_reference:
@@ -247,6 +251,10 @@ def _build_placement_steps(
             raise BuilderError(
                 "Each placement step requires either 'alignment' or 'post_rotation'"
             )
+        if rigid_attach and target_reference is None:
+            raise BuilderError("Placement steps with 'rigid_attach' also require 'to'")
+        if not isinstance(rigid_attach, bool):
+            raise BuilderError("placement alignment rigid_attach must be a boolean")
         moving_assembly_name, _ = parse_part_reference(
             str(moving_reference), known_assembly_names
         )
@@ -265,19 +273,51 @@ def _build_placement_steps(
                 ),
                 moving_assembly_name=moving_assembly_name,
                 target_assembly_name=target_assembly_name,
+                rigid_attach=rigid_attach,
             )
         )
     return steps
 
 
+def _rigid_group_members(
+    rigidity_graph: nx.Graph,
+    assembly_name: str,
+) -> set[str]:
+    if assembly_name not in rigidity_graph:
+        rigidity_graph.add_node(assembly_name)
+    return set(nx.node_connected_component(rigidity_graph, assembly_name))
+
+
 def _build_placement_execution_dag(
     placement_steps: Sequence[PlacementStep],
-) -> tuple[nx.DiGraph, Dict[str, int]]:
+) -> tuple[nx.DiGraph, Dict[str, int], Dict[str, int], List[PlacementStep]]:
     graph = nx.DiGraph()
     first_moving_alignment_index: Dict[str, int] = {}
-    latest_move_by_assembly: Dict[str, int] = {}
+    first_involved_alignment_index: Dict[str, int] = {}
+    latest_effect_by_assembly: Dict[str, int] = {}
+    rigidity_graph = nx.Graph()
+    enriched_steps: List[PlacementStep] = []
 
     for step in placement_steps:
+        rigidity_graph.add_node(step.moving_assembly_name)
+        if step.target_assembly_name is not None:
+            rigidity_graph.add_node(step.target_assembly_name)
+
+    for step in placement_steps:
+        moving_group = _rigid_group_members(rigidity_graph, step.moving_assembly_name)
+        target_group: set[str] = set()
+        if step.target_assembly_name is not None:
+            target_group = _rigid_group_members(
+                rigidity_graph, step.target_assembly_name
+            )
+            if step.target_assembly_name in moving_group:
+                raise BuilderError(
+                    "Placement step "
+                    f"{step.index} attempts to move rigidly attached assemblies "
+                    f"'{step.moving_assembly_name}' and '{step.target_assembly_name}' "
+                    "relative to each other"
+                )
+
         graph.add_node(
             step.index,
             moving_assembly_name=step.moving_assembly_name,
@@ -285,21 +325,49 @@ def _build_placement_execution_dag(
         )
 
         dependencies: set[int] = set()
-        moving_predecessor = latest_move_by_assembly.get(step.moving_assembly_name)
-        if moving_predecessor is not None:
-            dependencies.add(moving_predecessor)
-        if step.target_assembly_name is not None:
-            target_predecessor = latest_move_by_assembly.get(step.target_assembly_name)
-            if target_predecessor is not None:
-                dependencies.add(target_predecessor)
+        for assembly_name in sorted(moving_group | target_group):
+            predecessor = latest_effect_by_assembly.get(assembly_name)
+            if predecessor is not None:
+                dependencies.add(predecessor)
 
         for predecessor in sorted(dependencies):
             graph.add_edge(predecessor, step.index)
 
-        latest_move_by_assembly[step.moving_assembly_name] = step.index
-        first_moving_alignment_index.setdefault(step.moving_assembly_name, step.index)
+        for assembly_name in sorted(moving_group):
+            latest_effect_by_assembly[assembly_name] = step.index
 
-    return graph, first_moving_alignment_index
+        first_moving_alignment_index.setdefault(step.moving_assembly_name, step.index)
+        first_involved_alignment_index.setdefault(step.moving_assembly_name, step.index)
+        if step.target_assembly_name is not None:
+            first_involved_alignment_index.setdefault(
+                step.target_assembly_name, step.index
+            )
+
+        enriched_steps.append(
+            PlacementStep(
+                index=step.index,
+                spec=step.spec,
+                moving_reference=step.moving_reference,
+                target_reference=step.target_reference,
+                moving_assembly_name=step.moving_assembly_name,
+                target_assembly_name=step.target_assembly_name,
+                rigid_attach=step.rigid_attach,
+                affected_assembly_names=tuple(sorted(moving_group)),
+            )
+        )
+
+        if step.rigid_attach and step.target_assembly_name is not None:
+            rigidity_graph.add_edge(
+                step.moving_assembly_name,
+                step.target_assembly_name,
+            )
+
+    return (
+        graph,
+        first_moving_alignment_index,
+        first_involved_alignment_index,
+        enriched_steps,
+    )
 
 
 def relevant_placement_alignment_indices(
@@ -307,6 +375,7 @@ def relevant_placement_alignment_indices(
     root_assemblies: Iterable[str],
     *,
     stop_index: Optional[int] = None,
+    include_rigid_effects: bool = False,
 ) -> List[int]:
     roots = {str(name) for name in root_assemblies}
     if not roots:
@@ -315,7 +384,11 @@ def relevant_placement_alignment_indices(
     root_steps = [
         step.index
         for step in model.placement_steps
-        if step.moving_assembly_name in roots
+        if (
+            roots.intersection(step.affected_assembly_names)
+            if include_rigid_effects
+            else step.moving_assembly_name in roots
+        )
         and (stop_index is None or step.index < stop_index)
     ]
     if not root_steps:
@@ -332,13 +405,21 @@ def placement_dependency_closure(
     root_assemblies: Iterable[str],
     *,
     stop_index: Optional[int] = None,
+    include_rigid_effects: bool = False,
 ) -> List[str]:
     needed = {str(name) for name in root_assemblies}
+    steps_by_index = {step.index: step for step in model.placement_steps}
     for step_index in relevant_placement_alignment_indices(
-        model, needed, stop_index=stop_index
+        model,
+        needed,
+        stop_index=stop_index,
+        include_rigid_effects=include_rigid_effects,
     ):
-        step = model.placement_steps[step_index]
-        needed.add(step.moving_assembly_name)
+        step = steps_by_index[step_index]
+        if include_rigid_effects:
+            needed.update(step.affected_assembly_names)
+        else:
+            needed.add(step.moving_assembly_name)
         if step.target_assembly_name is not None:
             needed.add(step.target_assembly_name)
     return sorted(needed)
@@ -368,6 +449,7 @@ def _compute_placement_build_dependencies(
                 model,
                 injected_assemblies,
                 stop_index=boundary_index,
+                include_rigid_effects=False,
             )
         )
         required.discard(assembly_name)
@@ -420,9 +502,12 @@ def build_graph_model(
             )
 
     placement_steps = _build_placement_steps(by_name, config_data)
-    placement_execution_dag, first_moving_alignment_index = (
-        _build_placement_execution_dag(placement_steps)
-    )
+    (
+        placement_execution_dag,
+        first_moving_alignment_index,
+        first_involved_alignment_index,
+        placement_steps,
+    ) = _build_placement_execution_dag(placement_steps)
 
     partial_model = BuilderGraphModel(
         assemblies=[dict(item) for item in assemblies],
@@ -432,6 +517,7 @@ def build_graph_model(
         placement_steps=placement_steps,
         placement_execution_dag=placement_execution_dag,
         first_moving_alignment_index=first_moving_alignment_index,
+        first_involved_alignment_index=first_involved_alignment_index,
         placement_build_dependencies={},
     )
     placement_build_dependencies = _compute_placement_build_dependencies(
@@ -447,7 +533,120 @@ def build_graph_model(
         placement_steps=placement_steps,
         placement_execution_dag=placement_execution_dag,
         first_moving_alignment_index=first_moving_alignment_index,
+        first_involved_alignment_index=first_involved_alignment_index,
         placement_build_dependencies=placement_build_dependencies,
+    )
+
+
+def _replace_placement_steps(
+    model: BuilderGraphModel,
+    placement_steps: Sequence[PlacementStep],
+) -> BuilderGraphModel:
+    (
+        placement_execution_dag,
+        first_moving_alignment_index,
+        first_involved_alignment_index,
+        placement_steps,
+    ) = _build_placement_execution_dag(placement_steps)
+    partial_model = BuilderGraphModel(
+        assemblies=[dict(item) for item in model.assemblies],
+        assemblies_by_name={
+            name: dict(entry) for name, entry in model.assemblies_by_name.items()
+        },
+        assembly_dependency_graph=model.assembly_dependency_graph.copy(),
+        injection_graph=model.injection_graph.copy(),
+        placement_steps=placement_steps,
+        placement_execution_dag=placement_execution_dag,
+        first_moving_alignment_index=first_moving_alignment_index,
+        first_involved_alignment_index=first_involved_alignment_index,
+        placement_build_dependencies={},
+    )
+    placement_build_dependencies = _compute_placement_build_dependencies(
+        partial_model.assemblies_by_name,
+        placement_steps,
+        model=partial_model,
+    )
+    return BuilderGraphModel(
+        assemblies=[dict(item) for item in model.assemblies],
+        assemblies_by_name={
+            name: dict(entry) for name, entry in model.assemblies_by_name.items()
+        },
+        assembly_dependency_graph=model.assembly_dependency_graph.copy(),
+        injection_graph=model.injection_graph.copy(),
+        placement_steps=placement_steps,
+        placement_execution_dag=placement_execution_dag,
+        first_moving_alignment_index=first_moving_alignment_index,
+        first_involved_alignment_index=first_involved_alignment_index,
+        placement_build_dependencies=placement_build_dependencies,
+    )
+
+
+def without_rigid_attach_effects(model: BuilderGraphModel) -> BuilderGraphModel:
+    if not any(step.rigid_attach for step in model.placement_steps):
+        return model
+
+    stripped_steps = []
+    for step in model.placement_steps:
+        stripped_spec = dict(step.spec)
+        if "rigid_attach" in stripped_spec:
+            stripped_spec["rigid_attach"] = False
+        stripped_steps.append(
+            PlacementStep(
+                index=step.index,
+                spec=stripped_spec,
+                moving_reference=step.moving_reference,
+                target_reference=step.target_reference,
+                moving_assembly_name=step.moving_assembly_name,
+                target_assembly_name=step.target_assembly_name,
+                rigid_attach=False,
+            )
+        )
+    return _replace_placement_steps(model, stripped_steps)
+
+
+def restrict_to_active_assemblies(
+    model: BuilderGraphModel,
+    active_assemblies: Iterable[str],
+) -> BuilderGraphModel:
+    active_names = {
+        str(name) for name in active_assemblies if str(name) in model.assemblies_by_name
+    }
+    if active_names == set(model.assemblies_by_name):
+        return model
+
+    filtered_steps = [
+        step
+        for step in model.placement_steps
+        if step.moving_assembly_name in active_names
+        and (
+            step.target_assembly_name is None
+            or step.target_assembly_name in active_names
+        )
+    ]
+    (
+        placement_execution_dag,
+        first_moving_alignment_index,
+        first_involved_alignment_index,
+        placement_steps,
+    ) = _build_placement_execution_dag(filtered_steps)
+    filtered_placement_build_dependencies = {
+        name: [dependency for dependency in dependencies if dependency in active_names]
+        for name, dependencies in model.placement_build_dependencies.items()
+        if name in active_names
+    }
+
+    return BuilderGraphModel(
+        assemblies=[dict(item) for item in model.assemblies],
+        assemblies_by_name={
+            name: dict(entry) for name, entry in model.assemblies_by_name.items()
+        },
+        assembly_dependency_graph=model.assembly_dependency_graph.copy(),
+        injection_graph=model.injection_graph.copy(),
+        placement_steps=placement_steps,
+        placement_execution_dag=placement_execution_dag,
+        first_moving_alignment_index=first_moving_alignment_index,
+        first_involved_alignment_index=first_involved_alignment_index,
+        placement_build_dependencies=filtered_placement_build_dependencies,
     )
 
 
