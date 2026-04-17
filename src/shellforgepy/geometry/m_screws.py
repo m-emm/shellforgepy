@@ -664,3 +664,95 @@ def create_hidden_nut_pocket_cutter(
     retval = LeaderFollowersCuttersPart(nut, cutters=[overall_cutter])
 
     return retval
+
+
+def create_thread_inset_assembly(
+    size, thickness, extra_radius=2, clearance_type="normal"
+):
+    """
+    Create an assembly for a thread inset for the specified screw size.
+
+
+    Args:
+        size: Screw size string (e.g., "M3", "M4", etc.)
+        thickness: Thickness of the material to be threaded
+        extra_radius: Additional radius to add around the thread inset hole for the material around the inset
+        clearance_type: Type of clearance hole to create if thickness exceeds thread inset length ("close",
+    Returns:
+        A LeaderFollowersCuttersPart representing the thread inset assembly, with the main body as the leader and the cutters for the thread inset hole and optional clearance hole.
+
+    Raises:
+        ValueError: If the chosen thickness is less than the required thread inset length for the specified screw size
+
+
+    Example:
+        # Create a thread inset assembly for an M4 screw in a 5mm thick material with normal clearance
+        my_part = create_box(50,50,20)
+
+        thread_inset_assembly = create_thread_inset_assembly("M3", thickness=5, clearance_type="normal")
+
+        thread_inset_assembly = align(thread_inset_assembly, my_part, Alignment.CENTER)
+        thread_inset_assembly = align(thread_inset_assembly, my_part, Alignment.BOTTOM)
+        my_part = thread_inset_assembly.use_as_cutter_on(my_part)
+        my_part = my_part.fuse(thread_inset_assembly)
+
+
+    """
+
+    thread_inset_length = m_screws_table[size].get("thread_inset_length")
+    if thread_inset_length is None:
+        raise ValueError(f"Thread inset is not defined for screw size: {size}")
+    if thickness < thread_inset_length:
+        raise ValueError(
+            f"Thickness {thickness} is too small for thread inset of size {size}. Minimum required is {thread_inset_length}."
+        )
+
+    thread_inset_hole_diameter = m_screws_table[size].get("thread_inset_hole_diameter")
+    if thread_inset_hole_diameter is None:
+        raise ValueError(
+            f"Thread inset hole diameter is not defined for screw size: {size}"
+        )
+
+    inset_assembly_diameter = thread_inset_hole_diameter + extra_radius * 2
+
+    inset_assembly_cylinder = create_cylinder(inset_assembly_diameter / 2, thickness)
+    inset_assembly_leader = inset_assembly_cylinder
+
+    if thickness > thread_inset_length:
+        clearance_hole_cutter = create_cylinder(
+            get_clearance_hole_diameter(size, clearance_type) / 2, thickness
+        )
+        clearance_hole_cutter = align(
+            clearance_hole_cutter, inset_assembly_cylinder, Alignment.CENTER
+        )
+        inset_assembly_leader = inset_assembly_leader.cut(clearance_hole_cutter)
+
+    thread_inset_cutter = create_cylinder(
+        thread_inset_hole_diameter / 2, thread_inset_length
+    )
+    thread_inset_cutter = align(
+        thread_inset_cutter, inset_assembly_cylinder, Alignment.CENTER
+    )
+    thread_inset_cutter = align(
+        thread_inset_cutter, inset_assembly_cylinder, Alignment.BOTTOM
+    )
+
+    inset_assembly_leader = inset_assembly_leader.cut(thread_inset_cutter)
+
+    thread_inset = create_cylinder(thread_inset_hole_diameter / 2, thread_inset_length)
+    thread_inset = align(thread_inset, thread_inset_cutter, Alignment.CENTER)
+
+    thread_inset_core_hole_cutter = create_cylinder(
+        get_core_hole_diameter(size) / 2, thread_inset_length
+    )
+    thread_inset_core_hole_cutter = align(
+        thread_inset_core_hole_cutter, thread_inset, Alignment.CENTER
+    )
+    thread_inset = thread_inset.cut(thread_inset_core_hole_cutter)
+
+    retval = LeaderFollowersCuttersPart(inset_assembly_leader)
+
+    retval.add_named_cutter(inset_assembly_cylinder, "assembly_cutter")
+    retval.add_named_non_production_part(thread_inset, "thread_inset")
+
+    return retval

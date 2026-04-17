@@ -137,6 +137,86 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
     return loaded
 
 
+def _expand_imported_globals(
+    globals_mapping: Optional[Mapping[str, Any]],
+    *,
+    config_file: Path,
+    source_file: Optional[Path] = None,
+    visited_files: Optional[set[Path]] = None,
+) -> Dict[str, Any]:
+    if not globals_mapping:
+        return {}
+    if not isinstance(globals_mapping, Mapping):
+        raise BuilderError("globals must be a mapping when provided")
+
+    current_source = (source_file or config_file).resolve()
+    visited = set(visited_files or set())
+    visited.add(current_source)
+
+    merged: Dict[str, Any] = {}
+    raw_imports = globals_mapping.get("$import")
+    if raw_imports is not None:
+        if isinstance(raw_imports, str):
+            import_entries = [raw_imports]
+        elif isinstance(raw_imports, list):
+            import_entries = raw_imports
+        else:
+            raise BuilderError("globals.$import must be a string or list of strings")
+
+        for import_entry in import_entries:
+            if not isinstance(import_entry, str) or not import_entry.strip():
+                raise BuilderError(
+                    "globals.$import entries must be non-empty string paths"
+                )
+            import_path = Path(import_entry).expanduser()
+            if not import_path.is_absolute():
+                import_path = (config_file.parent / import_path).resolve()
+            else:
+                import_path = import_path.resolve()
+            if not import_path.exists():
+                raise BuilderError(
+                    "Imported globals file does not exist: " f"{import_path}"
+                )
+            if import_path in visited:
+                cycle_chain = " -> ".join(str(path) for path in [*visited, import_path])
+                raise BuilderError(
+                    "Cyclic globals.$import detected while loading "
+                    f"{current_source}: {cycle_chain}"
+                )
+
+            imported_data = _load_yaml(import_path)
+            imported_globals = imported_data.get("globals", {})
+            if imported_globals is None:
+                imported_globals = {}
+            if not isinstance(imported_globals, Mapping):
+                raise BuilderError(
+                    f"Imported globals file {import_path} must define a globals mapping"
+                )
+            merged.update(
+                _expand_imported_globals(
+                    imported_globals,
+                    config_file=config_file,
+                    source_file=import_path,
+                    visited_files=visited | {import_path},
+                )
+            )
+
+    merged.update(
+        {key: value for key, value in globals_mapping.items() if key != "$import"}
+    )
+    return merged
+
+
+def _load_builder_config(config_file: Path) -> Dict[str, Any]:
+    config_data = _load_yaml(config_file)
+    if "globals" in config_data:
+        config_data["globals"] = _expand_imported_globals(
+            config_data.get("globals", {}),
+            config_file=config_file,
+        )
+    return config_data
+
+
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -705,6 +785,11 @@ def _load_generator_callable(generator_path: str) -> Callable[..., Any]:
         if module_spec and module_spec.origin and module_spec.origin.endswith(".py"):
             pyc_path = Path(importlib.util.cache_from_source(module_spec.origin))
             pyc_path.unlink(missing_ok=True)
+        package_name = module_name
+        while "." in package_name:
+            sys.modules.pop(package_name, None)
+            package_name = package_name.rsplit(".", 1)[0]
+        sys.modules.pop(package_name, None)
         sys.modules.pop(module_name, None)
         module = importlib.import_module(module_name)
     except ImportError as exc:
@@ -3806,7 +3891,7 @@ def build_from_file(
     if not config_file.exists():
         raise BuilderError(f"Assembly config file does not exist: {config_file}")
 
-    config_data = _load_yaml(config_file)
+    config_data = _load_builder_config(config_file)
     project_root = _find_project_root(config_file.parent)
     extra_paths = config_data.get("python_paths")
     if extra_paths is not None and not isinstance(extra_paths, list):
@@ -4289,7 +4374,7 @@ def _export_scene_for_assembly(
 
 def run_builder(args: argparse.Namespace) -> int:
     config_file = Path(args.config_file).expanduser().resolve()
-    config_data = _load_yaml(config_file)
+    config_data = _load_builder_config(config_file)
     assemblies = _get_assemblies(config_data)
     graph_model = builder_graph_model.build_graph_model(assemblies, config_data)
     assemblies_by_name = graph_model.assemblies_by_name
