@@ -256,6 +256,157 @@ def test_build_from_file_falls_back_to_same_named_globals_for_missing_parameters
     )
 
 
+def test_build_from_file_auto_forwards_required_parameters_with_sparse_properties(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / "auto_forward_demo_pkg"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "widget_generator.py",
+        "\n".join(
+            [
+                "def make_widget(*, width, height, label, record_metrics=False):",
+                "    return f'widget-{width}-{height}-{label}-{record_metrics}'",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(
+        assemblies_dir / "sample_assembly.yaml",
+        "\n".join(
+            [
+                'ShellforgepyBuilderVersion: "2026-03-27"',
+                "Parameters:",
+                "  width:",
+                "    Type: Float",
+                "  height:",
+                "    Type: Float",
+                "  label:",
+                "    Type: String",
+                "Parts:",
+                "  Sample:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: auto_forward_demo_pkg.widget_generator.make_widget",
+                "      Properties:",
+                "        record_metrics: true",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "globals:",
+                "  width: 10",
+                "  height: 20",
+                "  label: global-label",
+                "assemblies:",
+                "  - name: sample_assembly",
+            ]
+        ),
+    )
+
+    def fake_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+    monkeypatch.delitem(sys.modules, "auto_forward_demo_pkg", raising=False)
+    monkeypatch.delitem(
+        sys.modules,
+        "auto_forward_demo_pkg.widget_generator",
+        raising=False,
+    )
+
+    results = builder.build_from_file(config_path)
+
+    assert (
+        Path(results[0]["artifacts"]["leader_step"]).read_text(encoding="utf-8")
+        == "widget-10.0-20.0-global-label-True"
+    )
+
+
+def test_build_from_file_explicit_properties_override_auto_forwarded_parameters(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / "auto_forward_override_demo_pkg"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "widget_generator.py",
+        "\n".join(
+            [
+                "def make_widget(*, width, height, label):",
+                "    return f'widget-{width}-{height}-{label}'",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(
+        assemblies_dir / "sample_assembly.yaml",
+        "\n".join(
+            [
+                'ShellforgepyBuilderVersion: "2026-03-27"',
+                "Parameters:",
+                "  width:",
+                "    Type: Float",
+                "  height:",
+                "    Type: Float",
+                "  label:",
+                "    Type: String",
+                "Parts:",
+                "  Sample:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: auto_forward_override_demo_pkg.widget_generator.make_widget",
+                "      Properties:",
+                "        width:",
+                "          $ref: height",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "globals:",
+                "  width: 10",
+                "  height: 20",
+                "  label: global-label",
+                "assemblies:",
+                "  - name: sample_assembly",
+            ]
+        ),
+    )
+
+    def fake_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+    monkeypatch.delitem(sys.modules, "auto_forward_override_demo_pkg", raising=False)
+    monkeypatch.delitem(
+        sys.modules,
+        "auto_forward_override_demo_pkg.widget_generator",
+        raising=False,
+    )
+
+    results = builder.build_from_file(config_path)
+
+    assert (
+        Path(results[0]["artifacts"]["leader_step"]).read_text(encoding="utf-8")
+        == "widget-20.0-20.0-global-label"
+    )
+
+
 def test_resolve_assembly_reports_config_and_resource_for_unknown_parameter_override(
     tmp_path,
 ):

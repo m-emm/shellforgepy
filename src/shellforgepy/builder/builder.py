@@ -752,7 +752,7 @@ def _resolve_assembly(
             f"Part '{logical_part_name}' in {resource_path} is missing Properties.Generator"
         )
 
-    generator_properties = properties.get("Properties", public_parameters)
+    generator_properties = properties.get("Properties", {})
     if not isinstance(generator_properties, Mapping):
         raise BuilderError(
             f"Part '{logical_part_name}' in {resource_path} has invalid Properties.Properties section"
@@ -881,7 +881,7 @@ def _missing_generator_argument_hints(
             and argument_name not in explicit_generator_kwargs
         ):
             hint_lines.append(
-                f"'{argument_name}' is declared in the Parameters section of {resolved.resource_path} and was resolved from YAML, but it is not forwarded in Parts.{resolved.logical_part_name}.Properties.Properties."
+                f"'{argument_name}' is declared in the Parameters section of {resolved.resource_path} and was resolved from YAML, but it still was not provided to the generator. Check whether the generator argument name matches the assembly parameter name or add an explicit Parts.{resolved.logical_part_name}.Properties.Properties mapping."
             )
             continue
 
@@ -970,6 +970,26 @@ def _auto_injected_context_kwargs(
         if parameter_name not in builder_context:
             continue
         injected_kwargs[parameter_name] = deepcopy(builder_context[parameter_name])
+
+    return injected_kwargs
+
+
+def _auto_injected_public_parameter_kwargs(
+    generator: Callable[..., Any],
+    public_parameters: Mapping[str, Any],
+    explicit_generator_kwargs: Mapping[str, Any],
+) -> Dict[str, Any]:
+    if not public_parameters:
+        return {}
+
+    required_keyword_arguments = _generator_required_keyword_arguments(generator)
+    injected_kwargs: Dict[str, Any] = {}
+    for parameter_name in required_keyword_arguments:
+        if parameter_name in explicit_generator_kwargs:
+            continue
+        if parameter_name not in public_parameters:
+            continue
+        injected_kwargs[parameter_name] = deepcopy(public_parameters[parameter_name])
 
     return injected_kwargs
 
@@ -3930,6 +3950,11 @@ def build_from_file(
                 placement_state,
             )
             generator = _load_generator_callable(resolved.generator_path)
+            injected_public_parameter_kwargs = _auto_injected_public_parameter_kwargs(
+                generator,
+                resolved.public_parameters,
+                resolved.generator_kwargs,
+            )
             injected_context_kwargs = _auto_injected_context_kwargs(
                 generator,
                 builder_context,
@@ -3949,7 +3974,10 @@ def build_from_file(
                 resource_path=resolved.resource_path,
             )
             parameter_hash = _hash_with_dependencies(
-                resolved.generator_kwargs,
+                {
+                    **injected_public_parameter_kwargs,
+                    **resolved.generator_kwargs,
+                },
                 dependency_injections,
                 (
                     {
@@ -3998,7 +4026,8 @@ def build_from_file(
                 resolved.name,
                 resolved.generator_path,
             )
-            generator_kwargs = deepcopy(resolved.generator_kwargs)
+            generator_kwargs = deepcopy(injected_public_parameter_kwargs)
+            generator_kwargs.update(deepcopy(resolved.generator_kwargs))
             generator_kwargs.update(deepcopy(injected_context_kwargs))
             for injection in dependency_injections:
                 generator_kwargs[injection.kwarg_name] = injection.part
