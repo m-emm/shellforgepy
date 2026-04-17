@@ -115,6 +115,33 @@ def _build_staggered_cube_scene(
     return Scene(objects)
 
 
+def _dominant_channel_centroid_x(image: np.ndarray, channel_index: int) -> float:
+    positions = _dominant_channel_positions(image, channel_index)
+    return float(np.mean(positions[:, 1]))
+
+
+def _dominant_channel_positions(image: np.ndarray, channel_index: int) -> np.ndarray:
+    other_channels = [index for index in range(3) if index != channel_index]
+    channel = image[:, :, channel_index].astype(np.int16)
+    mask = (
+        (channel >= 20)
+        & (channel > image[:, :, other_channels[0]].astype(np.int16) + 20)
+        & (channel > image[:, :, other_channels[1]].astype(np.int16) + 20)
+    )
+    positions = np.argwhere(mask)
+    assert len(positions) > 0
+    return positions
+
+
+def _dominant_channel_bbox_size(
+    image: np.ndarray, channel_index: int
+) -> tuple[float, float]:
+    positions = _dominant_channel_positions(image, channel_index)
+    min_y, min_x = positions.min(axis=0)
+    max_y, max_x = positions.max(axis=0)
+    return float(max_x - min_x + 1), float(max_y - min_y + 1)
+
+
 def _run_render_perf_case(
     *,
     cube_count: int,
@@ -361,6 +388,70 @@ def test_render_obj_views_with_stats_reports_geometry_and_dimensions(
     assert batch.results[0].width == 512
     assert batch.results[0].height == 512
     assert batch.results[0].render_seconds >= 0.0
+
+
+@pytest.mark.parametrize("view_name", ["front", "isometric"])
+def test_render_scene_preserves_left_to_right_order(view_name, disable_numba):
+    scene = Scene(
+        [
+            _create_cube_mesh_object(
+                name="left_cube",
+                origin=(0.0, 0.0, 0.0),
+                size=10.0,
+                color=(0.95, 0.10, 0.10),
+            ),
+            _create_cube_mesh_object(
+                name="right_cube",
+                origin=(20.0, 0.0, 0.0),
+                size=10.0,
+                color=(0.10, 0.10, 0.95),
+            ),
+        ]
+    )
+
+    image = render_scene(
+        scene,
+        view_name=view_name,
+        width=256,
+        height=256,
+        disable_numba=disable_numba,
+    )
+
+    red_centroid_x = _dominant_channel_centroid_x(image, 0)
+    blue_centroid_x = _dominant_channel_centroid_x(image, 2)
+
+    assert red_centroid_x < blue_centroid_x
+
+
+def test_render_scene_preserves_cube_proportions_in_wide_front_view(disable_numba):
+    scene = Scene(
+        [
+            _create_cube_mesh_object(
+                name="reference_cube",
+                origin=(0.0, 0.0, 0.0),
+                size=10.0,
+                color=(0.95, 0.10, 0.10),
+            ),
+            _create_cube_mesh_object(
+                name="far_anchor",
+                origin=(90.0, 0.0, 0.0),
+                size=2.0,
+                color=(0.10, 0.10, 0.95),
+            ),
+        ]
+    )
+
+    image = render_scene(
+        scene,
+        view_name="front",
+        width=320,
+        height=320,
+        disable_numba=disable_numba,
+    )
+
+    cube_width, cube_height = _dominant_channel_bbox_size(image, 0)
+
+    assert cube_height / cube_width == pytest.approx(1.0, rel=0.15)
 
 
 def test_render_obj_view_to_image_with_stats_can_exclude_named_objects(

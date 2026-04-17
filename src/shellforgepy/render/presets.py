@@ -15,7 +15,7 @@ def view_direction_for_name(name: str) -> np.ndarray:
         "back": np.array([0.0, 1.0, 0.0], dtype=np.float32),
         "left": np.array([-1.0, 0.0, 0.0], dtype=np.float32),
         "right": np.array([1.0, 0.0, 0.0], dtype=np.float32),
-        "isometric": np.array([1.0, -1.0, 0.8], dtype=np.float32),
+        "isometric": np.array([1.0, -1.0, 1.0], dtype=np.float32),
         "front_angle": np.array([0.5, -1.0, 0.35], dtype=np.float32),
     }
     try:

@@ -25,9 +25,9 @@ def _pick_stable_up(direction: np.ndarray) -> np.ndarray:
 def _look_at(eye: np.ndarray, target: np.ndarray, up: np.ndarray) -> np.ndarray:
     forward = target - eye
     forward /= np.linalg.norm(forward) + 1e-12
-    right = np.cross(forward, up)
+    right = np.cross(up, forward)
     right /= np.linalg.norm(right) + 1e-12
-    true_up = np.cross(right, forward)
+    true_up = np.cross(forward, right)
 
     view = np.eye(4, dtype=np.float32)
     view[0, :3] = right
@@ -84,6 +84,8 @@ def _camera_mvp_for_scene(
     scene: Scene,
     view_name: str,
     *,
+    width: int,
+    height: int,
     margin_ratio: float = 0.08,
 ) -> tuple[np.ndarray, np.ndarray]:
     bounds_min, bounds_max = scene.bounds()
@@ -112,6 +114,18 @@ def _camera_mvp_for_scene(
     half_extent = 0.5 * (view_max - view_min)
     half_extent *= 1.0 + margin_ratio
     half_extent = np.maximum(half_extent, 1e-3)
+
+    # Preserve object proportions by fitting orthographic X/Y with one scale.
+    viewport_aspect = max(float(width), 1.0) / max(float(height), 1.0)
+    half_width = float(half_extent[0])
+    half_height = float(half_extent[1])
+    if half_width / max(half_height, 1e-6) < viewport_aspect:
+        half_width = half_height * viewport_aspect
+    else:
+        half_height = half_width / max(viewport_aspect, 1e-6)
+    half_extent[0] = max(half_width, 1e-3)
+    half_extent[1] = max(half_height, 1e-3)
+
     view_min = center_view - half_extent
     view_max = center_view + half_extent
 
@@ -321,7 +335,7 @@ def render_scene(
         image[:] = np.asarray(background_color, dtype=np.uint8)
         return image
 
-    mvp, view = _camera_mvp_for_scene(scene, view_name)
+    mvp, view = _camera_mvp_for_scene(scene, view_name, width=width, height=height)
     triangles_h = np.concatenate(
         [triangles, np.ones((triangles.shape[0], 3, 1), dtype=np.float32)], axis=2
     )
