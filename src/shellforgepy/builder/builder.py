@@ -982,9 +982,18 @@ def _auto_injected_public_parameter_kwargs(
     if not public_parameters:
         return {}
 
-    required_keyword_arguments = _generator_required_keyword_arguments(generator)
+    try:
+        signature = inspect.signature(generator)
+    except (TypeError, ValueError):
+        return {}
+
     injected_kwargs: Dict[str, Any] = {}
-    for parameter_name in required_keyword_arguments:
+    for parameter_name, parameter in signature.parameters.items():
+        if parameter.kind not in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            continue
         if parameter_name in explicit_generator_kwargs:
             continue
         if parameter_name not in public_parameters:
