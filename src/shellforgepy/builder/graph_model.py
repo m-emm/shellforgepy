@@ -247,9 +247,9 @@ def _build_placement_steps(
             raise BuilderError("Each placement alignment requires 'part'")
         if has_alignment and not target_reference:
             raise BuilderError("Placement steps with 'alignment' also require 'to'")
-        if not has_alignment and not has_post_rotation:
+        if not has_alignment and not has_post_rotation and not rigid_attach:
             raise BuilderError(
-                "Each placement step requires either 'alignment' or 'post_rotation'"
+                "Each placement step requires either 'alignment', 'post_rotation', or 'rigid_attach'"
             )
         if rigid_attach and target_reference is None:
             raise BuilderError("Placement steps with 'rigid_attach' also require 'to'")

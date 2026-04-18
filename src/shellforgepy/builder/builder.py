@@ -3054,9 +3054,9 @@ def _advance_placement_execution(
                     }
                 )
 
-            if not step_transforms:
+            if not step_transforms and not placement_step.rigid_attach:
                 raise BuilderError(
-                    "Each placement step requires either 'alignment' or 'post_rotation'"
+                    "Each placement step requires either 'alignment', 'post_rotation', or 'rigid_attach'"
                 )
 
             delta = _translation_delta(moving_center_before, _part_center(moved_anchor))
@@ -3162,6 +3162,23 @@ def _apply_placement_alignments(
             metadata_by_name[assembly_name] = metadata
         return metadata
 
+    if relevant_assemblies:
+        non_rigid_graph_model = builder_graph_model.without_rigid_attach_effects(
+            graph_model
+        )
+        hidden_target_step_indices = {
+            step.index
+            for step in graph_model.placement_steps
+            if step.moving_assembly_name in relevant_assemblies
+            and step.target_assembly_name is not None
+            and step.target_assembly_name not in relevant_assemblies
+        }
+        for step_index in hidden_target_step_indices:
+            relevant_alignment_indices.add(step_index)
+            relevant_alignment_indices.update(
+                nx.ancestors(non_rigid_graph_model.placement_execution_dag, step_index)
+            )
+
     def resolve_anchor(reference: str) -> tuple[str, str, Any]:
         assembly_name, selector = _parse_part_reference(reference, known_assembly_names)
         cache_key = (assembly_name, selector)
@@ -3189,7 +3206,7 @@ def _apply_placement_alignments(
             anchor_cache[cache_key] = imported_anchor
         return assembly_name, selector, anchor_cache[cache_key]
 
-    for placement_step in active_graph_model.placement_steps:
+    for placement_step in graph_model.placement_steps:
         placement_index = placement_step.index
         if placement_index not in relevant_alignment_indices:
             continue
@@ -3344,9 +3361,9 @@ def _apply_placement_alignments(
             )
             step_transforms.append(post_translation_transform)
 
-        if not step_transforms:
+        if not step_transforms and not placement_step.rigid_attach:
             raise BuilderError(
-                "Each placement step requires either 'alignment' or 'post_rotation'"
+                "Each placement step requires either 'alignment', 'post_rotation', or 'rigid_attach'"
             )
 
         translation_delta = _translation_delta(
