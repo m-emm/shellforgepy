@@ -2504,6 +2504,99 @@ def test_run_builder_visualization_builds_only_relevant_placement_dependencies(
     assert captured["assembly_names"] == ["gantry", "printer_frame", "y_axis"]
 
 
+def test_run_builder_visualization_ignores_injected_scene_sources_for_dependency_expansion(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / "assemblies.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: sprite_extruder_left_assembly",
+                "    depends_on: []",
+                "  - name: nitehawk_holder_left_assembly",
+                "    resource_file: nitehawk_holder.yaml",
+                "    depends_on:",
+                "      - sprite_extruder_left_assembly",
+                "    inject_parts:",
+                "      sprite_extruder: sprite_extruder_left_assembly",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "nitehawk_holder.yaml").write_text(
+        "\n".join(
+            [
+                "Builder:",
+                "  Visualization:",
+                "    parts:",
+                "      - source: injected",
+                "        assembly: sprite_extruder",
+                "        artifact: leader",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    captured = {}
+
+    def fake_build_from_file(
+        config_file, *, assembly_names=None, repository_dir=None, force=False
+    ):
+        captured["assembly_names"] = assembly_names
+        return [
+            {
+                "assembly_name": "nitehawk_holder_left_assembly",
+                "artifact_dir": str(
+                    tmp_path / "repo" / "nitehawk_holder_left_assembly"
+                ),
+                "repository_dir": str(tmp_path / "repo"),
+                "resource_file": str(tmp_path / "nitehawk_holder.yaml"),
+                "cache_hit": False,
+            },
+            {
+                "assembly_name": "sprite_extruder_left_assembly",
+                "artifact_dir": str(
+                    tmp_path / "repo" / "sprite_extruder_left_assembly"
+                ),
+                "repository_dir": str(tmp_path / "repo"),
+                "resource_file": str(tmp_path / "sprite_extruder.yaml"),
+                "cache_hit": False,
+            },
+        ]
+
+    monkeypatch.setattr(builder, "build_from_file", fake_build_from_file)
+    monkeypatch.setattr(builder, "_export_scene_for_assembly", lambda **kwargs: 0)
+
+    result = builder.run_builder(
+        argparse.Namespace(
+            config_file=str(config_path),
+            assembly=["nitehawk_holder_left_assembly"],
+            repository_dir=str(tmp_path / "repo"),
+            force=False,
+            visualize=True,
+            with_dependents=False,
+            production=False,
+            slice=False,
+            upload=False,
+            open=False,
+            run_id=None,
+            runs_dir=None,
+            master_settings_dir=None,
+            orca_executable=None,
+            orca_debug=None,
+            printer=None,
+            part_file=None,
+            process_file=None,
+            config=None,
+            verbose=False,
+        )
+    )
+
+    assert result == 0
+    assert captured["assembly_names"] == ["nitehawk_holder_left_assembly"]
+
+
 def test_run_builder_visualization_builds_transitive_anchor_dependencies(
     monkeypatch, tmp_path
 ):
@@ -3608,6 +3701,237 @@ def test_materialize_rule_parts_resolves_declared_scene_dependencies_from_config
     assert len(parts) == 1
     assert parts[0]["name"] == "print_bed"
     assert parts[0]["part"] == f"part:{dependency_step}"
+
+
+def test_materialize_rule_parts_resolves_injected_source_by_kwarg_name(
+    monkeypatch, tmp_path
+):
+    dependency_step = tmp_path / "sprite_extruder_left__leader.step"
+    dependency_step.write_text("sprite-extruder-left", encoding="utf-8")
+
+    metadata = {
+        "assembly_name": "nitehawk_holder_left_assembly",
+        "resource_file": str(tmp_path / "nitehawk_holder.yaml"),
+        "public_parameters": {},
+        "generator_kwargs": {},
+        "dependencies": [
+            {
+                "kwarg_name": "sprite_extruder",
+                "assembly_name": "sprite_extruder_left_assembly",
+                "artifact": "assembly",
+            }
+        ],
+    }
+    resource_data = {
+        "Builder": {
+            "Visualization": {
+                "parts": [
+                    {
+                        "source": "injected",
+                        "assembly": "sprite_extruder",
+                        "artifact": "leader",
+                        "name": "sprite_extruder",
+                    }
+                ]
+            }
+        }
+    }
+    built_results_by_name = {
+        "sprite_extruder_left_assembly": {
+            "assembly_name": "sprite_extruder_left_assembly",
+            "artifacts": {"leader_step": str(dependency_step)},
+        }
+    }
+
+    monkeypatch.setattr(builder, "_import_dependency_part", lambda path: f"part:{path}")
+
+    parts = builder._materialize_rule_parts(
+        metadata,
+        resource_data,
+        "visualization",
+        built_results_by_name,
+        tmp_path,
+        None,
+    )
+
+    assert len(parts) == 1
+    assert parts[0]["name"] == "sprite_extruder"
+    assert parts[0]["part"] == f"part:{dependency_step}"
+
+
+def test_artifact_entries_for_selector_all_expands_visualization_artifacts(tmp_path):
+    leader_step = tmp_path / "leader.step"
+    follower_step = tmp_path / "follower.step"
+    non_production_step = tmp_path / "non_production.step"
+    leader_step.write_text("leader", encoding="utf-8")
+    follower_step.write_text("follower", encoding="utf-8")
+    non_production_step.write_text("non-production", encoding="utf-8")
+
+    metadata = {
+        "assembly_name": "sprite_extruder_left_assembly",
+        "artifacts": {
+            "leader_step": str(leader_step),
+            "followers": [
+                {
+                    "path": str(follower_step),
+                    "name": "fan_shroud",
+                    "index": 0,
+                }
+            ],
+            "non_production_parts": [
+                {
+                    "path": str(non_production_step),
+                    "name": "hotend",
+                    "index": 0,
+                }
+            ],
+        },
+    }
+
+    entries = builder._artifact_entries_for_selector(metadata, "all")
+
+    assert [entry["artifact"] for entry in entries] == [
+        "leader",
+        "followers",
+        "non_production_parts",
+    ]
+    assert [entry["name"] for entry in entries] == [None, "fan_shroud", "hotend"]
+
+
+def test_materialize_rule_parts_resolves_injected_source_all_artifacts(
+    monkeypatch, tmp_path
+):
+    leader_step = tmp_path / "leader.step"
+    follower_step = tmp_path / "follower.step"
+    non_production_step = tmp_path / "non_production.step"
+    leader_step.write_text("leader", encoding="utf-8")
+    follower_step.write_text("follower", encoding="utf-8")
+    non_production_step.write_text("non-production", encoding="utf-8")
+
+    metadata = {
+        "assembly_name": "nitehawk_holder_left_assembly",
+        "resource_file": str(tmp_path / "nitehawk_holder.yaml"),
+        "public_parameters": {},
+        "generator_kwargs": {},
+        "dependencies": [
+            {
+                "kwarg_name": "sprite_extruder",
+                "assembly_name": "sprite_extruder_left_assembly",
+                "artifact": "assembly",
+            }
+        ],
+    }
+    resource_data = {
+        "Builder": {
+            "Visualization": {
+                "parts": [
+                    {
+                        "source": "injected",
+                        "assembly": "sprite_extruder",
+                        "artifact": "all",
+                    }
+                ]
+            }
+        }
+    }
+    built_results_by_name = {
+        "sprite_extruder_left_assembly": {
+            "assembly_name": "sprite_extruder_left_assembly",
+            "artifacts": {
+                "leader_step": str(leader_step),
+                "followers": [
+                    {
+                        "path": str(follower_step),
+                        "name": "fan_shroud",
+                        "index": 0,
+                    }
+                ],
+                "non_production_parts": [
+                    {
+                        "path": str(non_production_step),
+                        "name": "hotend",
+                        "index": 0,
+                    }
+                ],
+            },
+        }
+    }
+
+    monkeypatch.setattr(builder, "_import_dependency_part", lambda path: f"part:{path}")
+
+    parts = builder._materialize_rule_parts(
+        metadata,
+        resource_data,
+        "visualization",
+        built_results_by_name,
+        tmp_path,
+        None,
+    )
+
+    assert len(parts) == 3
+    assert [part["artifact"] for part in parts] == [
+        "leader",
+        "followers",
+        "non_production_parts",
+    ]
+    assert [part["name"] for part in parts] == [
+        "sprite_extruder_left_assembly",
+        "fan_shroud",
+        "hotend",
+    ]
+
+
+def test_materialize_rule_parts_deduplicates_injected_dependency_aliases(
+    monkeypatch, tmp_path
+):
+    dependency_step = tmp_path / "sprite_extruder_left__leader.step"
+    dependency_step.write_text("sprite-extruder-left", encoding="utf-8")
+
+    metadata = {
+        "assembly_name": "nitehawk_holder_left_assembly",
+        "resource_file": str(tmp_path / "nitehawk_holder.yaml"),
+        "public_parameters": {},
+        "generator_kwargs": {},
+        "dependencies": [
+            {
+                "kwarg_name": "sprite_extruder",
+                "assembly_name": "sprite_extruder_left_assembly",
+                "artifact": "assembly",
+            }
+        ],
+    }
+    resource_data = {
+        "Builder": {
+            "Visualization": {
+                "parts": [
+                    {
+                        "source": "injected",
+                        "artifact": "leader",
+                    }
+                ]
+            }
+        }
+    }
+    built_results_by_name = {
+        "sprite_extruder_left_assembly": {
+            "assembly_name": "sprite_extruder_left_assembly",
+            "artifacts": {"leader_step": str(dependency_step)},
+        }
+    }
+
+    monkeypatch.setattr(builder, "_import_dependency_part", lambda path: f"part:{path}")
+
+    parts = builder._materialize_rule_parts(
+        metadata,
+        resource_data,
+        "visualization",
+        built_results_by_name,
+        tmp_path,
+        None,
+    )
+
+    assert len(parts) == 1
+    assert parts[0]["obj_metadata"]["assembly_name"] == "sprite_extruder_left_assembly"
 
 
 def test_materialize_rule_parts_resolves_animation_from_metadata_context(

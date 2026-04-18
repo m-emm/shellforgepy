@@ -1935,6 +1935,14 @@ def _artifact_entries_for_selector(
     artifacts = metadata.get("artifacts", {})
     assembly_name = str(metadata.get("assembly_name"))
 
+    if artifact == "all":
+        entries: List[Dict[str, Any]] = []
+        if artifacts.get("leader_step"):
+            entries.extend(_artifact_entries_for_selector(metadata, "leader"))
+        entries.extend(_artifact_entries_for_selector(metadata, "followers"))
+        entries.extend(_artifact_entries_for_selector(metadata, "non_production_parts"))
+        return entries
+
     if artifact == "leader":
         path = artifacts.get("leader_step")
         return (
@@ -1998,6 +2006,13 @@ def _artifact_entries_for_selector(
 def _addressable_artifact_selectors(metadata: Mapping[str, Any]) -> List[str]:
     artifacts = metadata.get("artifacts", {})
     selectors: List[str] = []
+
+    if (
+        artifacts.get("leader_step")
+        or artifacts.get("followers")
+        or artifacts.get("non_production_parts")
+    ):
+        selectors.append("all")
 
     if artifacts.get("leader_step"):
         selectors.append("leader")
@@ -2549,6 +2564,36 @@ def _materialize_rule_parts(
 
         if source in {"self", "assembly"}:
             targets = [metadata]
+        elif source in {"injected", "inject"}:
+            injected_targets_by_key: Dict[str, Dict[str, Any]] = {}
+            injected_targets_in_order: List[Dict[str, Any]] = []
+            for dependency in metadata.get("dependencies", []):
+                assembly_name = str(dependency["assembly_name"])
+                dependency_target = injected_targets_by_key.get(assembly_name)
+                if dependency_target is None:
+                    dependency_target = _dependency_metadata_for_assembly(
+                        assembly_name,
+                        built_results_by_name,
+                        repository_dir,
+                    )
+                    injected_targets_by_key[assembly_name] = dependency_target
+                    injected_targets_in_order.append(dependency_target)
+
+                kwarg_name = dependency.get("kwarg_name")
+                if kwarg_name:
+                    injected_targets_by_key[str(kwarg_name)] = dependency_target
+
+            dependency_name = rule.get("assembly")
+            if dependency_name:
+                dependency_key = str(dependency_name)
+                dependency_target = injected_targets_by_key.get(dependency_key)
+                if dependency_target is None:
+                    raise BuilderError(
+                        f"Unsupported injected dependency selector '{dependency_key}'"
+                    )
+                targets = [dependency_target]
+            else:
+                targets = injected_targets_in_order
         elif source in {"dependencies", "dependency"}:
             dependency_name = rule.get("assembly")
             if dependency_name:
@@ -2563,9 +2608,17 @@ def _materialize_rule_parts(
                     dependency_metadata[dependency_key] = dependency_target
                 targets = [dependency_target]
             else:
-                targets = [
-                    dependency_metadata[name] for name in sorted(dependency_metadata)
-                ]
+                targets = []
+                seen_dependency_targets: set[str] = set()
+                for dependency_key in sorted(dependency_metadata):
+                    dependency_target = dependency_metadata[dependency_key]
+                    target_name = str(
+                        dependency_target.get("assembly_name") or dependency_key
+                    )
+                    if target_name in seen_dependency_targets:
+                        continue
+                    seen_dependency_targets.add(target_name)
+                    targets.append(dependency_target)
         else:
             raise BuilderError(f"Unsupported scene source '{source}'")
 
@@ -2598,6 +2651,7 @@ def _materialize_rule_parts(
                         "name": _format_scene_name(entry, rule),
                         "part": part,
                         "assembly_name": entry["assembly_name"],
+                        "artifact": entry["artifact"],
                         "obj_metadata": {
                             "assembly_name": entry["assembly_name"],
                             "assembly_label": _assembly_group_label(
