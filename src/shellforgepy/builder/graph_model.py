@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import islice
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import networkx as nx
@@ -672,6 +673,58 @@ def expand_with_dependents(
     return sorted(expanded)
 
 
+def _canonicalize_cycle(cycle: Sequence[str]) -> tuple[str, ...]:
+    normalized = tuple(str(name) for name in cycle)
+    if not normalized:
+        return ()
+    start_index = min(range(len(normalized)), key=lambda index: normalized[index])
+    return tuple(
+        normalized[(start_index + offset) % len(normalized)]
+        for offset in range(len(normalized))
+    )
+
+
+def _format_cycle(graph: nx.DiGraph, cycle: Sequence[str]) -> str:
+    ordered_cycle = _canonicalize_cycle(cycle)
+    if not ordered_cycle:
+        return "<empty cycle>"
+
+    formatted = [ordered_cycle[0]]
+    for index, source in enumerate(ordered_cycle):
+        target = ordered_cycle[(index + 1) % len(ordered_cycle)]
+        edge_data = graph.edges[source, target]
+        kinds = edge_data.get("kinds", set())
+        if isinstance(kinds, str):
+            kind_text = kinds
+        else:
+            kind_text = ", ".join(sorted(str(kind) for kind in kinds)) or "unknown"
+        formatted.append(f"-[{kind_text}]-> {target}")
+    return " ".join(formatted)
+
+
+def _dependency_cycle_debug_lines(
+    graph: nx.DiGraph,
+    *,
+    max_cycles: int = 10,
+) -> List[str]:
+    raw_cycles = list(islice(nx.simple_cycles(graph), max_cycles + 1))
+    if not raw_cycles:
+        return ["unable to enumerate concrete cycles"]
+
+    has_more = len(raw_cycles) > max_cycles
+    cycles = raw_cycles[:max_cycles]
+    unique_cycles = sorted({_canonicalize_cycle(cycle) for cycle in cycles})
+    debug_lines = [
+        f"cycle {index}: {_format_cycle(graph, cycle)}"
+        for index, cycle in enumerate(unique_cycles, start=1)
+    ]
+    if has_more:
+        debug_lines.append(
+            f"showing first {len(cycles)} cycles; additional cycles omitted"
+        )
+    return debug_lines
+
+
 def resolve_build_generation_names(
     model: BuilderGraphModel,
     selected_names: Optional[Iterable[str]] = None,
@@ -706,6 +759,9 @@ def resolve_build_generation_names(
     try:
         generations = list(nx.topological_generations(subgraph))
     except nx.NetworkXUnfeasible as exc:
-        raise BuilderError("Cyclic dependency detected in assembly graph") from exc
+        debug_lines = _dependency_cycle_debug_lines(subgraph)
+        raise BuilderError(
+            "Cyclic dependency detected in assembly graph:\n" + "\n".join(debug_lines)
+        ) from exc
 
     return [sorted(str(name) for name in generation) for generation in generations]

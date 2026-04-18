@@ -2781,6 +2781,59 @@ def test_resolve_build_generations_does_not_pull_later_moves_of_rigidly_attached
     ]
 
 
+def test_resolve_build_generation_names_reports_declared_dependency_cycles():
+    model = builder_graph_model.build_graph_model(
+        [
+            {"name": "alpha", "depends_on": ["beta"]},
+            {"name": "beta", "depends_on": ["alpha"]},
+        ]
+    )
+
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder_graph_model.resolve_build_generation_names(model)
+
+    message = str(excinfo.value)
+    assert "Cyclic dependency detected in assembly graph:" in message
+    assert (
+        "cycle 1: alpha -[declared_dependency]-> beta " "-[declared_dependency]-> alpha"
+    ) in message
+
+
+def test_resolve_build_generation_names_reports_placement_build_cycles():
+    model = builder_graph_model.build_graph_model(
+        [
+            {
+                "name": "bracket",
+                "depends_on": [],
+                "inject_parts": {"carrier": "carrier"},
+            },
+            {"name": "carrier", "depends_on": []},
+            {"name": "frame", "depends_on": ["bracket"]},
+        ],
+        {
+            "placement": {
+                "alignments": [
+                    {
+                        "part": "carrier",
+                        "to": "frame",
+                        "alignment": "CENTER",
+                    }
+                ]
+            }
+        },
+    )
+
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder_graph_model.resolve_build_generation_names(model)
+
+    message = str(excinfo.value)
+    assert "Cyclic dependency detected in assembly graph:" in message
+    assert (
+        "cycle 1: bracket -[declared_dependency]-> frame "
+        "-[placement_build]-> bracket"
+    ) in message
+
+
 def test_run_builder_visualization_rigid_attach_does_not_widen_build_subset(
     monkeypatch, tmp_path
 ):
