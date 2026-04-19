@@ -132,6 +132,46 @@ def test_fit_part_between_long_off_center_part_uses_limiter_interval_not_part_ce
     assert np.isclose(fitted_bbox[1][1], north_bbox[0][1], atol=1e-6)
 
 
+def test_fit_part_between_applies_start_and_end_gaps_relative_to_limiters():
+    long_box, south_box, north_box = _create_centered_fit_between_fixture()
+
+    fitted = fit_part_between(
+        long_box,
+        cut_normal=(0, 1, 0),
+        limiting_start_part=south_box,
+        limiting_end_part=north_box,
+        start_gap=3.0,
+        end_gap=4.0,
+    )
+
+    fitted_bbox = get_bounding_box(fitted)
+    south_bbox = get_bounding_box(south_box)
+    north_bbox = get_bounding_box(north_box)
+
+    assert np.isclose(fitted_bbox[0][1], south_bbox[1][1] + 3.0, atol=1e-6)
+    assert np.isclose(fitted_bbox[1][1], north_bbox[0][1] - 4.0, atol=1e-6)
+
+
+def test_fit_part_between_negative_gaps_extend_outward():
+    long_box, south_box, north_box = _create_centered_fit_between_fixture()
+
+    fitted = fit_part_between(
+        long_box,
+        cut_normal=(0, 1, 0),
+        limiting_start_part=south_box,
+        limiting_end_part=north_box,
+        start_gap=-2.0,
+        end_gap=-5.0,
+    )
+
+    fitted_bbox = get_bounding_box(fitted)
+    south_bbox = get_bounding_box(south_box)
+    north_bbox = get_bounding_box(north_box)
+
+    assert np.isclose(fitted_bbox[0][1], south_bbox[1][1] - 2.0, atol=1e-6)
+    assert np.isclose(fitted_bbox[1][1], north_bbox[0][1] + 5.0, atol=1e-6)
+
+
 def test_fit_part_between_centered_boxes_is_independent_of_order_and_normal_sign():
     long_box, south_box, north_box = _create_centered_fit_between_fixture()
 
@@ -175,6 +215,22 @@ def test_fit_part_between_one_sided_centered_case_keeps_remaining_span():
         north_bbox[0][1] - long_box_bbox[0][1],
         atol=1e-6,
     )
+
+
+def test_fit_part_between_one_sided_gap_moves_cut_toward_kept_side():
+    long_box, _, north_box = _create_centered_fit_between_fixture()
+
+    fitted = fit_part_between(
+        long_box,
+        cut_normal=(0, 1, 0),
+        limiting_start_part=north_box,
+        start_gap=6.0,
+    )
+
+    fitted_bbox = get_bounding_box(fitted)
+    north_bbox = get_bounding_box(north_box)
+
+    assert np.isclose(fitted_bbox[1][1], north_bbox[0][1] - 6.0, atol=1e-6)
 
 
 def test_fit_part_between_respects_custom_center():

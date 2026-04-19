@@ -1279,6 +1279,14 @@ def _plane_point_for_projection(projection_value, cut_normal, anchor_point):
     return anchor_point + (projection_value - anchor_projection) * cut_normal
 
 
+def _projection_value_on_line(point, line_direction):
+    return float(
+        np.dot(
+            np.asarray(point, dtype=np.float64), normalize(np.asarray(line_direction))
+        )
+    )
+
+
 def _cut_part_keep_reference_side(part, cut_point, cut_normal, reference_point):
     upper_part, lower_part = cut_in_two(
         part, cut_point=cut_point, cut_normal=cut_normal
@@ -1299,6 +1307,8 @@ def fit_part_between(
     limiting_start_part,
     limiting_end_part=None,
     center=None,
+    start_gap=0.0,
+    end_gap=0.0,
 ):
     """
     Trim a part so it fits between one or two limiting parts along a line.
@@ -1306,12 +1316,17 @@ def fit_part_between(
     With a single limiting part, the trimming line passes through ``center`` in
     the ``cut_normal`` direction. The helper intersects that line with the
     limiting part's bounding box and keeps the side containing ``center``.
+    ``start_gap`` then shifts the cut inward toward that kept side. Negative
+    values shift the cut outward and keep more of the part.
 
     With two limiting parts, the helper ignores the part bbox center for the
     between-logic and instead orders the limiting parts by their projected
     position along ``cut_normal``. It then keeps the region between the two
     inner faces, which avoids degenerate results when the part to trim is very
-    long and both limiters lie on the same side of its bbox center.
+    long and both limiters lie on the same side of its bbox center. ``start_gap``
+    and ``end_gap`` are attached to the respective limiting parts before that
+    ordering and then applied inward from each part's inner face. Negative
+    values shift outward and keep more material.
 
     Raises:
     -------
@@ -1333,22 +1348,28 @@ def fit_part_between(
     trimmed_part = part
 
     if limiting_end_part is not None:
-        start_bbox = get_bounding_box(limiting_start_part)
-        end_bbox = get_bounding_box(limiting_end_part)
+        boundaries = []
+        for limiting_part, gap in [
+            (limiting_start_part, start_gap),
+            (limiting_end_part, end_gap),
+        ]:
+            limit_bbox = get_bounding_box(limiting_part)
+            interval = _bbox_projection_interval(limit_bbox, normalized_normal)
+            boundaries.append(
+                {
+                    "interval": interval,
+                    "center_projection": sum(interval) / 2.0,
+                    "gap": float(gap),
+                }
+            )
 
-        start_interval = _bbox_projection_interval(start_bbox, normalized_normal)
-        end_interval = _bbox_projection_interval(end_bbox, normalized_normal)
+        boundaries.sort(key=lambda boundary: boundary["center_projection"])
 
-        start_center_projection = sum(start_interval) / 2.0
-        end_center_projection = sum(end_interval) / 2.0
+        lower_boundary = boundaries[0]
+        upper_boundary = boundaries[1]
 
-        if start_center_projection <= end_center_projection:
-            lower_interval, upper_interval = start_interval, end_interval
-        else:
-            lower_interval, upper_interval = end_interval, start_interval
-
-        inside_lower_projection = lower_interval[1]
-        inside_upper_projection = upper_interval[0]
+        inside_lower_projection = lower_boundary["interval"][1] + lower_boundary["gap"]
+        inside_upper_projection = upper_boundary["interval"][0] - upper_boundary["gap"]
 
         lower_cut_point = _plane_point_for_projection(
             inside_lower_projection, normalized_normal, reference_center
@@ -1374,9 +1395,19 @@ def fit_part_between(
     cut_point = _nearest_line_box_intersection_point(
         reference_center, normalized_normal, limit_bbox
     )
+    reference_projection = _projection_value_on_line(
+        reference_center, normalized_normal
+    )
+    cut_projection = _projection_value_on_line(cut_point, normalized_normal)
+    gap_direction = -1.0 if reference_projection <= cut_projection else 1.0
+    adjusted_cut_point = _plane_point_for_projection(
+        cut_projection + gap_direction * float(start_gap),
+        normalized_normal,
+        reference_center,
+    )
     trimmed_part = _cut_part_keep_reference_side(
         trimmed_part,
-        cut_point=cut_point,
+        cut_point=adjusted_cut_point,
         cut_normal=normalized_normal,
         reference_point=reference_center,
     )
