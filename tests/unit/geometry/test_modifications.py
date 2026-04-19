@@ -10,13 +10,21 @@ from shellforgepy.adapters._adapter import (
 )
 from shellforgepy.geometry.modifications import (
     find_planar_surface_features,
+    fit_part_between,
     orient_for_flatness,
     orient_for_flatness_riemannian,
     orient_max_planar_area,
     slice_part,
     transform_with_function_tesselating,
 )
-from shellforgepy.simple import get_bounding_box, get_bounding_box_size, rotate
+from shellforgepy.simple import (
+    Alignment,
+    align,
+    get_bounding_box,
+    get_bounding_box_size,
+    rotate,
+    translate,
+)
 
 
 def test_slice_part_basic_functionality():
@@ -55,6 +63,147 @@ def test_slice_part_basic_functionality():
         center_y = (min_point[1] + max_point[1]) / 2
         assert abs(center_x) < 0.1, f"Slice {i} should be X-centered, got {center_x}"
         assert abs(center_y) < 0.1, f"Slice {i} should be Y-centered, got {center_y}"
+
+
+def _create_centered_fit_between_fixture():
+    long_box = translate(0, -100, 0)(create_box(20, 200, 20))
+
+    south_box = create_box(20, 20, 20, origin=(-10, -10, -10))
+    south_box = translate(0, -45, 0)(south_box)
+
+    north_box = create_box(20, 20, 20, origin=(-10, -10, -10))
+    north_box = translate(0, 35, 0)(north_box)
+
+    return long_box, south_box, north_box
+
+
+def _create_long_off_center_fit_between_fixture():
+    long_box = create_box(5, 300, 5)
+
+    south_box = create_box(100, 10, 10)
+    south_box = align(south_box, long_box, Alignment.CENTER)
+    south_box = translate(0, -80, 0)(south_box)
+
+    north_box = create_box(100, 10, 10)
+    north_box = align(north_box, long_box, Alignment.CENTER)
+    north_box = translate(0, -64, 0)(north_box)
+
+    return long_box, south_box, north_box
+
+
+def test_fit_part_between_matches_gap_between_centered_boxes():
+    long_box, south_box, north_box = _create_centered_fit_between_fixture()
+
+    fitted = fit_part_between(
+        long_box,
+        cut_normal=(0, 1, 0),
+        limiting_start_part=south_box,
+        limiting_end_part=north_box,
+    )
+
+    fitted_bbox = get_bounding_box(fitted)
+    south_bbox = get_bounding_box(south_box)
+    north_bbox = get_bounding_box(north_box)
+
+    expected_min_y = south_bbox[1][1]
+    expected_max_y = north_bbox[0][1]
+    expected_gap = expected_max_y - expected_min_y
+
+    assert np.isclose(fitted_bbox[0][1], expected_min_y, atol=1e-6)
+    assert np.isclose(fitted_bbox[1][1], expected_max_y, atol=1e-6)
+    assert np.isclose(get_bounding_box_size(fitted)[1], expected_gap, atol=1e-6)
+
+
+def test_fit_part_between_long_off_center_part_uses_limiter_interval_not_part_center():
+    long_box, south_box, north_box = _create_long_off_center_fit_between_fixture()
+
+    fitted = fit_part_between(
+        long_box,
+        cut_normal=(0, 1, 0),
+        limiting_start_part=south_box,
+        limiting_end_part=north_box,
+    )
+
+    fitted_bbox = get_bounding_box(fitted)
+    south_bbox = get_bounding_box(south_box)
+    north_bbox = get_bounding_box(north_box)
+
+    assert np.isclose(fitted_bbox[0][1], south_bbox[1][1], atol=1e-6)
+    assert np.isclose(fitted_bbox[1][1], north_bbox[0][1], atol=1e-6)
+
+
+def test_fit_part_between_centered_boxes_is_independent_of_order_and_normal_sign():
+    long_box, south_box, north_box = _create_centered_fit_between_fixture()
+
+    fitted_a = fit_part_between(
+        long_box,
+        cut_normal=(0, 1, 0),
+        limiting_start_part=south_box,
+        limiting_end_part=north_box,
+    )
+    fitted_b = fit_part_between(
+        long_box,
+        cut_normal=(0, -1, 0),
+        limiting_start_part=north_box,
+        limiting_end_part=south_box,
+    )
+
+    bbox_a = get_bounding_box(fitted_a)
+    bbox_b = get_bounding_box(fitted_b)
+
+    assert np.allclose(bbox_a[0], bbox_b[0], atol=1e-6)
+    assert np.allclose(bbox_a[1], bbox_b[1], atol=1e-6)
+
+
+def test_fit_part_between_one_sided_centered_case_keeps_remaining_span():
+    long_box, _, north_box = _create_centered_fit_between_fixture()
+
+    fitted = fit_part_between(
+        long_box,
+        cut_normal=(0, 1, 0),
+        limiting_start_part=north_box,
+    )
+
+    fitted_bbox = get_bounding_box(fitted)
+    long_box_bbox = get_bounding_box(long_box)
+    north_bbox = get_bounding_box(north_box)
+
+    assert np.isclose(fitted_bbox[0][1], long_box_bbox[0][1], atol=1e-6)
+    assert np.isclose(fitted_bbox[1][1], north_bbox[0][1], atol=1e-6)
+    assert np.isclose(
+        get_bounding_box_size(fitted)[1],
+        north_bbox[0][1] - long_box_bbox[0][1],
+        atol=1e-6,
+    )
+
+
+def test_fit_part_between_respects_custom_center():
+    part = create_box(10, 100, 10)
+    limiting_part = create_box(10, 10, 10, origin=(0, 60, 0))
+
+    fitted = fit_part_between(
+        part,
+        cut_normal=(0, 1, 0),
+        limiting_start_part=limiting_part,
+        center=(5, 20, 5),
+    )
+
+    bbox_min, bbox_max = get_bounding_box(fitted)
+
+    assert np.allclose(bbox_min, (0.0, 0.0, 0.0), atol=1e-6)
+    assert np.allclose(bbox_max, (10.0, 60.0, 10.0), atol=1e-6)
+
+
+def test_fit_part_between_raises_when_center_line_misses_limiting_box():
+    part = create_box(10, 100, 10)
+    limiting_part = create_box(10, 10, 10, origin=(20, 20, 0))
+
+    with pytest.raises(ValueError, match="does not intersect"):
+        fit_part_between(
+            part,
+            cut_normal=(0, 1, 0),
+            limiting_start_part=limiting_part,
+        )
 
 
 def test_slice_part_zero_volume_filtering():

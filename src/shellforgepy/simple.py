@@ -117,6 +117,7 @@ from .geometry.higher_order_solids import (
 )
 from .geometry.modifications import (
     cut_in_two,
+    fit_part_between,
     orient_for_flatness,
     orient_for_flatness_riemannian,
     orient_max_planar_area,
@@ -229,6 +230,7 @@ __all__ = [
     "export_solid_to_stl",
     "export_structured_step",
     "face_point_cloud",
+    "fit_part_between",
     "fibonacci_sphere",
     "filter_edges_by_function",
     "get_adapter_id",

@@ -8,6 +8,7 @@ from shellforgepy.adapters._adapter import (
     create_box,
     create_solid_from_traditional_face_vertex_maps,
     get_bounding_box,
+    get_bounding_box_center,
     get_bounding_box_size,
     get_volume,
     tesellate,
@@ -1212,3 +1213,172 @@ def cut_in_two(part, cut_point=None, cut_normal=None, cut_thickness=0):
     upper_part = part.cut(cutter)
     lower_part = part.cut(top_cutter)
     return upper_part, lower_part
+
+
+def _line_aabb_intersection_parameters(
+    line_point, line_direction, bbox, tolerance=1e-9
+):
+    line_point = np.asarray(line_point, dtype=np.float64)
+    line_direction = np.asarray(line_direction, dtype=np.float64)
+    bbox_min = np.asarray(bbox[0], dtype=np.float64)
+    bbox_max = np.asarray(bbox[1], dtype=np.float64)
+
+    t_min = -np.inf
+    t_max = np.inf
+
+    for axis in range(3):
+        direction_component = line_direction[axis]
+        if abs(direction_component) <= tolerance:
+            if (
+                line_point[axis] < bbox_min[axis] - tolerance
+                or line_point[axis] > bbox_max[axis] + tolerance
+            ):
+                raise ValueError("Line does not intersect limiting part bounding box")
+            continue
+
+        axis_t0 = (bbox_min[axis] - line_point[axis]) / direction_component
+        axis_t1 = (bbox_max[axis] - line_point[axis]) / direction_component
+
+        axis_enter = min(axis_t0, axis_t1)
+        axis_exit = max(axis_t0, axis_t1)
+
+        t_min = max(t_min, axis_enter)
+        t_max = min(t_max, axis_exit)
+
+        if t_min > t_max + tolerance:
+            raise ValueError("Line does not intersect limiting part bounding box")
+
+    return float(t_min), float(t_max)
+
+
+def _nearest_line_box_intersection_point(line_point, line_direction, bbox):
+    t_min, t_max = _line_aabb_intersection_parameters(line_point, line_direction, bbox)
+    nearest_t = t_min if abs(t_min) <= abs(t_max) else t_max
+    return np.asarray(line_point, dtype=np.float64) + nearest_t * np.asarray(
+        line_direction, dtype=np.float64
+    )
+
+
+def _bbox_projection_interval(bbox, direction):
+    bbox_min = np.asarray(bbox[0], dtype=np.float64)
+    bbox_max = np.asarray(bbox[1], dtype=np.float64)
+    bbox_center = (bbox_min + bbox_max) / 2.0
+    half_extents = (bbox_max - bbox_min) / 2.0
+    direction = normalize(np.asarray(direction, dtype=np.float64))
+
+    projected_center = float(np.dot(bbox_center, direction))
+    projected_radius = float(np.dot(np.abs(direction), half_extents))
+
+    return projected_center - projected_radius, projected_center + projected_radius
+
+
+def _plane_point_for_projection(projection_value, cut_normal, anchor_point):
+    cut_normal = normalize(np.asarray(cut_normal, dtype=np.float64))
+    anchor_point = np.asarray(anchor_point, dtype=np.float64)
+    anchor_projection = float(np.dot(anchor_point, cut_normal))
+    return anchor_point + (projection_value - anchor_projection) * cut_normal
+
+
+def _cut_part_keep_reference_side(part, cut_point, cut_normal, reference_point):
+    upper_part, lower_part = cut_in_two(
+        part, cut_point=cut_point, cut_normal=cut_normal
+    )
+    reference_distance = float(
+        np.dot(
+            np.asarray(reference_point, dtype=np.float64)
+            - np.asarray(cut_point, dtype=np.float64),
+            normalize(np.asarray(cut_normal, dtype=np.float64)),
+        )
+    )
+    return upper_part if reference_distance >= 0.0 else lower_part
+
+
+def fit_part_between(
+    part,
+    cut_normal,
+    limiting_start_part,
+    limiting_end_part=None,
+    center=None,
+):
+    """
+    Trim a part so it fits between one or two limiting parts along a line.
+
+    With a single limiting part, the trimming line passes through ``center`` in
+    the ``cut_normal`` direction. The helper intersects that line with the
+    limiting part's bounding box and keeps the side containing ``center``.
+
+    With two limiting parts, the helper ignores the part bbox center for the
+    between-logic and instead orders the limiting parts by their projected
+    position along ``cut_normal``. It then keeps the region between the two
+    inner faces, which avoids degenerate results when the part to trim is very
+    long and both limiters lie on the same side of its bbox center.
+
+    Raises:
+    -------
+    ValueError
+        If ``cut_normal`` has zero length or if the center-line does not
+        intersect one of the limiting parts' bounding boxes.
+    """
+    reference_center = (
+        np.asarray(get_bounding_box_center(part), dtype=np.float64)
+        if center is None
+        else np.asarray(center, dtype=np.float64)
+    )
+    normal = np.asarray(cut_normal, dtype=np.float64)
+
+    if np.linalg.norm(normal) == 0:
+        raise ValueError("cut_normal must be non-zero")
+
+    normalized_normal = normalize(normal)
+    trimmed_part = part
+
+    if limiting_end_part is not None:
+        start_bbox = get_bounding_box(limiting_start_part)
+        end_bbox = get_bounding_box(limiting_end_part)
+
+        start_interval = _bbox_projection_interval(start_bbox, normalized_normal)
+        end_interval = _bbox_projection_interval(end_bbox, normalized_normal)
+
+        start_center_projection = sum(start_interval) / 2.0
+        end_center_projection = sum(end_interval) / 2.0
+
+        if start_center_projection <= end_center_projection:
+            lower_interval, upper_interval = start_interval, end_interval
+        else:
+            lower_interval, upper_interval = end_interval, start_interval
+
+        inside_lower_projection = lower_interval[1]
+        inside_upper_projection = upper_interval[0]
+
+        lower_cut_point = _plane_point_for_projection(
+            inside_lower_projection, normalized_normal, reference_center
+        )
+        upper_cut_point = _plane_point_for_projection(
+            inside_upper_projection, normalized_normal, reference_center
+        )
+
+        trimmed_part, _ = cut_in_two(
+            trimmed_part,
+            cut_point=lower_cut_point,
+            cut_normal=normalized_normal,
+        )
+        _, trimmed_part = cut_in_two(
+            trimmed_part,
+            cut_point=upper_cut_point,
+            cut_normal=normalized_normal,
+        )
+
+        return trimmed_part
+
+    limit_bbox = get_bounding_box(limiting_start_part)
+    cut_point = _nearest_line_box_intersection_point(
+        reference_center, normalized_normal, limit_bbox
+    )
+    trimmed_part = _cut_part_keep_reference_side(
+        trimmed_part,
+        cut_point=cut_point,
+        cut_normal=normalized_normal,
+        reference_point=reference_center,
+    )
+
+    return trimmed_part
