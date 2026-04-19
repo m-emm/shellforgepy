@@ -40,6 +40,9 @@ _SAFE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 BUILD_METADATA_SCHEMA_VERSION = 2
 DEFAULT_PROD_GAP = 4.0
 DEFAULT_BED_WIDTH = 200.0
+_COLLECTION_ASSEMBLY_GENERATOR_PATH = (
+    "shellforgepy.builder.builder._build_collection_assembly"
+)
 
 
 class _BuilderLoader(yaml.SafeLoader):
@@ -85,6 +88,7 @@ class _ResolvedAssembly:
     generator_path: str
     logical_part_name: str
     parameter_hash: str
+    is_collection: bool = False
 
 
 @dataclass(frozen=True)
@@ -713,6 +717,34 @@ def _select_part_definition(
     )
 
 
+def _collection_assembly_enabled(
+    resource_path: Path,
+    resource_data: Mapping[str, Any],
+) -> bool:
+    builder_section = resource_data.get("Builder", {})
+    if builder_section is None:
+        return False
+    if not isinstance(builder_section, Mapping):
+        raise BuilderError(f"Builder section in {resource_path} must be a mapping")
+
+    collection_config = builder_section.get("Collection")
+    if collection_config is None:
+        return False
+    if isinstance(collection_config, bool):
+        return collection_config
+    if not isinstance(collection_config, Mapping):
+        raise BuilderError(
+            f"Builder.Collection in {resource_path} must be a boolean or mapping"
+        )
+
+    enabled = collection_config.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise BuilderError(
+            f"Builder.Collection.enabled in {resource_path} must be a boolean"
+        )
+    return enabled
+
+
 def _resolve_assembly(
     config_path: Path,
     entry: Mapping[str, Any],
@@ -720,9 +752,18 @@ def _resolve_assembly(
 ) -> _ResolvedAssembly:
     resource_path = _discover_resource_file(config_path, entry)
     resource_data = _load_yaml(resource_path)
-    logical_part_name, part_definition = _select_part_definition(
-        resource_path, resource_data, entry
-    )
+    is_collection = _collection_assembly_enabled(resource_path, resource_data)
+    if is_collection:
+        logical_part_name = str(
+            entry.get("logical_part_name")
+            or entry.get("part_name")
+            or resource_path.stem
+        )
+        part_definition: Dict[str, Any] = {}
+    else:
+        logical_part_name, part_definition = _select_part_definition(
+            resource_path, resource_data, entry
+        )
 
     parameter_definitions = resource_data.get("Parameters", {})
     if not isinstance(parameter_definitions, Mapping):
@@ -743,25 +784,31 @@ def _resolve_assembly(
         resource_path=resource_path,
     )
 
-    properties = part_definition.get("Properties", {})
-    if not isinstance(properties, Mapping):
-        raise BuilderError(
-            f"Part '{logical_part_name}' in {resource_path} has invalid Properties"
-        )
+    if is_collection:
+        generator_path = _COLLECTION_ASSEMBLY_GENERATOR_PATH
+        generator_kwargs = {}
+    else:
+        properties = part_definition.get("Properties", {})
+        if not isinstance(properties, Mapping):
+            raise BuilderError(
+                f"Part '{logical_part_name}' in {resource_path} has invalid Properties"
+            )
 
-    generator_path = properties.get("Generator")
-    if not generator_path:
-        raise BuilderError(
-            f"Part '{logical_part_name}' in {resource_path} is missing Properties.Generator"
-        )
+        generator_path = properties.get("Generator")
+        if not generator_path:
+            raise BuilderError(
+                f"Part '{logical_part_name}' in {resource_path} is missing Properties.Generator"
+            )
 
-    generator_properties = properties.get("Properties", {})
-    if not isinstance(generator_properties, Mapping):
-        raise BuilderError(
-            f"Part '{logical_part_name}' in {resource_path} has invalid Properties.Properties section"
-        )
+        generator_properties = properties.get("Properties", {})
+        if not isinstance(generator_properties, Mapping):
+            raise BuilderError(
+                f"Part '{logical_part_name}' in {resource_path} has invalid Properties.Properties section"
+            )
 
-    generator_kwargs = _resolve_inline_mapping(generator_properties, public_parameters)
+        generator_kwargs = _resolve_inline_mapping(
+            generator_properties, public_parameters
+        )
     return _ResolvedAssembly(
         name=str(entry["name"]),
         entry=dict(entry),
@@ -772,6 +819,19 @@ def _resolve_assembly(
         generator_path=str(generator_path),
         logical_part_name=logical_part_name,
         parameter_hash="",
+        is_collection=is_collection,
+    )
+
+
+def _build_collection_assembly() -> Any:
+    from shellforgepy.construct.leader_followers_cutters_part import (
+        LeaderFollowersCuttersPart,
+    )
+    from shellforgepy.simple import create_box
+
+    placeholder_size = 0.01
+    return LeaderFollowersCuttersPart(
+        create_box(placeholder_size, placeholder_size, placeholder_size)
     )
 
 
@@ -4160,20 +4220,27 @@ def build_from_file(
                 placement_state,
             )
             generator = _load_generator_callable(resolved.generator_path)
-            injected_public_parameter_kwargs = _auto_injected_public_parameter_kwargs(
-                generator,
-                resolved.public_parameters,
-                resolved.generator_kwargs,
-            )
-            injected_context_kwargs = _auto_injected_context_kwargs(
-                generator,
-                builder_context,
-                resolved.generator_kwargs,
-            )
+            if resolved.is_collection:
+                injected_public_parameter_kwargs = deepcopy(resolved.public_parameters)
+                injected_context_kwargs = {}
+            else:
+                injected_public_parameter_kwargs = (
+                    _auto_injected_public_parameter_kwargs(
+                        generator,
+                        resolved.public_parameters,
+                        resolved.generator_kwargs,
+                    )
+                )
+                injected_context_kwargs = _auto_injected_context_kwargs(
+                    generator,
+                    builder_context,
+                    resolved.generator_kwargs,
+                )
             generator_context = injected_context_kwargs or None
             legacy_context_payload = (
                 _generator_context_payload(builder_context)
                 if builder_context
+                and not resolved.is_collection
                 and _generator_accepts_keyword_argument(generator, "context")
                 and "context" not in resolved.generator_kwargs
                 else None
@@ -4236,22 +4303,25 @@ def build_from_file(
                 resolved.name,
                 resolved.generator_path,
             )
-            generator_kwargs = deepcopy(injected_public_parameter_kwargs)
-            generator_kwargs.update(deepcopy(resolved.generator_kwargs))
-            generator_kwargs.update(deepcopy(injected_context_kwargs))
-            for injection in dependency_injections:
-                generator_kwargs[injection.kwarg_name] = injection.part
-            if legacy_context_payload is not None:
-                generator_kwargs["context"] = deepcopy(legacy_context_payload)
-            _raise_missing_generator_arguments_error(
-                generator=generator,
-                resolved=resolved,
-                entry=entry,
-                config_file=config_file,
-                assemblies=assemblies,
-                builder_context=builder_context,
-                provided_kwargs=generator_kwargs,
-            )
+            if resolved.is_collection:
+                generator_kwargs = {}
+            else:
+                generator_kwargs = deepcopy(injected_public_parameter_kwargs)
+                generator_kwargs.update(deepcopy(resolved.generator_kwargs))
+                generator_kwargs.update(deepcopy(injected_context_kwargs))
+                for injection in dependency_injections:
+                    generator_kwargs[injection.kwarg_name] = injection.part
+                if legacy_context_payload is not None:
+                    generator_kwargs["context"] = deepcopy(legacy_context_payload)
+                _raise_missing_generator_arguments_error(
+                    generator=generator,
+                    resolved=resolved,
+                    entry=entry,
+                    config_file=config_file,
+                    assemblies=assemblies,
+                    builder_context=builder_context,
+                    provided_kwargs=generator_kwargs,
+                )
             reset_metrics()
 
             try:

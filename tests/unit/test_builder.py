@@ -1556,6 +1556,70 @@ def test_build_from_file_defaults_mapping_injected_part_to_assembly_artifact(
     )
 
 
+def test_build_from_file_supports_collection_assemblies_without_generators(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "project"
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(
+        assemblies_dir / "collection_assembly.yaml",
+        "\n".join(
+            [
+                'ShellforgepyBuilderVersion: "2026-03-27"',
+                "Builder:",
+                "  Collection: true",
+                "Parameters:",
+                "  label:",
+                "    Type: String",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: collection_assembly",
+                "    parameters:",
+                "      label: alpha",
+            ]
+        ),
+    )
+
+    def fake_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+
+    initial_results = builder.build_from_file(config_path)
+
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: collection_assembly",
+                "    parameters:",
+                "      label: beta",
+            ]
+        ),
+    )
+
+    rebuilt_results = builder.build_from_file(config_path)
+
+    initial_result = initial_results[0]
+    rebuilt_result = rebuilt_results[0]
+    assert initial_result["generator"] == builder._COLLECTION_ASSEMBLY_GENERATOR_PATH
+    assert initial_result["cache_hit"] is False
+    assert rebuilt_result["cache_hit"] is False
+    assert initial_result["parameter_hash"] != rebuilt_result["parameter_hash"]
+    assert Path(rebuilt_result["artifacts"]["leader_step"]).exists()
+    assert Path(rebuilt_result["artifacts"]["leader_step"]).read_text(encoding="utf-8")
+
+
 def test_build_from_file_rebuilds_assembly_and_dependents_when_generator_code_changes(
     monkeypatch, tmp_path
 ):
