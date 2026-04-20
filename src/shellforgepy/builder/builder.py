@@ -2977,7 +2977,7 @@ def _advance_placement_execution(
 
     while True:
         progress = False
-        for placement_step in placement_steps:
+        for placement_step_nr, placement_step in enumerate(placement_steps):
             if placement_step.index in placement_state.executed_alignment_indices:
                 continue
             predecessors = set(placement_dag.predecessors(placement_step.index))
@@ -3088,7 +3088,8 @@ def _advance_placement_execution(
                     _part_center(moved_anchor), _part_center(aligned_anchor)
                 )
                 _logger.info(
-                    "Placement step: %s aligned to %s via %s; moving_anchor_center=%s; target_anchor_center=%s; moving_part_position=%s; target_part_position=%s; shift=%s",
+                    "Placement step nr %s: %s aligned to %s via %s; moving_anchor_center=%s; target_anchor_center=%s; moving_part_position=%s; target_part_position=%s; shift=%s",
+                    placement_step_nr,
                     moving_reference_str,
                     target_reference_str,
                     resolved_alignment.name,
@@ -3173,9 +3174,10 @@ def _advance_placement_execution(
                     "Each placement step requires either 'alignment', 'post_rotation', or 'rigid_attach'"
                 )
 
-            delta = _translation_delta(moving_center_before, _part_center(moved_anchor))
-
             for assembly_name in moving_group:
+                _logger.info(
+                    f"Applying placement step nr {placement_step_nr} transforms to assembly '{assembly_name}' because it is in rigid group with '{moving_assembly_name}'"
+                )
                 placement_state.translation_history.setdefault(
                     assembly_name, []
                 ).extend(step_transforms)
@@ -3202,6 +3204,13 @@ def _advance_placement_execution(
                 placement_state.rigidity_graph.add_edge(
                     moving_assembly_name,
                     target_assembly_name,
+                )
+
+                rigidity_group_members = _rigid_group_members(
+                    placement_state.rigidity_graph, moving_assembly_name
+                )
+                _logger.info(
+                    f"Placement step nr {placement_step_nr} rigidly attaches assemblies '{moving_assembly_name}' and '{target_assembly_name}', resulting in rigidity group: {rigidity_group_members}"
                 )
 
             placement_state.executed_alignment_indices.add(placement_step.index)
@@ -4741,14 +4750,16 @@ def run_builder(args: argparse.Namespace) -> int:
         repository_dir=args.repository_dir,
         force=bool(args.force),
     )
+    _logger.info(f"Built {len(results)} assemblies; details:")
     for result in results:
         status = "cache" if result.get("cache_hit") else "built"
-        _logger.info(
-            "%s: %s -> %s",
+        _logger.debug(
+            "  %s: %s -> %s",
             status,
             result["assembly_name"],
             result["artifact_dir"],
         )
+    _logger.info("End of build results")
 
     if not visualization_mode:
         return 0
