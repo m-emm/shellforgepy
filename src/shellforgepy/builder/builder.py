@@ -38,6 +38,8 @@ _logger = logging.getLogger(__name__)
 _REF_PATTERN = re.compile(r"\$\{([A-Za-z0-9_./:-]+)\}")
 _SAFE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 BUILD_METADATA_SCHEMA_VERSION = 2
+PLACED_ASSEMBLIES_DEBUG_FILENAME = "placed_assemblies_bounding_boxes.json"
+PLACED_ASSEMBLIES_DEBUG_FLOAT_DIGITS = 4
 DEFAULT_PROD_GAP = 4.0
 DEFAULT_BED_WIDTH = 200.0
 _COLLECTION_ASSEMBLY_GENERATOR_PATH = (
@@ -121,6 +123,13 @@ class _PlacementExecutionState:
         default_factory=dict
     )
     rigidity_graph: nx.Graph = field(default_factory=nx.Graph)
+
+
+@dataclass(frozen=True)
+class _AppliedPlacementResult:
+    scene_parts: List[Dict[str, Any]]
+    assembly_transforms: Dict[str, List[Callable[[Any], Any]]]
+    placed_assembly_names: set[str]
 
 
 def _utc_now_iso() -> str:
@@ -1185,6 +1194,116 @@ def _write_metadata(path: Path, payload: Mapping[str, Any]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, sort_keys=True)
         handle.write("\n")
+
+
+def _rounded_float(value: float) -> float:
+    return round(float(value), PLACED_ASSEMBLIES_DEBUG_FLOAT_DIGITS)
+
+
+def _point_payload(point: Sequence[float]) -> List[float]:
+    return [_rounded_float(float(value)) for value in point]
+
+
+def _merge_bounding_boxes(
+    bounding_boxes: Iterable[tuple[Sequence[float], Sequence[float]]],
+) -> Optional[tuple[tuple[float, float, float], tuple[float, float, float]]]:
+    boxes = list(bounding_boxes)
+    if not boxes:
+        return None
+
+    return (
+        (
+            min(float(box[0][0]) for box in boxes),
+            min(float(box[0][1]) for box in boxes),
+            min(float(box[0][2]) for box in boxes),
+        ),
+        (
+            max(float(box[1][0]) for box in boxes),
+            max(float(box[1][1]) for box in boxes),
+            max(float(box[1][2]) for box in boxes),
+        ),
+    )
+
+
+def _bounding_box_payload(
+    bounding_box: tuple[Sequence[float], Sequence[float]],
+) -> Dict[str, List[float]]:
+    min_point, max_point = bounding_box
+    center = [
+        _rounded_float((float(min_value) + float(max_value)) / 2.0)
+        for min_value, max_value in zip(min_point, max_point)
+    ]
+    size = [
+        _rounded_float(float(max_value) - float(min_value))
+        for min_value, max_value in zip(min_point, max_point)
+    ]
+    return {
+        "min": _point_payload(min_point),
+        "max": _point_payload(max_point),
+        "center": center,
+        "size": size,
+    }
+
+
+def _build_placed_assemblies_debug_payload(
+    placed_leaders_by_assembly: Mapping[str, Any],
+    *,
+    build_results: Sequence[Mapping[str, Any]],
+    target_assembly: str,
+    mode: str,
+) -> Dict[str, Any]:
+    from shellforgepy.simple import get_bounding_box
+
+    placed_assemblies: List[Dict[str, Any]] = []
+    for assembly_name in sorted(placed_leaders_by_assembly):
+        leader_part = placed_leaders_by_assembly[assembly_name]
+        bounding_box = get_bounding_box(leader_part)
+        placed_assemblies.append(
+            {
+                "assembly_name": assembly_name,
+                "bounding_box": _bounding_box_payload(bounding_box),
+            }
+        )
+
+    return {
+        "schema_version": 1,
+        "generated_at": _utc_now_iso(),
+        "target_assembly": str(target_assembly),
+        "mode": str(mode),
+        "built_assembly_names": sorted(
+            {str(result.get("assembly_name")) for result in build_results}
+        ),
+        "placed_assemblies": placed_assemblies,
+    }
+
+
+def _materialize_placed_leaders_by_assembly(
+    assembly_names: Iterable[str],
+    *,
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+    repository_dir: Path,
+    assembly_transforms: Mapping[str, Sequence[Callable[[Any], Any]]],
+) -> Dict[str, Any]:
+    placed_leaders: Dict[str, Any] = {}
+    for assembly_name in sorted(
+        {str(name) for name in assembly_names if str(name).strip()}
+    ):
+        metadata = built_results_by_name.get(assembly_name)
+        if metadata is None:
+            metadata = _dependency_metadata_for_assembly(
+                assembly_name,
+                built_results_by_name,
+                repository_dir,
+            )
+        leader_path = metadata.get("artifacts", {}).get("leader_step")
+        if not leader_path:
+            continue
+        leader = _import_dependency_part(Path(leader_path).expanduser().resolve())
+        transforms = list(assembly_transforms.get(assembly_name, []))
+        if transforms:
+            leader = _apply_translation_sequence(leader, transforms)
+        placed_leaders[assembly_name] = leader
+    return placed_leaders
 
 
 def _read_metadata(path: Path) -> Dict[str, Any]:
@@ -2371,10 +2490,18 @@ def _placement_alignment_references(
     if model is None:
         assemblies = [{"name": name} for name in sorted(set(known_assembly_names))]
         model = builder_graph_model.build_graph_model(assemblies, config_data)
-    return [
-        (step.moving_assembly_name, step.target_assembly_name)
-        for step in model.placement_steps
-    ]
+    references: List[tuple[str, Optional[str]]] = []
+    for step in model.placement_steps:
+        if step.is_rigid_group:
+            references.extend(
+                (assembly_name, step.target_assembly_name)
+                for assembly_name in step.rigid_group_assembly_names
+            )
+            continue
+        if step.moving_assembly_name is None:
+            continue
+        references.append((step.moving_assembly_name, step.target_assembly_name))
+    return references
 
 
 def _resolve_xyz_vector(
@@ -2882,6 +3009,19 @@ def _validate_rigid_group_motion(
     return moving_group
 
 
+def _attach_rigid_group(
+    rigidity_graph: nx.Graph,
+    assembly_names: Sequence[str],
+    target_assembly_name: str,
+) -> List[str]:
+    for assembly_name in assembly_names:
+        rigidity_graph.add_node(assembly_name)
+    rigidity_graph.add_node(target_assembly_name)
+    for source in assembly_names:
+        rigidity_graph.add_edge(source, target_assembly_name)
+    return _rigid_group_members(rigidity_graph, target_assembly_name)
+
+
 def _apply_translation_sequence(
     part: Any, translations: Sequence[Callable[[Any], Any]]
 ) -> Any:
@@ -2982,6 +3122,46 @@ def _advance_placement_execution(
                 continue
             predecessors = set(placement_dag.predecessors(placement_step.index))
             if not predecessors.issubset(placement_state.executed_alignment_indices):
+                continue
+
+            if placement_step.is_rigid_group:
+                rigid_group_assembly_names = placement_step.rigid_group_assembly_names
+                target_assembly_name = placement_step.target_assembly_name
+                if target_assembly_name is None:
+                    raise BuilderError(
+                        "Placement steps with 'rigid_group' also require 'to'"
+                    )
+                if any(
+                    assembly_name not in built_results_by_name
+                    for assembly_name in rigid_group_assembly_names
+                ):
+                    continue
+                if target_assembly_name not in built_results_by_name:
+                    continue
+
+                for assembly_name in rigid_group_assembly_names:
+                    _validate_rigid_group_motion(
+                        placement_state.rigidity_graph,
+                        moving_assembly_name=assembly_name,
+                        target_assembly_name=target_assembly_name,
+                        placement_step_index=placement_step.index,
+                    )
+
+                rigidity_group_members = _attach_rigid_group(
+                    placement_state.rigidity_graph,
+                    rigid_group_assembly_names,
+                    target_assembly_name,
+                )
+                _logger.info(
+                    "Placement step nr %s rigidly attaches assemblies %s to '%s', resulting in rigidity group: %s",
+                    placement_step_nr,
+                    list(rigid_group_assembly_names),
+                    target_assembly_name,
+                    rigidity_group_members,
+                )
+                placement_state.executed_alignment_indices.add(placement_step.index)
+                placement_state.cursor = len(placement_state.executed_alignment_indices)
+                progress = True
                 continue
 
             alignment_spec = placement_step.spec
@@ -3229,10 +3409,18 @@ def _apply_placement_alignments(
     built_results_by_name: Mapping[str, Dict[str, Any]],
     repository_dir: Path,
     config_data: Optional[Mapping[str, Any]] = None,
-) -> List[Dict[str, Any]]:
+) -> _AppliedPlacementResult:
     alignments = _placement_alignments(config_data)
     if not alignments:
-        return scene_parts
+        return _AppliedPlacementResult(
+            scene_parts=scene_parts,
+            assembly_transforms={},
+            placed_assembly_names={
+                str(item["assembly_name"])
+                for item in scene_parts
+                if item.get("assembly_name") is not None
+            },
+        )
 
     known_assembly_names = _known_assembly_names(config_data, built_results_by_name)
     graph_model = builder_graph_model.build_graph_model(
@@ -3333,6 +3521,35 @@ def _apply_placement_alignments(
         placement_index = placement_step.index
         if placement_index not in relevant_alignment_indices:
             continue
+
+        if placement_step.is_rigid_group:
+            rigid_group_assembly_names = placement_step.rigid_group_assembly_names
+            target_assembly_name = placement_step.target_assembly_name
+            if target_assembly_name is None:
+                raise BuilderError(
+                    "Placement steps with 'rigid_group' also require 'to'"
+                )
+            if any(
+                assembly_name not in built_results_by_name
+                for assembly_name in rigid_group_assembly_names
+            ):
+                continue
+            if target_assembly_name not in built_results_by_name:
+                continue
+            for assembly_name in rigid_group_assembly_names:
+                _validate_rigid_group_motion(
+                    rigidity_graph,
+                    moving_assembly_name=assembly_name,
+                    target_assembly_name=target_assembly_name,
+                    placement_step_index=placement_index,
+                )
+            _attach_rigid_group(
+                rigidity_graph,
+                rigid_group_assembly_names,
+                target_assembly_name,
+            )
+            continue
+
         alignment_spec = placement_step.spec
         moving_reference = alignment_spec.get("part")
         target_reference = alignment_spec.get("to")
@@ -3514,7 +3731,11 @@ def _apply_placement_alignments(
                 placement_step.target_assembly_name,
             )
 
-    return scene_parts
+    return _AppliedPlacementResult(
+        scene_parts=scene_parts,
+        assembly_transforms=translation_history,
+        placed_assembly_names=relevant_assemblies,
+    )
 
 
 def _resolve_process_data(
@@ -4543,12 +4764,13 @@ def _export_scene_for_assembly(
                 seen_source_paths.add(source_path)
             scene_parts.append(part)
 
-    scene_parts = _apply_placement_alignments(
+    applied_placement = _apply_placement_alignments(
         scene_parts,
         built_results_by_name=built_results_by_name,
         repository_dir=repository_dir,
         config_data=config_data,
     )
+    scene_parts = applied_placement.scene_parts
 
     if bool(getattr(args, "prototype", False)):
         placement_state = _initialize_placement_execution_state(
@@ -4576,6 +4798,23 @@ def _export_scene_for_assembly(
         raise BuilderError(
             f"No scene parts resolved for assembly '{selected_assembly}' in {mode} mode"
         )
+
+    placed_assemblies_debug_path = run_directory / PLACED_ASSEMBLIES_DEBUG_FILENAME
+    placed_leaders_by_assembly = _materialize_placed_leaders_by_assembly(
+        applied_placement.placed_assembly_names,
+        built_results_by_name=built_results_by_name,
+        repository_dir=repository_dir,
+        assembly_transforms=applied_placement.assembly_transforms,
+    )
+    _write_metadata(
+        placed_assemblies_debug_path,
+        _build_placed_assemblies_debug_payload(
+            placed_leaders_by_assembly,
+            build_results=build_results,
+            target_assembly=selected_assembly,
+            mode=mode,
+        ),
+    )
 
     process_data = None
     plate_process_data_map = None
@@ -4682,6 +4921,14 @@ def _export_scene_for_assembly(
     if not manifest_path.exists():
         raise BuilderError(f"Expected workflow manifest at {manifest_path}")
     manifest = _read_metadata(manifest_path)
+    builder_debug = manifest.get("builder_debug")
+    if not isinstance(builder_debug, Mapping):
+        builder_debug = {}
+    manifest["builder_debug"] = {
+        **dict(builder_debug),
+        "placed_assemblies_bounding_boxes_path": placed_assemblies_debug_path.name,
+    }
+    _write_metadata(manifest_path, manifest)
     return complete_workflow_run(
         args,
         config=workflow_config,
