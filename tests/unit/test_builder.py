@@ -4341,8 +4341,8 @@ def test_apply_placement_alignments_moves_only_the_owning_assembly(
     ]
     assert placed_parts[1]["transform_history"] == []
     assert captured_logs == [
-        "Placement step: y_axis.non_production_parts.anchor aligned to print_bed.non_production_parts.buffer_1 via CENTER; moving_anchor_center=(1.0,2.0,3.0); target_anchor_center=(10.0,20.0,30.0); moving_part_position=(4.0,5.0,6.0); target_part_position=(40.0,50.0,60.0); shift=(9.0,18.0,0.0)",
-        "Placement step: y_axis aligned to print_bed via STACK_TOP; moving_anchor_center=(13.0,23.0,6.0); target_anchor_center=(40.0,50.0,60.0); moving_part_position=(13.0,23.0,6.0); target_part_position=(40.0,50.0,60.0); shift=(0.0,0.0,66.0)",
+        "Placement replay execute: source_step=0; y_axis.non_production_parts.anchor aligned to print_bed.non_production_parts.buffer_1 via CENTER; moving_anchor_center=(1.0,2.0,3.0); target_anchor_center=(10.0,20.0,30.0); moving_part_position=(4.0,5.0,6.0); target_part_position=(40.0,50.0,60.0); shift=(9.0,18.0,0.0)",
+        "Placement replay execute: source_step=1; y_axis aligned to print_bed via STACK_TOP; moving_anchor_center=(13.0,23.0,6.0); target_anchor_center=(40.0,50.0,60.0); moving_part_position=(13.0,23.0,6.0); target_part_position=(40.0,50.0,60.0); shift=(0.0,0.0,66.0)",
     ]
 
 
@@ -4919,17 +4919,126 @@ def test_apply_placement_alignments_replays_hidden_target_steps_for_active_scene
     )
     placed_parts = placement_result.scene_parts
 
-    assert placed_parts[0]["part"] == "scene-extruder|TO_CARRIAGE|TO_FRAME"
+    assert placed_parts[0]["part"] == "scene-extruder|TO_FRAME"
     assert placed_parts[1]["part"] == "scene-mount|TO_FRAME"
     assert placed_parts[2]["part"] == "scene-frame"
     assert placed_parts[0]["transform_history"] == [
-        {"kind": "translate", "vector": [-50.0, 0.0, 0.0], "placement_step": 0},
-        {"kind": "translate", "vector": [150.0, 0.0, 0.0], "placement_step": 2},
+        {"kind": "translate", "vector": [100.0, 0.0, 0.0], "placement_step": 2},
     ]
     assert placed_parts[1]["transform_history"] == [
-        {"kind": "translate", "vector": [150.0, 0.0, 0.0], "placement_step": 2}
+        {"kind": "translate", "vector": [100.0, 0.0, 0.0], "placement_step": 2}
     ]
     assert placed_parts[2]["transform_history"] == []
+
+
+def test_apply_placement_alignments_replays_hidden_target_steps_when_only_moving_group_is_visible(
+    monkeypatch, tmp_path
+):
+    extruder_leader = tmp_path / "extruder_leader.step"
+    extruder_leader.write_text("extruder-leader", encoding="utf-8")
+    mount_leader = tmp_path / "mount_leader.step"
+    mount_leader.write_text("mount-leader", encoding="utf-8")
+    carriage_leader = tmp_path / "carriage_leader.step"
+    carriage_leader.write_text("carriage-leader", encoding="utf-8")
+    frame_leader = tmp_path / "frame_leader.step"
+    frame_leader.write_text("frame-leader", encoding="utf-8")
+
+    scene_parts = [
+        {
+            "assembly_name": "extruder",
+            "part": "scene-extruder",
+            "transform_history": [],
+        },
+        {"assembly_name": "mount", "part": "scene-mount", "transform_history": []},
+    ]
+    built_results_by_name = {
+        "extruder": {
+            "assembly_name": "extruder",
+            "artifacts": {"leader_step": str(extruder_leader)},
+        },
+        "mount": {
+            "assembly_name": "mount",
+            "artifacts": {"leader_step": str(mount_leader)},
+        },
+        "carriage": {
+            "assembly_name": "carriage",
+            "artifacts": {"leader_step": str(carriage_leader)},
+        },
+        "frame": {
+            "assembly_name": "frame",
+            "artifacts": {"leader_step": str(frame_leader)},
+        },
+    }
+
+    monkeypatch.setattr(
+        builder,
+        "_import_dependency_part",
+        lambda path: Path(path).read_text(encoding="utf-8"),
+    )
+
+    centers = {
+        "extruder-leader": (0.0, 0.0, 0.0),
+        "extruder-leader|TO_CARRIAGE": (-50.0, 0.0, 0.0),
+        "extruder-leader|TO_CARRIAGE|TO_FRAME": (100.0, 0.0, 0.0),
+        "mount-leader": (-10.0, 0.0, 0.0),
+        "mount-leader|TO_CARRIAGE": (-60.0, 0.0, 0.0),
+        "mount-leader|TO_CARRIAGE|TO_FRAME": (90.0, 0.0, 0.0),
+        "carriage-leader": (-50.0, 0.0, 0.0),
+        "frame-leader": (100.0, 0.0, 0.0),
+    }
+    monkeypatch.setattr(builder, "_part_center", lambda part: centers[part])
+
+    def fake_make_translation(
+        moving_anchor, target_anchor, *, alignment, axes=None, stack_gap=0
+    ):
+        if target_anchor == "carriage-leader":
+            return lambda part: f"{part}|TO_CARRIAGE"
+        if target_anchor == "frame-leader":
+            return lambda part: f"{part}|TO_FRAME"
+        raise AssertionError(
+            f"Unexpected placement translation {moving_anchor!r} -> {target_anchor!r}"
+        )
+
+    monkeypatch.setattr(builder, "_make_placement_translation", fake_make_translation)
+
+    placement_result = builder._apply_placement_alignments(
+        scene_parts,
+        built_results_by_name=built_results_by_name,
+        repository_dir=tmp_path,
+        config_data={
+            "assemblies": [
+                {"name": "extruder"},
+                {"name": "mount"},
+                {"name": "fan"},
+                {"name": "carriage"},
+                {"name": "frame"},
+            ],
+            "placement": {
+                "alignments": [
+                    {
+                        "to": "extruder",
+                        "rigid_group": ["mount", "fan"],
+                    },
+                    {
+                        "part": "extruder",
+                        "to": "carriage",
+                        "alignment": "CENTER",
+                    },
+                    {
+                        "part": "extruder",
+                        "to": "frame",
+                        "alignment": "CENTER",
+                    },
+                ]
+            },
+        },
+    )
+    placed_parts = placement_result.scene_parts
+
+    assert placed_parts[0]["part"] == "scene-extruder"
+    assert placed_parts[1]["part"] == "scene-mount"
+    assert placed_parts[0]["transform_history"] == []
+    assert placed_parts[1]["transform_history"] == []
 
 
 def test_apply_placement_alignments_replays_hidden_target_rigid_groups(
@@ -5168,13 +5277,18 @@ def test_apply_placement_alignments_ignores_missing_rigid_predecessors_outside_s
         {"kind": "translate", "vector": [10.0, 0.0, 0.0], "placement_step": 4}
     ]
     assert placed_parts[2]["transform_history"] == []
+    assert any(
+        "Placement replay start: visible_assemblies=['frame', 'rail', 'right']; active_source_steps=2-4; skipped_source_steps=2 outside visible subset"
+        in message
+        for message in captured_logs
+    )
     assert all("left aligned" not in message for message in captured_logs)
     assert any(
-        "Placement step: right aligned to rail via CENTER" in message
+        "Placement replay execute: source_step=2; right aligned to rail via CENTER"
         for message in captured_logs
     )
     assert any(
-        "Placement step: rail aligned to frame via CENTER" in message
+        "Placement replay execute: source_step=4; rail aligned to frame via CENTER"
         for message in captured_logs
     )
 
@@ -6318,6 +6432,12 @@ def test_advance_placement_execution_ignores_missing_rigid_predecessors_outside_
             lambda part: f"{part}|MOVE"
         ),
     )
+    captured_logs = []
+    monkeypatch.setattr(
+        builder._logger,
+        "info",
+        lambda message, *args: captured_logs.append(message % args),
+    )
 
     placement_state = builder._initialize_placement_execution_state(
         config_data,
@@ -6347,6 +6467,20 @@ def test_advance_placement_execution_ignores_missing_rigid_predecessors_outside_
             "rail-leader", placement_state.translation_history["rail"]
         )
         == "rail-leader|MOVE"
+    )
+    assert any(
+        "Placement cursor advance: active_cursor=0/3; active_source_steps=2-4; skipped_source_steps=2 outside active subset; executed_source_steps=<none>; built_assemblies=['frame', 'rail', 'right']"
+        in message
+        for message in captured_logs
+    )
+    assert any(
+        "Placement cursor execute: active_step=0/3; source_step=2; right aligned to rail via CENTER"
+        in message
+        for message in captured_logs
+    )
+    assert any(
+        "Placement cursor applied: source_step=2; assemblies=['right']" in message
+        for message in captured_logs
     )
 
 

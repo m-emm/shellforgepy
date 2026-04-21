@@ -21,5 +21,7 @@ def view_direction_for_name(name: str) -> np.ndarray:
     try:
         direction = directions[name]
     except KeyError as exc:
-        raise ValueError(f"Unknown preview view: {name}") from exc
+        raise ValueError(
+            f"Unknown preview view: {name} - legal views are: {', '.join(directions.keys())}"
+        ) from exc
     return direction / (np.linalg.norm(direction) + 1e-12)

@@ -3055,6 +3055,32 @@ def _placement_step_description(
     return f"{placement_step.moving_reference} to {placement_step.target_reference}"
 
 
+def _format_step_index_ranges(step_indices: Iterable[int]) -> str:
+    sorted_indices = sorted({int(index) for index in step_indices})
+    if not sorted_indices:
+        return "<none>"
+
+    ranges: List[str] = []
+    range_start = sorted_indices[0]
+    range_end = sorted_indices[0]
+    for index in sorted_indices[1:]:
+        if index == range_end + 1:
+            range_end = index
+            continue
+        if range_start == range_end:
+            ranges.append(str(range_start))
+        else:
+            ranges.append(f"{range_start}-{range_end}")
+        range_start = index
+        range_end = index
+
+    if range_start == range_end:
+        ranges.append(str(range_start))
+    else:
+        ranges.append(f"{range_start}-{range_end}")
+    return ",".join(ranges)
+
+
 def _apply_translation_sequence(
     part: Any, translations: Sequence[Callable[[Any], Any]]
 ) -> Any:
@@ -3146,11 +3172,15 @@ def _advance_placement_execution(
         placement_state.active_assembly_names or built_results_by_name,
     )
     placement_steps = active_graph_model.placement_steps
+    total_source_step_count = len(placement_state.graph_model.placement_steps)
+    active_source_steps = [step.index for step in placement_steps]
     _logger.info(
-        "Placement cursor advance: cursor=%s/%s; executed_source_steps=%s; built_assemblies=%s",
+        "Placement cursor advance: active_cursor=%s/%s; active_source_steps=%s; skipped_source_steps=%s outside active subset; executed_source_steps=%s; built_assemblies=%s",
         placement_state.cursor,
         len(placement_steps),
-        sorted(placement_state.executed_alignment_indices),
+        _format_step_index_ranges(active_source_steps),
+        total_source_step_count - len(active_source_steps),
+        _format_step_index_ranges(placement_state.executed_alignment_indices),
         sorted(built_results_by_name),
     )
 
@@ -3170,7 +3200,7 @@ def _advance_placement_execution(
         ]
         if missing_assemblies:
             _logger.info(
-                "Placement cursor blocked at %s/%s (source step %s: %s); waiting for assemblies: %s",
+                "Placement cursor blocked: active_step=%s/%s; source_step=%s; step=%s; waiting_for=%s",
                 placement_step_nr,
                 len(placement_steps),
                 placement_step.index,
@@ -3201,7 +3231,7 @@ def _advance_placement_execution(
                 target_assembly_name,
             )
             _logger.info(
-                "Placement cursor %s/%s executing source step %s: rigid_group %s to '%s'; resulting rigidity group: %s",
+                "Placement cursor execute: active_step=%s/%s; source_step=%s; rigid_group %s to '%s'; resulting_rigidity_group=%s",
                 placement_step_nr,
                 len(placement_steps),
                 placement_step.index,
@@ -3306,7 +3336,7 @@ def _advance_placement_execution(
                 _part_center(moved_anchor), _part_center(aligned_anchor)
             )
             _logger.info(
-                "Placement cursor %s/%s executing source step %s: %s aligned to %s via %s; moving_anchor_center=%s; target_anchor_center=%s; moving_part_position=%s; target_part_position=%s; shift=%s",
+                "Placement cursor execute: active_step=%s/%s; source_step=%s; %s aligned to %s via %s; moving_anchor_center=%s; target_anchor_center=%s; moving_part_position=%s; target_part_position=%s; shift=%s",
                 placement_step_nr,
                 len(placement_steps),
                 placement_step.index,
@@ -3395,13 +3425,6 @@ def _advance_placement_execution(
             )
 
         for assembly_name in moving_group:
-            _logger.info(
-                "Applying placement source step %s at cursor %s transforms to assembly '%s' because it is in rigid group with '%s'",
-                placement_step.index,
-                placement_step_nr,
-                assembly_name,
-                moving_assembly_name,
-            )
             placement_state.translation_history.setdefault(assembly_name, []).extend(
                 step_transforms
             )
@@ -3420,13 +3443,20 @@ def _advance_placement_execution(
                 assembly_delta,
             )
 
+        _logger.info(
+            "Placement cursor applied: source_step=%s; assemblies=%s",
+            placement_step.index,
+            sorted(moving_group),
+        )
+
         placement_state.executed_alignment_indices.add(placement_step.index)
         placement_state.cursor += 1
 
     if placement_state.cursor >= len(placement_steps):
         _logger.info(
-            "Placement cursor complete: executed %s active placement step(s)",
+            "Placement cursor complete: executed %s active placement step(s); active_source_steps=%s",
             len(placement_steps),
+            _format_step_index_ranges(active_source_steps),
         )
 
     return placement_state
@@ -3474,6 +3504,11 @@ def _apply_placement_alignments(
         graph_model,
         relevant_assemblies,
     )
+    active_steps_by_index = {
+        step.index: step for step in active_graph_model.placement_steps
+    }
+    total_source_step_count = len(graph_model.placement_steps)
+    active_source_steps = [step.index for step in active_graph_model.placement_steps]
     relevant_alignment_indices = set(
         builder_graph_model.relevant_placement_alignment_indices(
             active_graph_model,
@@ -3481,6 +3516,20 @@ def _apply_placement_alignments(
             include_rigid_effects=True,
         )
     )
+    extra_rigid_group_step_indices = {
+        step.index
+        for step in graph_model.placement_steps
+        if step.is_rigid_group
+        and step.index not in relevant_alignment_indices
+        and (
+            step.target_assembly_name in relevant_assemblies
+            or any(
+                assembly_name in relevant_assemblies
+                for assembly_name in step.rigid_group_assembly_names
+            )
+        )
+    }
+    relevant_alignment_indices.update(extra_rigid_group_step_indices)
 
     metadata_by_name: Dict[str, Dict[str, Any]] = {
         str(name): dict(value) for name, value in built_results_by_name.items()
@@ -3502,29 +3551,22 @@ def _apply_placement_alignments(
             metadata_by_name[assembly_name] = metadata
         return metadata
 
-    if relevant_assemblies:
-        non_rigid_graph_model = builder_graph_model.without_rigid_attach_effects(
-            graph_model
+    extra_replay_source_steps = sorted(
+        relevant_alignment_indices.difference(active_steps_by_index)
+    )
+    skipped_source_step_count = total_source_step_count - len(active_source_steps)
+    if skipped_source_step_count > 0 or extra_replay_source_steps:
+        _logger.info(
+            "Placement replay start: visible_assemblies=%s; active_source_steps=%s; skipped_source_steps=%s outside visible subset",
+            sorted(relevant_assemblies),
+            _format_step_index_ranges(active_source_steps),
+            skipped_source_step_count,
         )
-        hidden_target_step_indices = {
-            step.index
-            for step in graph_model.placement_steps
-            if step.target_assembly_name is not None
-            and step.target_assembly_name not in relevant_assemblies
-            and (
-                any(
-                    assembly_name in relevant_assemblies
-                    for assembly_name in step.rigid_group_assembly_names
-                )
-                if step.is_rigid_group
-                else step.moving_assembly_name in relevant_assemblies
-            )
-        }
-        for step_index in hidden_target_step_indices:
-            relevant_alignment_indices.add(step_index)
-            relevant_alignment_indices.update(
-                nx.ancestors(non_rigid_graph_model.placement_execution_dag, step_index)
-            )
+    if extra_replay_source_steps:
+        _logger.info(
+            "Placement replay rigid-group expansion: added_source_steps=%s",
+            _format_step_index_ranges(extra_replay_source_steps),
+        )
 
     def resolve_anchor(reference: str) -> tuple[str, str, Any]:
         assembly_name, selector = _parse_part_reference(reference, known_assembly_names)
@@ -3558,20 +3600,15 @@ def _apply_placement_alignments(
         if placement_index not in relevant_alignment_indices:
             continue
 
-        if placement_step.is_rigid_group:
-            rigid_group_assembly_names = placement_step.rigid_group_assembly_names
-            target_assembly_name = placement_step.target_assembly_name
+        effective_step = active_steps_by_index.get(placement_index, placement_step)
+
+        if effective_step.is_rigid_group:
+            rigid_group_assembly_names = effective_step.rigid_group_assembly_names
+            target_assembly_name = effective_step.target_assembly_name
             if target_assembly_name is None:
                 raise BuilderError(
                     "Placement steps with 'rigid_group' also require 'to'"
                 )
-            if any(
-                assembly_name not in built_results_by_name
-                for assembly_name in rigid_group_assembly_names
-            ):
-                continue
-            if target_assembly_name not in built_results_by_name:
-                continue
             for assembly_name in rigid_group_assembly_names:
                 _validate_rigid_group_motion(
                     rigidity_graph,
@@ -3579,14 +3616,21 @@ def _apply_placement_alignments(
                     target_assembly_name=target_assembly_name,
                     placement_step_index=placement_index,
                 )
-            _attach_rigid_group(
+            rigidity_group_members = _attach_rigid_group(
                 rigidity_graph,
                 rigid_group_assembly_names,
                 target_assembly_name,
             )
+            _logger.info(
+                "Placement replay execute: source_step=%s; rigid_group %s to '%s'; resulting_scene_rigidity_group=%s",
+                placement_index,
+                list(rigid_group_assembly_names),
+                target_assembly_name,
+                rigidity_group_members,
+            )
             continue
 
-        alignment_spec = placement_step.spec
+        alignment_spec = effective_step.spec
         moving_reference = alignment_spec.get("part")
         target_reference = alignment_spec.get("to")
         if not moving_reference:
@@ -3597,7 +3641,7 @@ def _apply_placement_alignments(
         moving_group = _validate_rigid_group_motion(
             rigidity_graph,
             moving_assembly_name=moving_assembly_name,
-            target_assembly_name=placement_step.target_assembly_name,
+            target_assembly_name=effective_step.target_assembly_name,
             placement_step_index=placement_index,
         )
         moved_anchor = moving_anchor
@@ -3646,7 +3690,8 @@ def _apply_placement_alignments(
             )
 
             _logger.info(
-                "Placement step: %s aligned to %s via %s; moving_anchor_center=%s; target_anchor_center=%s; moving_part_position=%s; target_part_position=%s; shift=%s",
+                "Placement replay execute: source_step=%s; %s aligned to %s via %s; moving_anchor_center=%s; target_anchor_center=%s; moving_part_position=%s; target_part_position=%s; shift=%s",
+                placement_index,
                 moving_reference_str,
                 target_reference_str,
                 resolved_alignment.name,

@@ -740,14 +740,11 @@ def complete_workflow_run(
         except Exception as exc:  # pragma: no cover - best effort
             _logger.warning("Failed to upload files to viewer backend: %s", exc)
 
-    try:
-        _generate_obj_previews(
-            config=config,
-            manifest=manifest,
-            run_directory=run_directory,
-        )
-    except Exception as exc:  # pragma: no cover - best effort
-        _logger.warning("Failed to generate OBJ previews: %s", exc)
+    _generate_obj_previews(
+        config=config,
+        manifest=manifest,
+        run_directory=run_directory,
+    )
 
     if not slice_requested:
         _logger.info(
