@@ -5,6 +5,10 @@ import sys
 from pathlib import Path
 
 import pytest
+import shellforgepy.render.api as render_api
+import shellforgepy.workflow.preview_generator as preview_generator_module
+import shellforgepy.workflow.upload_to_printer as upload_to_printer_module
+import shellforgepy.workflow.workflow as workflow_module
 from shellforgepy.workflow.workflow import (
     MANIFEST_ENV,
     SubprocessResult,
@@ -55,10 +59,7 @@ def test_run_workflow_allows_obj_only_geometry_runs(monkeypatch, tmp_path):
         )
         return SubprocessResult(0, [], [])
 
-    monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.execute_subprocess",
-        fake_execute_subprocess,
-    )
+    monkeypatch.setattr(workflow_module, "execute_subprocess", fake_execute_subprocess)
 
     result = run_workflow(_make_args(target, tmp_path))
 
@@ -80,10 +81,7 @@ def test_run_workflow_still_requires_stl_for_slicing(monkeypatch, tmp_path):
         )
         return SubprocessResult(0, [], [])
 
-    monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.execute_subprocess",
-        fake_execute_subprocess,
-    )
+    monkeypatch.setattr(workflow_module, "execute_subprocess", fake_execute_subprocess)
 
     with pytest.raises(WorkflowError, match="Could not determine generated STL"):
         run_workflow(_make_args(target, tmp_path, slice=True))
@@ -118,13 +116,8 @@ def test_complete_workflow_run_slices_each_manifest_plate(monkeypatch, tmp_path)
             slicer_inputs.append(Path(cmd[-1]).name)
         return SubprocessResult(0, [], [])
 
-    monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.generate_settings", fake_generate_settings
-    )
-    monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.execute_subprocess",
-        fake_execute_subprocess,
-    )
+    monkeypatch.setattr(workflow_module, "generate_settings", fake_generate_settings)
+    monkeypatch.setattr(workflow_module, "execute_subprocess", fake_execute_subprocess)
 
     args = argparse.Namespace(
         slice=True,
@@ -216,13 +209,8 @@ def test_complete_workflow_run_loads_only_current_plate_filament(monkeypatch, tm
             slicer_filament_args.append(cmd[cmd.index("--load-filaments") + 1])
         return SubprocessResult(0, [], [])
 
-    monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.generate_settings", fake_generate_settings
-    )
-    monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.execute_subprocess",
-        fake_execute_subprocess,
-    )
+    monkeypatch.setattr(workflow_module, "generate_settings", fake_generate_settings)
+    monkeypatch.setattr(workflow_module, "execute_subprocess", fake_execute_subprocess)
 
     args = argparse.Namespace(
         slice=True,
@@ -289,13 +277,8 @@ def test_complete_workflow_run_errors_for_manifest_plate_without_process_data(
     def fake_execute_subprocess(cmd, *, env=None, cwd=None, stdin_data=None):
         return SubprocessResult(0, [], [])
 
-    monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.generate_settings", fake_generate_settings
-    )
-    monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.execute_subprocess",
-        fake_execute_subprocess,
-    )
+    monkeypatch.setattr(workflow_module, "generate_settings", fake_generate_settings)
+    monkeypatch.setattr(workflow_module, "execute_subprocess", fake_execute_subprocess)
 
     args = argparse.Namespace(
         slice=True,
@@ -369,14 +352,9 @@ def test_complete_workflow_run_open_starts_orca_for_each_plate(monkeypatch, tmp_
         popen_calls.append(cmd)
         return object()
 
-    monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.generate_settings", fake_generate_settings
-    )
-    monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.execute_subprocess",
-        fake_execute_subprocess,
-    )
-    monkeypatch.setattr("shellforgepy.workflow.workflow.subprocess.Popen", fake_popen)
+    monkeypatch.setattr(workflow_module, "generate_settings", fake_generate_settings)
+    monkeypatch.setattr(workflow_module, "execute_subprocess", fake_execute_subprocess)
+    monkeypatch.setattr(workflow_module.subprocess, "Popen", fake_popen)
 
     args = argparse.Namespace(
         slice=True,
@@ -455,15 +433,11 @@ def test_complete_workflow_run_preserves_and_uploads_each_plate_gcode(
             (Path(gcode_file).name, printer, Path(gcode_file).read_text())
         )
 
+    monkeypatch.setattr(workflow_module, "generate_settings", fake_generate_settings)
+    monkeypatch.setattr(workflow_module, "execute_subprocess", fake_execute_subprocess)
     monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.generate_settings", fake_generate_settings
-    )
-    monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.execute_subprocess",
-        fake_execute_subprocess,
-    )
-    monkeypatch.setattr(
-        "shellforgepy.workflow.upload_to_printer.upload_to_printer",
+        upload_to_printer_module,
+        "upload_to_printer",
         fake_upload_to_printer,
     )
 
@@ -520,7 +494,7 @@ def test_orca_open_commands_uses_open_with_app_bundle_on_macos(monkeypatch, tmp_
     project_a.write_text("", encoding="utf-8")
     project_b.write_text("", encoding="utf-8")
 
-    monkeypatch.setattr("shellforgepy.workflow.workflow.sys.platform", "darwin")
+    monkeypatch.setattr(workflow_module.sys, "platform", "darwin")
 
     commands = _orca_open_commands(
         orca_exec_path=orca_exec,
@@ -569,10 +543,7 @@ def test_run_workflow_logs_metrics_report_from_manifest(monkeypatch, tmp_path, c
         )
         return SubprocessResult(0, [], [])
 
-    monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.execute_subprocess",
-        fake_execute_subprocess,
-    )
+    monkeypatch.setattr(workflow_module, "execute_subprocess", fake_execute_subprocess)
 
     caplog.set_level(logging.INFO)
 
@@ -641,7 +612,8 @@ def test_complete_workflow_run_generates_obj_previews_when_enabled(
         )
 
     monkeypatch.setattr(
-        "shellforgepy.render.render_obj_views_with_stats",
+        render_api,
+        "render_obj_views_with_stats",
         fake_render_obj_views_with_stats,
     )
 
@@ -746,19 +718,16 @@ def test_complete_workflow_run_uses_obj_renderer_for_single_plate_gcode_preview(
     def fail_render_stl_to_png(**kwargs):
         raise AssertionError("STL preview fallback should not be used")
 
+    monkeypatch.setattr(workflow_module, "generate_settings", fake_generate_settings)
+    monkeypatch.setattr(workflow_module, "execute_subprocess", fake_execute_subprocess)
     monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.generate_settings", fake_generate_settings
-    )
-    monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.execute_subprocess",
-        fake_execute_subprocess,
-    )
-    monkeypatch.setattr(
-        "shellforgepy.render.render_obj_view_to_image_with_stats",
+        render_api,
+        "render_obj_view_to_image_with_stats",
         fake_render_obj_view_to_image_with_stats,
     )
     monkeypatch.setattr(
-        "shellforgepy.workflow.preview_generator.render_stl_to_png",
+        preview_generator_module,
+        "render_stl_to_png",
         fail_render_stl_to_png,
     )
 
@@ -878,19 +847,16 @@ def test_complete_workflow_run_uses_plate_obj_for_multi_plate_gcode_previews(
     def fail_render_stl_to_png(**kwargs):
         raise AssertionError("STL preview fallback should not be used")
 
+    monkeypatch.setattr(workflow_module, "generate_settings", fake_generate_settings)
+    monkeypatch.setattr(workflow_module, "execute_subprocess", fake_execute_subprocess)
     monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.generate_settings", fake_generate_settings
-    )
-    monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.execute_subprocess",
-        fake_execute_subprocess,
-    )
-    monkeypatch.setattr(
-        "shellforgepy.render.render_obj_view_to_image_with_stats",
+        render_api,
+        "render_obj_view_to_image_with_stats",
         fake_render_obj_view_to_image_with_stats,
     )
     monkeypatch.setattr(
-        "shellforgepy.workflow.preview_generator.render_stl_to_png",
+        preview_generator_module,
+        "render_stl_to_png",
         fail_render_stl_to_png,
     )
 
@@ -979,9 +945,7 @@ def test_main_accepts_workflow_flags_after_target(monkeypatch, tmp_path):
         captured["target_args"] = list(args.target_args)
         return 0
 
-    monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.run_workflow", fake_run_workflow
-    )
+    monkeypatch.setattr(workflow_module, "run_workflow", fake_run_workflow)
 
     result = main(["run", str(target), "--slice", "--open"])
 

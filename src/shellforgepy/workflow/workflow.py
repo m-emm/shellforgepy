@@ -547,7 +547,7 @@ def _generate_obj_previews(
     if obj_path is None or not obj_path.exists():
         return []
 
-    from shellforgepy.render import render_obj_views_with_stats
+    from shellforgepy.render.api import render_obj_views_with_stats
 
     preview_dir = run_directory / "previews"
     width = _normalize_render_dimension(
@@ -600,7 +600,7 @@ def _generate_obj_gcode_preview(
     if obj_path is None or not obj_path.exists():
         return None
 
-    from shellforgepy.render import (
+    from shellforgepy.render.api import (
         DEFAULT_PREVIEW_VIEWS,
         render_obj_view_to_image_with_stats,
     )
@@ -1047,7 +1047,7 @@ def complete_workflow_run(
         for gcode_file in gcode_files:
             _logger.info("Uploading %s", gcode_file)
             try:
-                from shellforgepy.workflow import upload_to_printer
+                import shellforgepy.workflow.upload_to_printer as upload_to_printer
 
                 upload_to_printer.upload_to_printer(gcode_file, printer)
             except Exception as exc:

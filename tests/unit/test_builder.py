@@ -5,8 +5,10 @@ import sys
 from pathlib import Path
 
 import pytest
-from shellforgepy.builder import builder
-from shellforgepy.builder import graph_model as builder_graph_model
+import shellforgepy.builder.builder as builder
+import shellforgepy.builder.graph_model as builder_graph_model
+import shellforgepy.produce.arrange_and_export as arrange_and_export_module
+import shellforgepy.workflow.workflow as workflow_module
 from shellforgepy.metrics import (
     Material,
     build_metrics_report_lines,
@@ -2162,19 +2164,23 @@ def test_export_scene_for_assembly_applies_preview_overrides_to_workflow_config(
         lambda build_results, assembly_names: None,
     )
     monkeypatch.setattr(
-        "shellforgepy.produce.arrange_and_export.arrange_and_export_parts",
+        arrange_and_export_module,
+        "arrange_and_export_parts",
         fake_arrange_and_export_parts,
     )
     monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.get_config_path",
+        workflow_module,
+        "get_config_path",
         lambda override=None: tmp_path / "config.json",
     )
     monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.load_config",
+        workflow_module,
+        "load_config",
         lambda path: {"render": {"enabled": False, "views": ["right"]}},
     )
     monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.complete_workflow_run",
+        workflow_module,
+        "complete_workflow_run",
         fake_complete_workflow_run,
     )
 
@@ -2297,19 +2303,23 @@ def test_export_scene_for_assembly_passes_merged_plate_process_data_to_export(
         lambda build_results, assembly_names: None,
     )
     monkeypatch.setattr(
-        "shellforgepy.produce.arrange_and_export.arrange_and_export_parts",
+        arrange_and_export_module,
+        "arrange_and_export_parts",
         fake_arrange_and_export_parts,
     )
     monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.get_config_path",
+        workflow_module,
+        "get_config_path",
         lambda override=None: tmp_path / "config.json",
     )
     monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.load_config",
+        workflow_module,
+        "load_config",
         lambda path: {"render": {"enabled": False}},
     )
     monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.complete_workflow_run",
+        workflow_module,
+        "complete_workflow_run",
         lambda *args, **kwargs: 0,
     )
 
@@ -2414,19 +2424,23 @@ def test_export_scene_for_assembly_uses_selected_assembly_for_export_base_name(
         lambda build_results, assembly_names: None,
     )
     monkeypatch.setattr(
-        "shellforgepy.produce.arrange_and_export.arrange_and_export_parts",
+        arrange_and_export_module,
+        "arrange_and_export_parts",
         fake_arrange_and_export_parts,
     )
     monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.get_config_path",
+        workflow_module,
+        "get_config_path",
         lambda override=None: tmp_path / "config.json",
     )
     monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.load_config",
+        workflow_module,
+        "load_config",
         lambda path: {"render": {"enabled": False}},
     )
     monkeypatch.setattr(
-        "shellforgepy.workflow.workflow.complete_workflow_run",
+        workflow_module,
+        "complete_workflow_run",
         lambda *args, **kwargs: 0,
     )
 
@@ -2848,7 +2862,7 @@ def test_resolve_build_generations_waits_for_placement_prerequisites_of_injected
     ]
 
 
-def test_resolve_build_generations_uses_only_reachable_placement_dependencies():
+def test_resolve_build_generations_skips_prefix_when_consumer_has_no_placement_boundary():
     generations = builder._resolve_build_generations(
         [
             {"name": "printer_frame", "depends_on": []},
@@ -2900,7 +2914,41 @@ def test_resolve_build_generations_uses_only_reachable_placement_dependencies():
     ]
 
 
-def test_resolve_build_generations_does_not_pull_later_moves_of_rigidly_attached_injected_parts():
+def test_build_graph_model_uses_first_rigid_group_as_injected_part_boundary():
+    model = builder_graph_model.build_graph_model(
+        [
+            {"name": "frame"},
+            {"name": "profile"},
+            {
+                "name": "mount",
+                "inject_parts": {
+                    "profile": "profile",
+                },
+            },
+        ],
+        {
+            "placement": {
+                "alignments": [
+                    {
+                        "part": "profile",
+                        "to": "frame",
+                        "alignment": "CENTER",
+                    },
+                    {
+                        "to": "profile",
+                        "rigid_group": ["mount"],
+                    },
+                ]
+            }
+        },
+    )
+
+    assert model.first_moving_alignment_index == {"profile": 0}
+    assert model.first_involved_alignment_index["mount"] == 1
+    assert model.placement_build_dependencies["mount"] == ["frame", "profile"]
+
+
+def test_resolve_build_generations_uses_sequential_prefix_for_injected_rigid_group_parts():
     generations = builder._resolve_build_generations(
         [
             {"name": "frame", "depends_on": []},
@@ -2917,14 +2965,17 @@ def test_resolve_build_generations_does_not_pull_later_moves_of_rigidly_attached
             "placement": {
                 "alignments": [
                     {
-                        "part": "extruder",
                         "to": "x_axis",
-                        "alignment": "CENTER",
-                        "rigid_attach": True,
+                        "rigid_group": ["extruder"],
                     },
                     {
                         "part": "x_axis",
                         "to": "frame",
+                        "alignment": "CENTER",
+                    },
+                    {
+                        "part": "bracket",
+                        "to": "extruder",
                         "alignment": "CENTER",
                     },
                 ]
@@ -2933,12 +2984,12 @@ def test_resolve_build_generations_does_not_pull_later_moves_of_rigidly_attached
     )
 
     assert [[entry["name"] for entry in generation] for generation in generations] == [
-        ["extruder", "x_axis"],
+        ["extruder", "frame", "x_axis"],
         ["bracket"],
     ]
 
 
-def test_resolve_build_generations_rigid_group_matches_pairwise_chain_for_injected_parts():
+def test_resolve_build_generations_rigid_group_prefix_includes_all_group_members():
     generations = builder._resolve_build_generations(
         [
             {"name": "frame", "depends_on": []},
@@ -2964,41 +3015,9 @@ def test_resolve_build_generations_rigid_group_matches_pairwise_chain_for_inject
                         "to": "frame",
                         "alignment": "CENTER",
                     },
-                ]
-            }
-        },
-    )
-
-    assert [[entry["name"] for entry in generation] for generation in generations] == [
-        ["extruder", "x_axis"],
-        ["bracket"],
-    ]
-
-
-def test_resolve_build_generations_two_member_rigid_group_matches_rigid_attach_pair():
-    pair_generations = builder._resolve_build_generations(
-        [
-            {"name": "frame", "depends_on": []},
-            {"name": "x_axis", "depends_on": []},
-            {"name": "rail", "depends_on": []},
-            {
-                "name": "bracket",
-                "depends_on": [],
-                "inject_parts": {"x_axis": "x_axis"},
-            },
-        ],
-        ["bracket"],
-        {
-            "placement": {
-                "alignments": [
                     {
-                        "part": "x_axis",
-                        "to": "rail",
-                        "rigid_attach": True,
-                    },
-                    {
-                        "part": "x_axis",
-                        "to": "frame",
+                        "part": "bracket",
+                        "to": "extruder",
                         "alignment": "CENTER",
                     },
                 ]
@@ -3006,7 +3025,14 @@ def test_resolve_build_generations_two_member_rigid_group_matches_rigid_attach_p
         },
     )
 
-    rigid_group_generations = builder._resolve_build_generations(
+    assert [[entry["name"] for entry in generation] for generation in generations] == [
+        ["extruder", "frame", "tool_head", "x_axis"],
+        ["bracket"],
+    ]
+
+
+def test_resolve_build_generations_two_member_rigid_group_uses_sequential_prefix():
+    generations = builder._resolve_build_generations(
         [
             {"name": "frame", "depends_on": []},
             {"name": "x_axis", "depends_on": []},
@@ -3030,15 +3056,20 @@ def test_resolve_build_generations_two_member_rigid_group_matches_rigid_attach_p
                         "to": "frame",
                         "alignment": "CENTER",
                     },
+                    {
+                        "part": "bracket",
+                        "to": "x_axis",
+                        "alignment": "CENTER",
+                    },
                 ]
             }
         },
     )
 
-    assert [
-        [entry["name"] for entry in generation]
-        for generation in rigid_group_generations
-    ] == [[entry["name"] for entry in generation] for generation in pair_generations]
+    assert [[entry["name"] for entry in generation] for generation in generations] == [
+        ["frame", "rail", "x_axis"],
+        ["bracket"],
+    ]
 
 
 def test_resolve_build_generation_names_reports_declared_dependency_cycles():
@@ -3077,7 +3108,12 @@ def test_resolve_build_generation_names_reports_placement_build_cycles():
                         "part": "carrier",
                         "to": "frame",
                         "alignment": "CENTER",
-                    }
+                    },
+                    {
+                        "part": "bracket",
+                        "to": "carrier",
+                        "alignment": "CENTER",
+                    },
                 ]
             }
         },
@@ -3094,7 +3130,7 @@ def test_resolve_build_generation_names_reports_placement_build_cycles():
     ) in message
 
 
-def test_run_builder_visualization_rigid_attach_does_not_widen_build_subset(
+def test_run_builder_visualization_rigid_group_does_not_widen_build_subset(
     monkeypatch, tmp_path
 ):
     config_path = tmp_path / "assemblies.yaml"
@@ -3110,10 +3146,9 @@ def test_run_builder_visualization_rigid_attach_does_not_widen_build_subset(
                 "    depends_on: []",
                 "placement:",
                 "  alignments:",
-                "    - part: extruder",
+                "    - rigid_group:",
+                "        - extruder",
                 "      to: x_axis",
-                "      alignment: CENTER",
-                "      rigid_attach: true",
                 "    - part: x_axis",
                 "      to: frame",
                 "      alignment: CENTER",
@@ -4311,7 +4346,7 @@ def test_apply_placement_alignments_moves_only_the_owning_assembly(
     ]
 
 
-def test_apply_placement_alignments_rigid_attach_moves_group_when_target_moves_later(
+def test_apply_placement_alignments_rigid_group_moves_group_when_target_moves_later(
     monkeypatch, tmp_path
 ):
     extruder_leader = tmp_path / "extruder_leader.step"
@@ -4398,7 +4433,10 @@ def test_apply_placement_alignments_rigid_attach_moves_group_when_target_moves_l
                         "part": "extruder",
                         "to": "x_axis",
                         "alignment": "CENTER",
-                        "rigid_attach": True,
+                    },
+                    {
+                        "to": "x_axis",
+                        "rigid_group": ["extruder"],
                     },
                     {
                         "part": "x_axis",
@@ -4423,36 +4461,30 @@ def test_apply_placement_alignments_rigid_attach_moves_group_when_target_moves_l
     assert placed_parts[2]["part"] == "scene-frame"
     assert placed_parts[0]["transform_history"] == [
         {"kind": "translate", "vector": [9.0, 18.0, 27.0], "placement_step": 0},
-        {"kind": "translate", "vector": [0.0, 0.0, 40.0], "placement_step": 1},
+        {"kind": "translate", "vector": [0.0, 0.0, 40.0], "placement_step": 2},
     ]
     assert placed_parts[1]["transform_history"] == [
-        {"kind": "translate", "vector": [0.0, 0.0, 40.0], "placement_step": 1}
+        {"kind": "translate", "vector": [0.0, 0.0, 40.0], "placement_step": 2}
     ]
     assert placed_parts[2]["transform_history"] == []
 
 
-def test_build_graph_model_supports_rigid_attach_without_alignment():
-    model = builder_graph_model.build_graph_model(
-        [{"name": "extruder"}, {"name": "x_axis"}],
-        {
-            "placement": {
-                "alignments": [
-                    {
-                        "part": "extruder",
-                        "to": "x_axis",
-                        "rigid_attach": True,
-                    }
-                ]
-            }
-        },
-    )
-
-    assert len(model.placement_steps) == 1
-    assert model.placement_steps[0].moving_assembly_name == "extruder"
-    assert model.placement_steps[0].target_assembly_name == "x_axis"
-    assert model.placement_steps[0].rigid_attach is True
-    assert model.first_moving_alignment_index == {"extruder": 0}
-    assert model.first_involved_alignment_index == {"extruder": 0, "x_axis": 0}
+def test_build_graph_model_rejects_rigid_attach_syntax():
+    with pytest.raises(builder.BuilderError, match="rigid_attach.*rigid_group"):
+        builder_graph_model.build_graph_model(
+            [{"name": "extruder"}, {"name": "x_axis"}],
+            {
+                "placement": {
+                    "alignments": [
+                        {
+                            "part": "extruder",
+                            "to": "x_axis",
+                            "rigid_attach": True,
+                        }
+                    ]
+                }
+            },
+        )
 
 
 def test_build_graph_model_supports_rigid_group():
@@ -4487,10 +4519,7 @@ def test_build_graph_model_supports_rigid_group():
         "extruder",
         "tool_head",
     )
-    assert model.first_moving_alignment_index == {
-        "extruder": 0,
-        "tool_head": 0,
-    }
+    assert model.first_moving_alignment_index == {"extruder": 1}
     assert model.first_involved_alignment_index == {
         "extruder": 0,
         "x_axis": 0,
@@ -4666,7 +4695,7 @@ def test_apply_placement_alignments_supports_rigid_group(monkeypatch, tmp_path):
     assert placed_parts[3]["transform_history"] == []
 
 
-def test_apply_placement_alignments_supports_rigid_attach_without_alignment(
+def test_apply_placement_alignments_supports_rigid_group_without_alignment(
     monkeypatch, tmp_path
 ):
     extruder_leader = tmp_path / "extruder_leader.step"
@@ -4744,9 +4773,8 @@ def test_apply_placement_alignments_supports_rigid_attach_without_alignment(
             "placement": {
                 "alignments": [
                     {
-                        "part": "extruder",
                         "to": "x_axis",
-                        "rigid_attach": True,
+                        "rigid_group": ["extruder"],
                     },
                     {
                         "part": "x_axis",
@@ -4877,9 +4905,8 @@ def test_apply_placement_alignments_replays_hidden_target_steps_for_active_scene
                         "alignment": "CENTER",
                     },
                     {
-                        "part": "mount",
                         "to": "extruder",
-                        "rigid_attach": True,
+                        "rigid_group": ["mount"],
                     },
                     {
                         "part": "extruder",
@@ -4901,6 +4928,118 @@ def test_apply_placement_alignments_replays_hidden_target_steps_for_active_scene
     ]
     assert placed_parts[1]["transform_history"] == [
         {"kind": "translate", "vector": [150.0, 0.0, 0.0], "placement_step": 2}
+    ]
+    assert placed_parts[2]["transform_history"] == []
+
+
+def test_apply_placement_alignments_replays_hidden_target_rigid_groups(
+    monkeypatch, tmp_path
+):
+    z_profile_leader = tmp_path / "z_profile.step"
+    z_profile_leader.write_text("z-profile-leader", encoding="utf-8")
+    x_axis_leader = tmp_path / "x_axis.step"
+    x_axis_leader.write_text("x-axis-leader", encoding="utf-8")
+    extruder_leader = tmp_path / "extruder.step"
+    extruder_leader.write_text("extruder-leader", encoding="utf-8")
+    bed_leader = tmp_path / "bed.step"
+    bed_leader.write_text("bed-leader", encoding="utf-8")
+
+    scene_parts = [
+        {
+            "assembly_name": "z_profile",
+            "part": "scene-z-profile",
+            "transform_history": [],
+        },
+        {
+            "assembly_name": "extruder",
+            "part": "scene-extruder",
+            "transform_history": [],
+        },
+        {"assembly_name": "bed", "part": "scene-bed", "transform_history": []},
+    ]
+    built_results_by_name = {
+        "z_profile": {
+            "assembly_name": "z_profile",
+            "artifacts": {"leader_step": str(z_profile_leader)},
+        },
+        "x_axis": {
+            "assembly_name": "x_axis",
+            "artifacts": {"leader_step": str(x_axis_leader)},
+        },
+        "extruder": {
+            "assembly_name": "extruder",
+            "artifacts": {"leader_step": str(extruder_leader)},
+        },
+        "bed": {
+            "assembly_name": "bed",
+            "artifacts": {"leader_step": str(bed_leader)},
+        },
+    }
+
+    monkeypatch.setattr(
+        builder,
+        "_import_dependency_part",
+        lambda path: Path(path).read_text(encoding="utf-8"),
+    )
+
+    centers = {
+        "z-profile-leader": (0.0, 0.0, 0.0),
+        "x-axis-leader": (10.0, 0.0, 0.0),
+        "extruder-leader": (20.0, 0.0, 0.0),
+        "bed-leader": (100.0, 0.0, 0.0),
+        "extruder-leader|TO_BED": (100.0, 0.0, 0.0),
+    }
+    monkeypatch.setattr(builder, "_part_center", lambda part: centers[part])
+
+    def fake_make_translation(
+        moving_anchor, target_anchor, *, alignment, axes=None, stack_gap=0
+    ):
+        assert moving_anchor == "extruder-leader"
+        assert target_anchor == "bed-leader"
+        return lambda part: f"{part}|TO_BED"
+
+    monkeypatch.setattr(builder, "_make_placement_translation", fake_make_translation)
+
+    placement_result = builder._apply_placement_alignments(
+        scene_parts,
+        built_results_by_name=built_results_by_name,
+        repository_dir=tmp_path,
+        config_data={
+            "assemblies": [
+                {"name": "z_profile"},
+                {"name": "x_axis"},
+                {"name": "extruder"},
+                {"name": "bed"},
+            ],
+            "placement": {
+                "alignments": [
+                    {
+                        "to": "x_axis",
+                        "rigid_group": ["z_profile"],
+                    },
+                    {
+                        "to": "x_axis",
+                        "rigid_group": ["extruder"],
+                    },
+                    {
+                        "part": "extruder",
+                        "to": "bed",
+                        "alignment": "CENTER",
+                    },
+                ]
+            },
+        },
+    )
+    placed_parts = placement_result.scene_parts
+
+    assert placed_parts[0]["part"] == "scene-z-profile|TO_BED"
+    assert placed_parts[1]["part"] == "scene-extruder|TO_BED"
+    assert placed_parts[2]["part"] == "scene-bed"
+    assert placed_parts[0]["transform_history"] == [
+        {"kind": "translate", "vector": [80.0, 0.0, 0.0], "placement_step": 2}
+    ]
+    assert placed_parts[1]["transform_history"] == [
+        {"kind": "translate", "vector": [80.0, 0.0, 0.0], "placement_step": 2}
     ]
     assert placed_parts[2]["transform_history"] == []
 
@@ -4993,13 +5132,19 @@ def test_apply_placement_alignments_ignores_missing_rigid_predecessors_outside_s
                         "part": "left",
                         "to": "rail",
                         "alignment": "CENTER",
-                        "rigid_attach": True,
+                    },
+                    {
+                        "to": "rail",
+                        "rigid_group": ["left"],
                     },
                     {
                         "part": "right",
                         "to": "rail",
                         "alignment": "CENTER",
-                        "rigid_attach": True,
+                    },
+                    {
+                        "to": "rail",
+                        "rigid_group": ["right"],
                     },
                     {
                         "part": "rail",
@@ -5016,11 +5161,11 @@ def test_apply_placement_alignments_ignores_missing_rigid_predecessors_outside_s
     assert placed_parts[1]["part"] == "scene-rail|MOVE"
     assert placed_parts[2]["part"] == "scene-frame"
     assert placed_parts[0]["transform_history"] == [
-        {"kind": "translate", "vector": [10.0, 0.0, 0.0], "placement_step": 1},
         {"kind": "translate", "vector": [10.0, 0.0, 0.0], "placement_step": 2},
+        {"kind": "translate", "vector": [10.0, 0.0, 0.0], "placement_step": 4},
     ]
     assert placed_parts[1]["transform_history"] == [
-        {"kind": "translate", "vector": [10.0, 0.0, 0.0], "placement_step": 2}
+        {"kind": "translate", "vector": [10.0, 0.0, 0.0], "placement_step": 4}
     ]
     assert placed_parts[2]["transform_history"] == []
     assert all("left aligned" not in message for message in captured_logs)
@@ -5034,7 +5179,7 @@ def test_apply_placement_alignments_ignores_missing_rigid_predecessors_outside_s
     )
 
 
-def test_apply_placement_alignments_rigid_attach_rejects_relative_motion_inside_group(
+def test_apply_placement_alignments_rigid_group_rejects_relative_motion_inside_group(
     monkeypatch, tmp_path
 ):
     left_leader = tmp_path / "left.step"
@@ -5094,10 +5239,8 @@ def test_apply_placement_alignments_rigid_attach_rejects_relative_motion_inside_
                 "placement": {
                     "alignments": [
                         {
-                            "part": "left",
                             "to": "right",
-                            "alignment": "CENTER",
-                            "rigid_attach": True,
+                            "rigid_group": ["left"],
                         },
                         {
                             "part": "right",
@@ -5509,7 +5652,7 @@ def test_advance_placement_execution_stops_until_missing_assembly_is_built(
     }
 
 
-def test_advance_placement_execution_runs_ready_steps_without_waiting_for_unrelated_prefix(
+def test_advance_placement_execution_stops_at_missing_prefix_even_when_later_step_is_ready(
     monkeypatch, tmp_path
 ):
     profile_a_leader = tmp_path / "profile_a.step"
@@ -5581,9 +5724,9 @@ def test_advance_placement_execution_runs_ready_steps_without_waiting_for_unrela
         repository_dir=tmp_path,
     )
 
-    assert placement_state.cursor == 1
-    assert placement_state.executed_alignment_indices == {1}
-    assert placement_state.placement_offsets == {"profile_b": (-10.0, 0.0, 0.0)}
+    assert placement_state.cursor == 0
+    assert placement_state.executed_alignment_indices == set()
+    assert placement_state.placement_offsets == {}
 
 
 def test_advance_placement_execution_supports_post_translation(monkeypatch, tmp_path):
@@ -5760,7 +5903,7 @@ def test_advance_placement_execution_supports_post_rotation_without_alignment(
     ]
 
 
-def test_advance_placement_execution_rigid_attach_moves_groups_transitively(
+def test_advance_placement_execution_rigid_groups_move_transitively(
     monkeypatch, tmp_path
 ):
     leaders = {}
@@ -5791,16 +5934,12 @@ def test_advance_placement_execution_rigid_attach_moves_groups_transitively(
         "placement": {
             "alignments": [
                 {
-                    "part": "a",
                     "to": "b",
-                    "alignment": "CENTER",
-                    "rigid_attach": True,
+                    "rigid_group": ["a"],
                 },
                 {
-                    "part": "b",
                     "to": "c",
-                    "alignment": "CENTER",
-                    "rigid_attach": True,
+                    "rigid_group": ["b"],
                 },
                 {
                     "part": "c",
@@ -5851,21 +5990,21 @@ def test_advance_placement_execution_rigid_attach_moves_groups_transitively(
 
     assert placement_state.cursor == 3
     assert placement_state.placement_offsets == {
-        "a": (3.0, 0.0, 0.0),
-        "b": (2.0, 0.0, 0.0),
+        "a": (1.0, 0.0, 0.0),
+        "b": (1.0, 0.0, 0.0),
         "c": (1.0, 0.0, 0.0),
     }
     assert (
         builder._apply_translation_sequence(
             "a-leader", placement_state.translation_history["a"]
         )
-        == "a-leader|MOVE|MOVE|MOVE"
+        == "a-leader|MOVE"
     )
     assert (
         builder._apply_translation_sequence(
             "b-leader", placement_state.translation_history["b"]
         )
-        == "b-leader|MOVE|MOVE"
+        == "b-leader|MOVE"
     )
     assert (
         builder._apply_translation_sequence(
@@ -5875,7 +6014,7 @@ def test_advance_placement_execution_rigid_attach_moves_groups_transitively(
     )
 
 
-def test_advance_placement_execution_supports_rigid_attach_without_alignment(
+def test_advance_placement_execution_supports_rigid_group_without_alignment(
     monkeypatch, tmp_path
 ):
     extruder_leader = tmp_path / "extruder.step"
@@ -5908,9 +6047,8 @@ def test_advance_placement_execution_supports_rigid_attach_without_alignment(
         "placement": {
             "alignments": [
                 {
-                    "part": "extruder",
                     "to": "x_axis",
-                    "rigid_attach": True,
+                    "rigid_group": ["extruder"],
                 },
                 {
                     "part": "x_axis",
@@ -6130,13 +6268,19 @@ def test_advance_placement_execution_ignores_missing_rigid_predecessors_outside_
                     "part": "left",
                     "to": "rail",
                     "alignment": "CENTER",
-                    "rigid_attach": True,
+                },
+                {
+                    "to": "rail",
+                    "rigid_group": ["left"],
                 },
                 {
                     "part": "right",
                     "to": "rail",
                     "alignment": "CENTER",
-                    "rigid_attach": True,
+                },
+                {
+                    "to": "rail",
+                    "rigid_group": ["right"],
                 },
                 {
                     "part": "rail",
@@ -6186,8 +6330,8 @@ def test_advance_placement_execution_ignores_missing_rigid_predecessors_outside_
         repository_dir=tmp_path,
     )
 
-    assert placement_state.cursor == 2
-    assert placement_state.executed_alignment_indices == {1, 2}
+    assert placement_state.cursor == 3
+    assert placement_state.executed_alignment_indices == {2, 3, 4}
     assert placement_state.placement_offsets == {
         "right": (20.0, 0.0, 0.0),
         "rail": (10.0, 0.0, 0.0),

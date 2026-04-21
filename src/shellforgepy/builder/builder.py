@@ -20,7 +20,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import networkx as nx
+import shellforgepy.builder.graph_model as builder_graph_model
 import yaml
+from shellforgepy.builder.errors import BuilderError
 from shellforgepy.construct.part_parameters import PartParameters
 from shellforgepy.metrics import (
     reset_metrics,
@@ -29,9 +31,6 @@ from shellforgepy.metrics import (
     using_metrics_snapshot,
     write_metrics_report,
 )
-
-from . import graph_model as builder_graph_model
-from .errors import BuilderError
 
 _logger = logging.getLogger(__name__)
 
@@ -3022,6 +3021,40 @@ def _attach_rigid_group(
     return _rigid_group_members(rigidity_graph, target_assembly_name)
 
 
+def _placement_step_required_assemblies(
+    placement_step: builder_graph_model.PlacementStep,
+    rigidity_graph: nx.Graph,
+) -> List[str]:
+    required: set[str] = set()
+    if placement_step.is_rigid_group:
+        required.update(placement_step.rigid_group_assembly_names)
+        if placement_step.target_assembly_name is not None:
+            required.add(placement_step.target_assembly_name)
+        return sorted(required)
+
+    if placement_step.moving_assembly_name is None:
+        return []
+    required.update(
+        _rigid_group_members(rigidity_graph, placement_step.moving_assembly_name)
+    )
+    if placement_step.target_assembly_name is not None:
+        required.add(placement_step.target_assembly_name)
+    return sorted(required)
+
+
+def _placement_step_description(
+    placement_step: builder_graph_model.PlacementStep,
+) -> str:
+    if placement_step.is_rigid_group:
+        return (
+            f"rigid_group {list(placement_step.rigid_group_assembly_names)} "
+            f"to {placement_step.target_assembly_name}"
+        )
+    if placement_step.target_reference is None:
+        return f"{placement_step.moving_reference}"
+    return f"{placement_step.moving_reference} to {placement_step.target_reference}"
+
+
 def _apply_translation_sequence(
     part: Any, translations: Sequence[Callable[[Any], Any]]
 ) -> Any:
@@ -3113,292 +3146,288 @@ def _advance_placement_execution(
         placement_state.active_assembly_names or built_results_by_name,
     )
     placement_steps = active_graph_model.placement_steps
-    placement_dag = active_graph_model.placement_execution_dag
+    _logger.info(
+        "Placement cursor advance: cursor=%s/%s; executed_source_steps=%s; built_assemblies=%s",
+        placement_state.cursor,
+        len(placement_steps),
+        sorted(placement_state.executed_alignment_indices),
+        sorted(built_results_by_name),
+    )
 
-    while True:
-        progress = False
-        for placement_step_nr, placement_step in enumerate(placement_steps):
-            if placement_step.index in placement_state.executed_alignment_indices:
-                continue
-            predecessors = set(placement_dag.predecessors(placement_step.index))
-            if not predecessors.issubset(placement_state.executed_alignment_indices):
-                continue
+    while placement_state.cursor < len(placement_steps):
+        placement_step_nr = placement_state.cursor
+        placement_step = placement_steps[placement_step_nr]
+        if placement_step.index in placement_state.executed_alignment_indices:
+            placement_state.cursor += 1
+            continue
 
-            if placement_step.is_rigid_group:
-                rigid_group_assembly_names = placement_step.rigid_group_assembly_names
-                target_assembly_name = placement_step.target_assembly_name
-                if target_assembly_name is None:
-                    raise BuilderError(
-                        "Placement steps with 'rigid_group' also require 'to'"
-                    )
-                if any(
-                    assembly_name not in built_results_by_name
-                    for assembly_name in rigid_group_assembly_names
-                ):
-                    continue
-                if target_assembly_name not in built_results_by_name:
-                    continue
+        required_assemblies = _placement_step_required_assemblies(
+            placement_step,
+            placement_state.rigidity_graph,
+        )
+        missing_assemblies = [
+            name for name in required_assemblies if name not in built_results_by_name
+        ]
+        if missing_assemblies:
+            _logger.info(
+                "Placement cursor blocked at %s/%s (source step %s: %s); waiting for assemblies: %s",
+                placement_step_nr,
+                len(placement_steps),
+                placement_step.index,
+                _placement_step_description(placement_step),
+                missing_assemblies,
+            )
+            break
 
-                for assembly_name in rigid_group_assembly_names:
-                    _validate_rigid_group_motion(
-                        placement_state.rigidity_graph,
-                        moving_assembly_name=assembly_name,
-                        target_assembly_name=target_assembly_name,
-                        placement_step_index=placement_step.index,
-                    )
-
-                rigidity_group_members = _attach_rigid_group(
-                    placement_state.rigidity_graph,
-                    rigid_group_assembly_names,
-                    target_assembly_name,
-                )
-                _logger.info(
-                    "Placement step nr %s rigidly attaches assemblies %s to '%s', resulting in rigidity group: %s",
-                    placement_step_nr,
-                    list(rigid_group_assembly_names),
-                    target_assembly_name,
-                    rigidity_group_members,
-                )
-                placement_state.executed_alignment_indices.add(placement_step.index)
-                placement_state.cursor = len(placement_state.executed_alignment_indices)
-                progress = True
-                continue
-
-            alignment_spec = placement_step.spec
-            moving_reference_str = placement_step.moving_reference
-            target_reference_str = placement_step.target_reference
-            moving_assembly_name = placement_step.moving_assembly_name
+        if placement_step.is_rigid_group:
+            rigid_group_assembly_names = placement_step.rigid_group_assembly_names
             target_assembly_name = placement_step.target_assembly_name
-            moving_group = _validate_rigid_group_motion(
+            if target_assembly_name is None:
+                raise BuilderError(
+                    "Placement steps with 'rigid_group' also require 'to'"
+                )
+
+            for assembly_name in rigid_group_assembly_names:
+                _validate_rigid_group_motion(
+                    placement_state.rigidity_graph,
+                    moving_assembly_name=assembly_name,
+                    target_assembly_name=target_assembly_name,
+                    placement_step_index=placement_step.index,
+                )
+
+            rigidity_group_members = _attach_rigid_group(
                 placement_state.rigidity_graph,
-                moving_assembly_name=moving_assembly_name,
-                target_assembly_name=target_assembly_name,
-                placement_step_index=placement_step.index,
+                rigid_group_assembly_names,
+                target_assembly_name,
             )
+            _logger.info(
+                "Placement cursor %s/%s executing source step %s: rigid_group %s to '%s'; resulting rigidity group: %s",
+                placement_step_nr,
+                len(placement_steps),
+                placement_step.index,
+                list(rigid_group_assembly_names),
+                target_assembly_name,
+                rigidity_group_members,
+            )
+            placement_state.executed_alignment_indices.add(placement_step.index)
+            placement_state.cursor += 1
+            continue
 
-            if moving_assembly_name not in built_results_by_name:
-                continue
-            if (
-                target_assembly_name is not None
-                and target_assembly_name not in built_results_by_name
-            ):
-                continue
-            if any(name not in built_results_by_name for name in moving_group):
-                continue
+        alignment_spec = placement_step.spec
+        moving_reference_str = placement_step.moving_reference
+        target_reference_str = placement_step.target_reference
+        moving_assembly_name = placement_step.moving_assembly_name
+        target_assembly_name = placement_step.target_assembly_name
+        if moving_reference_str is None or moving_assembly_name is None:
+            raise BuilderError("Each placement alignment requires 'part'")
+        moving_group = _validate_rigid_group_motion(
+            placement_state.rigidity_graph,
+            moving_assembly_name=moving_assembly_name,
+            target_assembly_name=target_assembly_name,
+            placement_step_index=placement_step.index,
+        )
 
-            moving_group_parts_before = {
-                assembly_name: _resolve_placement_anchor(
-                    assembly_name,
-                    placement_state=placement_state,
-                    built_results_by_name=built_results_by_name,
-                    repository_dir=repository_dir,
-                )[2]
-                for assembly_name in moving_group
-            }
+        moving_group_parts_before = {
+            assembly_name: _resolve_placement_anchor(
+                assembly_name,
+                placement_state=placement_state,
+                built_results_by_name=built_results_by_name,
+                repository_dir=repository_dir,
+            )[2]
+            for assembly_name in moving_group
+        }
 
-            _, _, moving_anchor = _resolve_placement_anchor(
-                moving_reference_str,
+        _, _, moving_anchor = _resolve_placement_anchor(
+            moving_reference_str,
+            placement_state=placement_state,
+            built_results_by_name=built_results_by_name,
+            repository_dir=repository_dir,
+        )
+        _, _, moving_part = _resolve_placement_anchor(
+            moving_assembly_name,
+            placement_state=placement_state,
+            built_results_by_name=built_results_by_name,
+            repository_dir=repository_dir,
+        )
+        moved_anchor = moving_anchor
+
+        step_transforms: List[Callable[[Any], Any]] = []
+        step_records: List[Dict[str, Any]] = []
+
+        if alignment_spec.get("alignment") is not None:
+            if target_reference_str is None or target_assembly_name is None:
+                raise BuilderError("Placement steps with 'alignment' also require 'to'")
+            _, _, target_anchor = _resolve_placement_anchor(
+                target_reference_str,
                 placement_state=placement_state,
                 built_results_by_name=built_results_by_name,
                 repository_dir=repository_dir,
             )
-            _, _, moving_part = _resolve_placement_anchor(
-                moving_assembly_name,
+            _, _, target_part = _resolve_placement_anchor(
+                target_assembly_name,
                 placement_state=placement_state,
                 built_results_by_name=built_results_by_name,
                 repository_dir=repository_dir,
             )
-            moving_center_before = _part_center(moving_anchor)
-            moved_anchor = moving_anchor
 
-            step_transforms: List[Callable[[Any], Any]] = []
-            step_records: List[Dict[str, Any]] = []
-
-            if alignment_spec.get("alignment") is not None:
-                if target_reference_str is None or target_assembly_name is None:
+            resolved_alignment = _resolve_alignment_enum(
+                alignment_spec.get("alignment")
+            )
+            raw_axes = alignment_spec.get("axes")
+            axes = None
+            if raw_axes is not None:
+                resolved_axes = _resolve_inline_value(
+                    raw_axes, placement_state.placement_context
+                )
+                if not isinstance(resolved_axes, list):
                     raise BuilderError(
-                        "Placement steps with 'alignment' also require 'to'"
+                        "placement alignment axes must resolve to a list"
                     )
-                _, _, target_anchor = _resolve_placement_anchor(
-                    target_reference_str,
-                    placement_state=placement_state,
-                    built_results_by_name=built_results_by_name,
-                    repository_dir=repository_dir,
-                )
-                _, _, target_part = _resolve_placement_anchor(
-                    target_assembly_name,
-                    placement_state=placement_state,
-                    built_results_by_name=built_results_by_name,
-                    repository_dir=repository_dir,
-                )
+                axes = [int(axis) for axis in resolved_axes]
 
-                resolved_alignment = _resolve_alignment_enum(
-                    alignment_spec.get("alignment")
-                )
-                raw_axes = alignment_spec.get("axes")
-                axes = None
-                if raw_axes is not None:
-                    resolved_axes = _resolve_inline_value(
-                        raw_axes, placement_state.placement_context
-                    )
-                    if not isinstance(resolved_axes, list):
-                        raise BuilderError(
-                            "placement alignment axes must resolve to a list"
-                        )
-                    axes = [int(axis) for axis in resolved_axes]
-
-                stack_gap = alignment_spec.get("stack_gap", 0)
-                resolved_stack_gap = _resolve_inline_value(
-                    stack_gap, placement_state.placement_context
-                )
-
-                target_center_before = _part_center(target_anchor)
-                moving_part_center_before = _part_center(moving_part)
-                target_part_center_before = _part_center(target_part)
-
-                alignment_transform = _make_placement_translation(
-                    moved_anchor,
-                    target_anchor,
-                    alignment=resolved_alignment,
-                    axes=axes,
-                    stack_gap=resolved_stack_gap,
-                )
-                aligned_anchor = alignment_transform(moved_anchor)
-                alignment_delta = _translation_delta(
-                    _part_center(moved_anchor), _part_center(aligned_anchor)
-                )
-                _logger.info(
-                    "Placement step nr %s: %s aligned to %s via %s; moving_anchor_center=%s; target_anchor_center=%s; moving_part_position=%s; target_part_position=%s; shift=%s",
-                    placement_step_nr,
-                    moving_reference_str,
-                    target_reference_str,
-                    resolved_alignment.name,
-                    _format_point(_part_center(moved_anchor)),
-                    _format_point(target_center_before),
-                    _format_point(moving_part_center_before),
-                    _format_point(target_part_center_before),
-                    _format_point(alignment_delta),
-                )
-                step_transforms.append(alignment_transform)
-                step_records.append(
-                    {
-                        "kind": "translate",
-                        "vector": [float(value) for value in alignment_delta],
-                        "placement_step": placement_step.index,
-                    }
-                )
-                moved_anchor = aligned_anchor
-
-            resolved_post_rotation = _resolve_post_rotation(
-                alignment_spec,
-                placement_state.placement_context,
-                resolve_anchor=lambda reference: (
-                    lambda assembly_name, selector, anchor: (
-                        assembly_name,
-                        selector,
-                        (
-                            _apply_translation_sequence(anchor, step_transforms)
-                            if assembly_name == moving_assembly_name and step_transforms
-                            else anchor
-                        ),
-                    )
-                )(
-                    *_resolve_placement_anchor(
-                        reference,
-                        placement_state=placement_state,
-                        built_results_by_name=built_results_by_name,
-                        repository_dir=repository_dir,
-                    )
-                ),
+            stack_gap = alignment_spec.get("stack_gap", 0)
+            resolved_stack_gap = _resolve_inline_value(
+                stack_gap, placement_state.placement_context
             )
-            if resolved_post_rotation is not None:
-                rotation_transform = _make_post_rotation(
-                    resolved_post_rotation["angle"],
-                    axis=resolved_post_rotation["axis"],
-                    center=resolved_post_rotation["center"],
-                )
-                moved_anchor = rotation_transform(moved_anchor)
-                step_transforms.append(rotation_transform)
-                rotation_record = {
-                    "kind": "rotate",
-                    "angle": float(resolved_post_rotation["angle"]),
-                    "axis": [float(value) for value in resolved_post_rotation["axis"]],
+
+            target_center_before = _part_center(target_anchor)
+            moving_part_center_before = _part_center(moving_part)
+            target_part_center_before = _part_center(target_part)
+
+            alignment_transform = _make_placement_translation(
+                moved_anchor,
+                target_anchor,
+                alignment=resolved_alignment,
+                axes=axes,
+                stack_gap=resolved_stack_gap,
+            )
+            aligned_anchor = alignment_transform(moved_anchor)
+            alignment_delta = _translation_delta(
+                _part_center(moved_anchor), _part_center(aligned_anchor)
+            )
+            _logger.info(
+                "Placement cursor %s/%s executing source step %s: %s aligned to %s via %s; moving_anchor_center=%s; target_anchor_center=%s; moving_part_position=%s; target_part_position=%s; shift=%s",
+                placement_step_nr,
+                len(placement_steps),
+                placement_step.index,
+                moving_reference_str,
+                target_reference_str,
+                resolved_alignment.name,
+                _format_point(_part_center(moved_anchor)),
+                _format_point(target_center_before),
+                _format_point(moving_part_center_before),
+                _format_point(target_part_center_before),
+                _format_point(alignment_delta),
+            )
+            step_transforms.append(alignment_transform)
+            step_records.append(
+                {
+                    "kind": "translate",
+                    "vector": [float(value) for value in alignment_delta],
                     "placement_step": placement_step.index,
                 }
-                if resolved_post_rotation["center"] is not None:
-                    rotation_record["center"] = [
-                        float(value) for value in resolved_post_rotation["center"]
-                    ]
-                step_records.append(rotation_record)
-
-            resolved_post_translation = _resolve_post_translation(
-                alignment_spec,
-                placement_state.placement_context,
             )
-            if resolved_post_translation is not None:
-                post_translation_transform = _make_post_translation(
-                    resolved_post_translation
-                )
-                moved_anchor = post_translation_transform(moved_anchor)
-                step_transforms.append(post_translation_transform)
-                step_records.append(
-                    {
-                        "kind": "translate",
-                        "vector": [float(value) for value in resolved_post_translation],
-                        "placement_step": placement_step.index,
-                    }
-                )
+            moved_anchor = aligned_anchor
 
-            if not step_transforms and not placement_step.rigid_attach:
-                raise BuilderError(
-                    "Each placement step requires either 'alignment', 'post_rotation', or 'rigid_attach'"
+        resolved_post_rotation = _resolve_post_rotation(
+            alignment_spec,
+            placement_state.placement_context,
+            resolve_anchor=lambda reference: (
+                lambda assembly_name, selector, anchor: (
+                    assembly_name,
+                    selector,
+                    (
+                        _apply_translation_sequence(anchor, step_transforms)
+                        if assembly_name == moving_assembly_name and step_transforms
+                        else anchor
+                    ),
                 )
+            )(
+                *_resolve_placement_anchor(
+                    reference,
+                    placement_state=placement_state,
+                    built_results_by_name=built_results_by_name,
+                    repository_dir=repository_dir,
+                )
+            ),
+        )
+        if resolved_post_rotation is not None:
+            rotation_transform = _make_post_rotation(
+                resolved_post_rotation["angle"],
+                axis=resolved_post_rotation["axis"],
+                center=resolved_post_rotation["center"],
+            )
+            moved_anchor = rotation_transform(moved_anchor)
+            step_transforms.append(rotation_transform)
+            rotation_record = {
+                "kind": "rotate",
+                "angle": float(resolved_post_rotation["angle"]),
+                "axis": [float(value) for value in resolved_post_rotation["axis"]],
+                "placement_step": placement_step.index,
+            }
+            if resolved_post_rotation["center"] is not None:
+                rotation_record["center"] = [
+                    float(value) for value in resolved_post_rotation["center"]
+                ]
+            step_records.append(rotation_record)
 
-            for assembly_name in moving_group:
-                _logger.info(
-                    f"Applying placement step nr {placement_step_nr} transforms to assembly '{assembly_name}' because it is in rigid group with '{moving_assembly_name}'"
-                )
-                placement_state.translation_history.setdefault(
-                    assembly_name, []
-                ).extend(step_transforms)
-                placement_state.transform_records.setdefault(assembly_name, []).extend(
-                    step_records
-                )
-                moved_part = _apply_translation_sequence(
-                    moving_group_parts_before[assembly_name], step_transforms
-                )
-                assembly_delta = _translation_delta(
-                    _part_center(moving_group_parts_before[assembly_name]),
-                    _part_center(moved_part),
-                )
-                placement_state.placement_offsets[assembly_name] = (
-                    _add_translation_delta(
-                        placement_state.placement_offsets.get(
-                            assembly_name, (0.0, 0.0, 0.0)
-                        ),
-                        assembly_delta,
-                    )
-                )
+        resolved_post_translation = _resolve_post_translation(
+            alignment_spec,
+            placement_state.placement_context,
+        )
+        if resolved_post_translation is not None:
+            post_translation_transform = _make_post_translation(
+                resolved_post_translation
+            )
+            moved_anchor = post_translation_transform(moved_anchor)
+            step_transforms.append(post_translation_transform)
+            step_records.append(
+                {
+                    "kind": "translate",
+                    "vector": [float(value) for value in resolved_post_translation],
+                    "placement_step": placement_step.index,
+                }
+            )
 
-            if placement_step.rigid_attach and target_assembly_name is not None:
-                placement_state.rigidity_graph.add_edge(
-                    moving_assembly_name,
-                    target_assembly_name,
-                )
+        if not step_transforms:
+            raise BuilderError(
+                "Each placement step requires 'alignment', 'post_rotation', or 'post_translation'"
+            )
 
-                rigidity_group_members = _rigid_group_members(
-                    placement_state.rigidity_graph, moving_assembly_name
-                )
-                _logger.info(
-                    f"Placement step nr {placement_step_nr} rigidly attaches assemblies '{moving_assembly_name}' and '{target_assembly_name}', resulting in rigidity group: {rigidity_group_members}"
-                )
+        for assembly_name in moving_group:
+            _logger.info(
+                "Applying placement source step %s at cursor %s transforms to assembly '%s' because it is in rigid group with '%s'",
+                placement_step.index,
+                placement_step_nr,
+                assembly_name,
+                moving_assembly_name,
+            )
+            placement_state.translation_history.setdefault(assembly_name, []).extend(
+                step_transforms
+            )
+            placement_state.transform_records.setdefault(assembly_name, []).extend(
+                step_records
+            )
+            moved_part = _apply_translation_sequence(
+                moving_group_parts_before[assembly_name], step_transforms
+            )
+            assembly_delta = _translation_delta(
+                _part_center(moving_group_parts_before[assembly_name]),
+                _part_center(moved_part),
+            )
+            placement_state.placement_offsets[assembly_name] = _add_translation_delta(
+                placement_state.placement_offsets.get(assembly_name, (0.0, 0.0, 0.0)),
+                assembly_delta,
+            )
 
-            placement_state.executed_alignment_indices.add(placement_step.index)
-            placement_state.cursor = len(placement_state.executed_alignment_indices)
-            progress = True
+        placement_state.executed_alignment_indices.add(placement_step.index)
+        placement_state.cursor += 1
 
-        if not progress:
-            break
+    if placement_state.cursor >= len(placement_steps):
+        _logger.info(
+            "Placement cursor complete: executed %s active placement step(s)",
+            len(placement_steps),
+        )
 
     return placement_state
 
@@ -3480,9 +3509,16 @@ def _apply_placement_alignments(
         hidden_target_step_indices = {
             step.index
             for step in graph_model.placement_steps
-            if step.moving_assembly_name in relevant_assemblies
-            and step.target_assembly_name is not None
+            if step.target_assembly_name is not None
             and step.target_assembly_name not in relevant_assemblies
+            and (
+                any(
+                    assembly_name in relevant_assemblies
+                    for assembly_name in step.rigid_group_assembly_names
+                )
+                if step.is_rigid_group
+                else step.moving_assembly_name in relevant_assemblies
+            )
         }
         for step_index in hidden_target_step_indices:
             relevant_alignment_indices.add(step_index)
@@ -3564,7 +3600,6 @@ def _apply_placement_alignments(
             target_assembly_name=placement_step.target_assembly_name,
             placement_step_index=placement_index,
         )
-        moving_center_before = _part_center(moving_anchor)
         moved_anchor = moving_anchor
         step_transforms: List[Callable[[Any], Any]] = []
 
@@ -3701,14 +3736,10 @@ def _apply_placement_alignments(
             )
             step_transforms.append(post_translation_transform)
 
-        if not step_transforms and not placement_step.rigid_attach:
+        if not step_transforms:
             raise BuilderError(
-                "Each placement step requires either 'alignment', 'post_rotation', or 'rigid_attach'"
+                "Each placement step requires 'alignment', 'post_rotation', or 'post_translation'"
             )
-
-        translation_delta = _translation_delta(
-            moving_center_before, _part_center(moved_anchor)
-        )
 
         for assembly_name in moving_group:
             translation_history.setdefault(assembly_name, []).extend(step_transforms)
@@ -3720,15 +3751,6 @@ def _apply_placement_alignments(
                 continue
             anchor_cache[(assembly_name, selector)] = _apply_translation_sequence(
                 anchor_part, step_transforms
-            )
-
-        if (
-            placement_step.rigid_attach
-            and placement_step.target_assembly_name is not None
-        ):
-            rigidity_graph.add_edge(
-                moving_assembly_name,
-                placement_step.target_assembly_name,
             )
 
     return _AppliedPlacementResult(
@@ -4770,7 +4792,19 @@ def _export_scene_for_assembly(
         repository_dir=repository_dir,
         config_data=config_data,
     )
-    scene_parts = applied_placement.scene_parts
+    if isinstance(applied_placement, _AppliedPlacementResult):
+        scene_parts = applied_placement.scene_parts
+    else:
+        scene_parts = applied_placement
+        applied_placement = _AppliedPlacementResult(
+            scene_parts=scene_parts,
+            assembly_transforms={},
+            placed_assembly_names={
+                str(item["assembly_name"])
+                for item in scene_parts
+                if item.get("assembly_name") is not None
+            },
+        )
 
     if bool(getattr(args, "prototype", False)):
         placement_state = _initialize_placement_execution_state(

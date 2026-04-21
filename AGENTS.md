@@ -8,6 +8,9 @@ This repository (`shellforgepy`) hosts the Python runtime for the ShellForge too
 - Type hints are used where they improve readability or are required by adapters, but do not blanket-annotate obvious primitives.
 - Implementing algorithms in cad-library agnostic way is preferred, so try this first.
 - Keep adapter-specific dependencies inside their respective modules so core layers stay dependency-light.
+- Use concrete absolute imports everywhere inside this repository. Import the real module that defines the symbol, for example `from shellforgepy.adapters._adapter_bridge import ...` or `import shellforgepy.builder.graph_model as builder_graph_model`.
+- Do not use relative imports inside this repository.
+- Do not use `__init__.py` files to re-export symbols or create package-level shortcut APIs. Keep import resolution explicit and let `shellforgepy.simple` remain the only convenience facade for the public API.
 
 ## Testing
 - Prefer creating proper pytest tests, not ad-hoc scripts. Avoid running quick debug/test scripts. **Avoid** "I will write a simple test..." -> **prefer** "I will write a proper unit test"

@@ -7,8 +7,7 @@ from itertools import islice
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import networkx as nx
-
-from .errors import BuilderError
+from shellforgepy.builder.errors import BuilderError
 
 
 @dataclass(frozen=True)
@@ -316,7 +315,7 @@ def _build_placement_steps(
                     target_reference=str(target_reference),
                     moving_assembly_name=None,
                     target_assembly_name=target_assembly_name,
-                    rigid_attach=True,
+                    rigid_attach=False,
                     rigid_group_assembly_names=tuple(rigid_group_assembly_names),
                 )
             )
@@ -326,19 +325,20 @@ def _build_placement_steps(
         target_reference = alignment.get("to")
         has_alignment = alignment.get("alignment") is not None
         has_post_rotation = alignment.get("post_rotation") is not None
-        rigid_attach = alignment.get("rigid_attach", False)
+        has_post_translation = alignment.get("post_translation") is not None
+        if "rigid_attach" in alignment:
+            raise BuilderError(
+                "placement rigid_attach is no longer supported; use a separate "
+                "'rigid_group' placement step"
+            )
         if not moving_reference:
             raise BuilderError("Each placement alignment requires 'part'")
         if has_alignment and not target_reference:
             raise BuilderError("Placement steps with 'alignment' also require 'to'")
-        if not has_alignment and not has_post_rotation and not rigid_attach:
+        if not has_alignment and not has_post_rotation and not has_post_translation:
             raise BuilderError(
-                "Each placement step requires either 'alignment', 'post_rotation', or 'rigid_attach'"
+                "Each placement step requires 'alignment', 'post_rotation', or 'post_translation'"
             )
-        if rigid_attach and target_reference is None:
-            raise BuilderError("Placement steps with 'rigid_attach' also require 'to'")
-        if not isinstance(rigid_attach, bool):
-            raise BuilderError("placement alignment rigid_attach must be a boolean")
         moving_assembly_name, _ = parse_part_reference(
             str(moving_reference), known_assembly_names
         )
@@ -357,7 +357,7 @@ def _build_placement_steps(
                 ),
                 moving_assembly_name=moving_assembly_name,
                 target_assembly_name=target_assembly_name,
-                rigid_attach=rigid_attach,
+                rigid_attach=False,
             )
         )
     return steps
@@ -452,9 +452,6 @@ def _build_placement_execution_dag(
             for assembly_name in sorted(affected_members):
                 latest_effect_by_assembly[assembly_name] = step.index
 
-            for assembly_name in sorted(source_members):
-                first_moving_alignment_index.setdefault(assembly_name, step.index)
-
             for assembly_name in sorted(group_members):
                 first_involved_alignment_index.setdefault(assembly_name, step.index)
             first_involved_alignment_index.setdefault(
@@ -534,13 +531,6 @@ def _build_placement_execution_dag(
                 affected_assembly_names=tuple(sorted(moving_group)),
             )
         )
-
-        if step.rigid_attach and step.target_assembly_name is not None:
-            rigidity_graph.add_edge(
-                step.moving_assembly_name,
-                step.target_assembly_name,
-            )
-
     return (
         graph,
         first_moving_alignment_index,
@@ -633,6 +623,16 @@ def _compute_placement_build_dependencies(
     if model is None:
         raise BuilderError("Builder graph model is required")
 
+    def step_referenced_assemblies(step: PlacementStep) -> set[str]:
+        referenced: set[str] = set()
+        if step.is_rigid_group:
+            referenced.update(step.rigid_group_assembly_names)
+        elif step.moving_assembly_name is not None:
+            referenced.add(step.moving_assembly_name)
+        if step.target_assembly_name is not None:
+            referenced.add(step.target_assembly_name)
+        return referenced
+
     implicit_dependencies: Dict[str, List[str]] = {name: [] for name in assemblies}
     for assembly_name, entry in assemblies.items():
         injected_assemblies = {
@@ -644,14 +644,44 @@ def _compute_placement_build_dependencies(
             continue
 
         boundary_index = model.first_moving_alignment_index.get(assembly_name)
-        required = set(
-            placement_dependency_closure(
-                model,
-                injected_assemblies,
-                stop_index=boundary_index,
-                include_rigid_effects=False,
+        if boundary_index is None:
+            boundary_index = model.first_involved_alignment_index.get(assembly_name)
+        if boundary_index is None:
+            continue
+
+        required_prefix_index: Optional[int] = None
+        rigidity_graph = nx.Graph()
+        rigidity_graph.add_nodes_from(assemblies)
+
+        for step in placement_steps:
+            if step.index >= boundary_index:
+                break
+
+            if step.is_rigid_group:
+                if step.target_assembly_name is None:
+                    raise BuilderError(
+                        "Placement steps with 'rigid_group' also require 'to'"
+                    )
+                for source in step.rigid_group_assembly_names:
+                    rigidity_graph.add_edge(source, step.target_assembly_name)
+                continue
+
+            if step.moving_assembly_name is None:
+                continue
+            moving_group = _rigid_group_members(
+                rigidity_graph, step.moving_assembly_name
             )
-        )
+            if moving_group.intersection(injected_assemblies):
+                required_prefix_index = step.index
+
+        if required_prefix_index is None:
+            continue
+
+        required: set[str] = set()
+        for step in placement_steps:
+            if step.index > required_prefix_index:
+                break
+            required.update(step_referenced_assemblies(step))
         required.discard(assembly_name)
         implicit_dependencies[assembly_name] = sorted(required)
 
@@ -837,7 +867,7 @@ def restrict_to_active_assemblies(
                     target_reference=step.target_reference,
                     moving_assembly_name=None,
                     target_assembly_name=step.target_assembly_name,
-                    rigid_attach=True,
+                    rigid_attach=False,
                     rigid_group_assembly_names=active_group,
                 )
             )

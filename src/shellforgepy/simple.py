@@ -36,7 +36,56 @@ from shellforgepy.adapters._adapter import (
     get_volume,
     import_solid_from_step,
 )
+
+# Core alignment functionality
+from shellforgepy.construct.alignment import ALIGNMENT_SIGNS, Alignment
+from shellforgepy.construct.alignment_operations import (
+    align,
+    align_translation,
+    alignment_signs,
+    chain_translations,
+    mirror,
+    rotate,
+    scale,
+    stack_alignment_of,
+    translate,
+)
+from shellforgepy.construct.construct_utils import (
+    compute_triangle_normal,
+    fibonacci_sphere,
+    normalize,
+    point_sequence_interpolator_in_arc_length,
+    point_string,
+)
+from shellforgepy.construct.leader_followers_cutters_part import (
+    LeaderFollowersCuttersPart,
+    reset_to_original_orientation,
+)
+from shellforgepy.construct.named_part import NamedPart
+from shellforgepy.construct.part_collector import PartCollector
+from shellforgepy.construct.part_parameters import PartParameters
+from shellforgepy.construct.step_serialization import step_cached
 from shellforgepy.geometry.dovetails import create_dovetail_tongue_and_groove
+from shellforgepy.geometry.face_point_cloud import face_point_cloud
+from shellforgepy.geometry.higher_order_solids import (
+    create_conical_ring,
+    create_distorted_cube,
+    create_hex_prism,
+    create_isoceles_triangle,
+    create_pyramid_stump,
+    create_right_triangle,
+    create_ring,
+    create_ring_segment_between_points,
+    create_rounded_slab,
+    create_screw_thread,
+    create_trapezoid,
+    create_triangular_prism,
+    create_triangular_prism_geometry,
+    directed_box_at,
+    directed_cone_at,
+    directed_cylinder_at,
+    materialize_bounding_box,
+)
 from shellforgepy.geometry.keepouts import create_box_hole_cutter
 from shellforgepy.geometry.m_screws import (
     MScrew,
@@ -65,57 +114,7 @@ from shellforgepy.geometry.mesh_utils import (
     write_shell_maps_to_stl,
     write_stl_binary,
 )
-from shellforgepy.shells.transformed_region_view import TransformedRegionView
-
-# Core alignment functionality
-from .construct.alignment import ALIGNMENT_SIGNS, Alignment
-from .construct.alignment_operations import (
-    align,
-    align_translation,
-    alignment_signs,
-    chain_translations,
-    mirror,
-    rotate,
-    scale,
-    stack_alignment_of,
-    translate,
-)
-from .construct.construct_utils import (
-    compute_triangle_normal,
-    fibonacci_sphere,
-    normalize,
-    point_sequence_interpolator_in_arc_length,
-    point_string,
-)
-from .construct.leader_followers_cutters_part import (
-    LeaderFollowersCuttersPart,
-    reset_to_original_orientation,
-)
-from .construct.named_part import NamedPart
-from .construct.part_collector import PartCollector
-from .construct.part_parameters import PartParameters
-from .construct.step_serialization import step_cached
-from .geometry.face_point_cloud import face_point_cloud
-from .geometry.higher_order_solids import (
-    create_conical_ring,
-    create_distorted_cube,
-    create_hex_prism,
-    create_isoceles_triangle,
-    create_pyramid_stump,
-    create_right_triangle,
-    create_ring,
-    create_ring_segment_between_points,
-    create_rounded_slab,
-    create_screw_thread,
-    create_trapezoid,
-    create_triangular_prism,
-    create_triangular_prism_geometry,
-    directed_box_at,
-    directed_cone_at,
-    directed_cylinder_at,
-    materialize_bounding_box,
-)
-from .geometry.modifications import (
+from shellforgepy.geometry.modifications import (
     cut_in_two,
     fit_part_between,
     orient_for_flatness,
@@ -124,13 +123,13 @@ from .geometry.modifications import (
     slice_part,
     transform_with_function_tesselating,
 )
-from .geometry.sheet_metal import (
+from shellforgepy.geometry.sheet_metal import (
     create_sheet_metal_bend,
     create_sheet_metal_bracket,
     create_sheet_metal_hem,
     create_sheet_metal_wall,
 )
-from .geometry.spherical_tools import (
+from shellforgepy.geometry.spherical_tools import (
     coordinate_system_transform,
     coordinate_system_transform_to_matrix,
     coordinate_system_transformation_function,
@@ -139,26 +138,27 @@ from .geometry.spherical_tools import (
     ray_triangle_intersect,
     transform_point_with_matrix,
 )
-from .geometry.treapezoidal_snake_geometry import (
+from shellforgepy.geometry.treapezoidal_snake_geometry import (
     create_bezier_snake_geometry,
     create_trapezoidal_snake_geometry,
 )
-from .produce.arrange_and_export import (
+from shellforgepy.produce.arrange_and_export import (
     arrange_and_export,
     arrange_and_export_parts,
     export_solid_to_step,
     export_solid_to_stl,
 )
-from .produce.production_parts_model import PartInfo, PartList
-from .shells.connector_hint import ConnectorHint
-from .shells.materialized_connectors import (
+from shellforgepy.produce.production_parts_model import PartInfo, PartList
+from shellforgepy.shells.connector_hint import ConnectorHint
+from shellforgepy.shells.materialized_connectors import (
     compute_transforms_from_hint,
     create_screw_connector_normal,
 )
-from .shells.mesh_partition import MeshPartition
-from .shells.partitionable_spheroid_triangle_mesh import (
+from shellforgepy.shells.mesh_partition import MeshPartition
+from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
 )
+from shellforgepy.shells.transformed_region_view import TransformedRegionView
 
 # Define what gets exported with "from simple import *"
 __all__ = [
