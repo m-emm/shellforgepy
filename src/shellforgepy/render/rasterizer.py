@@ -25,9 +25,9 @@ def _pick_stable_up(direction: np.ndarray) -> np.ndarray:
 def _look_at(eye: np.ndarray, target: np.ndarray, up: np.ndarray) -> np.ndarray:
     forward = target - eye
     forward /= np.linalg.norm(forward) + 1e-12
-    right = np.cross(up, forward)
+    right = np.cross(forward, up)
     right /= np.linalg.norm(right) + 1e-12
-    true_up = np.cross(forward, right)
+    true_up = np.cross(right, forward)
 
     view = np.eye(4, dtype=np.float32)
     view[0, :3] = right
@@ -48,7 +48,7 @@ def _ortho_matrix(
     proj = np.eye(4, dtype=np.float32)
     proj[0, 0] = 2.0 / max(right - left, 1e-6)
     proj[1, 1] = 2.0 / max(top - bottom, 1e-6)
-    proj[2, 2] = -2.0 / max(far - near, 1e-6)
+    proj[2, 2] = 2.0 / max(far - near, 1e-6)
     proj[0, 3] = -(right + left) / max(right - left, 1e-6)
     proj[1, 3] = -(top + bottom) / max(top - bottom, 1e-6)
     proj[2, 3] = -(far + near) / max(far - near, 1e-6)
@@ -156,9 +156,9 @@ def _face_normals(triangles: np.ndarray) -> np.ndarray:
 
 
 def _shade_colors(face_colors: np.ndarray, face_normals_view: np.ndarray) -> np.ndarray:
-    light_dir = np.array([0.35, -0.45, -1.0], dtype=np.float32)
-    light_dir /= np.linalg.norm(light_dir) + 1e-12
-    diffuse = np.maximum(0.0, face_normals_view @ -light_dir)
+    surface_to_key_light = np.array([-0.35, 0.45, -1.0], dtype=np.float32)
+    surface_to_key_light /= np.linalg.norm(surface_to_key_light) + 1e-12
+    diffuse = np.maximum(0.0, face_normals_view @ surface_to_key_light)
     intensity = 0.45 + 0.55 * diffuse
     shaded = face_colors * intensity[:, None]
     return np.clip(shaded, 0.0, 1.0)

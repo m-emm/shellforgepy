@@ -142,6 +142,24 @@ def _dominant_channel_bbox_size(
     return float(max_x - min_x + 1), float(max_y - min_y + 1)
 
 
+def _dominant_channel_pixel_count(image: np.ndarray, channel_index: int) -> int:
+    other_channels = [index for index in range(3) if index != channel_index]
+    channel = image[:, :, channel_index].astype(np.int16)
+    mask = (
+        (channel >= 20)
+        & (channel > image[:, :, other_channels[0]].astype(np.int16) + 20)
+        & (channel > image[:, :, other_channels[1]].astype(np.int16) + 20)
+    )
+    return int(np.count_nonzero(mask))
+
+
+def _non_background_pixels(
+    image: np.ndarray, background_color: tuple[int, int, int] = (250, 250, 250)
+) -> np.ndarray:
+    background = np.asarray(background_color, dtype=np.uint8)
+    return image[np.any(image != background, axis=2)]
+
+
 def _run_render_perf_case(
     *,
     cube_count: int,
@@ -390,7 +408,7 @@ def test_render_obj_views_with_stats_reports_geometry_and_dimensions(
     assert batch.results[0].render_seconds >= 0.0
 
 
-@pytest.mark.parametrize("view_name", ["front", "isometric"])
+@pytest.mark.parametrize("view_name", ["top", "front", "isometric", "front_angle"])
 def test_render_scene_preserves_left_to_right_order(view_name, disable_numba):
     scene = Scene(
         [
@@ -421,6 +439,75 @@ def test_render_scene_preserves_left_to_right_order(view_name, disable_numba):
     blue_centroid_x = _dominant_channel_centroid_x(image, 2)
 
     assert red_centroid_x < blue_centroid_x
+
+
+@pytest.mark.parametrize(
+    ("view_name", "near_origin", "far_origin"),
+    [
+        ("top", (0.0, 0.0, 20.0), (0.0, 0.0, 0.0)),
+        ("bottom", (0.0, 0.0, 0.0), (0.0, 0.0, 20.0)),
+        ("front", (0.0, -20.0, 0.0), (0.0, 20.0, 0.0)),
+        ("back", (0.0, 20.0, 0.0), (0.0, -20.0, 0.0)),
+        ("left", (-20.0, 0.0, 0.0), (20.0, 0.0, 0.0)),
+        ("right", (20.0, 0.0, 0.0), (-20.0, 0.0, 0.0)),
+    ],
+)
+def test_render_scene_named_views_show_near_side(
+    view_name, near_origin, far_origin, disable_numba
+):
+    scene = Scene(
+        [
+            _create_cube_mesh_object(
+                name="near_red",
+                origin=near_origin,
+                size=10.0,
+                color=(0.95, 0.05, 0.05),
+            ),
+            _create_cube_mesh_object(
+                name="far_blue",
+                origin=far_origin,
+                size=10.0,
+                color=(0.05, 0.05, 0.95),
+            ),
+        ]
+    )
+
+    image = render_scene(
+        scene,
+        view_name=view_name,
+        width=128,
+        height=128,
+        disable_numba=disable_numba,
+    )
+
+    assert _dominant_channel_pixel_count(image, 0) > 0
+    assert _dominant_channel_pixel_count(image, 2) == 0
+
+
+@pytest.mark.parametrize("view_name", ["top", "front", "left", "front_angle"])
+def test_render_scene_lights_camera_facing_surfaces(view_name, disable_numba):
+    scene = Scene(
+        [
+            _create_cube_mesh_object(
+                name="lit_cube",
+                origin=(0.0, 0.0, 0.0),
+                size=10.0,
+                color=(0.8, 0.2, 0.1),
+            )
+        ]
+    )
+
+    image = render_scene(
+        scene,
+        view_name=view_name,
+        width=128,
+        height=128,
+        disable_numba=disable_numba,
+    )
+    lit_pixels = _non_background_pixels(image)
+
+    assert len(lit_pixels) > 0
+    assert float(np.mean(lit_pixels[:, 0])) > 135.0
 
 
 def test_render_scene_preserves_cube_proportions_in_wide_front_view(disable_numba):
