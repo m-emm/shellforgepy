@@ -17,6 +17,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import networkx as nx
@@ -44,6 +45,7 @@ DEFAULT_BED_WIDTH = 200.0
 _COLLECTION_ASSEMBLY_GENERATOR_PATH = (
     "shellforgepy.builder.builder._build_collection_assembly"
 )
+_LAST_BUILD_ARTIFACT_POOL: Optional["_BuildArtifactPool"] = None
 
 
 class _BuilderLoader(yaml.SafeLoader):
@@ -106,12 +108,200 @@ class _DependencyInjection:
 
 
 @dataclass
+class _BuildArtifactSlot:
+    assembly_name: str
+    state: str = "planned"
+    source: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    canonical_artifact: Any = None
+    runtime_artifact: Any = None
+    runtime_anchor_cache: Dict[str, Any] = field(default_factory=dict)
+    runtime_transforms: List[Callable[[Any], Any]] = field(default_factory=list)
+    placement_records: List[Dict[str, Any]] = field(default_factory=list)
+    placement_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+
+class _BuildArtifactPool:
+    """Explicit in-memory assembly artifacts available to one builder run."""
+
+    def __init__(self, assembly_names: Iterable[str]):
+        planned_names = {str(name) for name in assembly_names if str(name).strip()}
+        self.slots: Dict[str, _BuildArtifactSlot] = {
+            name: _BuildArtifactSlot(assembly_name=name)
+            for name in sorted(planned_names)
+        }
+
+    @classmethod
+    def from_metadata_map(
+        cls,
+        metadata_by_name: Mapping[str, Dict[str, Any]],
+        *,
+        planned_assembly_names: Optional[Iterable[str]] = None,
+    ) -> "_BuildArtifactPool":
+        planned_names = set(str(name) for name in (planned_assembly_names or []))
+        planned_names.update(str(name) for name in metadata_by_name)
+        pool = cls(planned_names)
+        for assembly_name, metadata in metadata_by_name.items():
+            pool.insert_available(
+                str(assembly_name),
+                metadata,
+                source=("cache" if metadata.get("cache_hit") else "built"),
+            )
+        return pool
+
+    @property
+    def planned_names(self) -> set[str]:
+        return set(self.slots)
+
+    @property
+    def available_names(self) -> set[str]:
+        return {
+            name
+            for name, slot in self.slots.items()
+            if slot.state == "available" and slot.metadata is not None
+        }
+
+    def metadata_by_name(self) -> Dict[str, Dict[str, Any]]:
+        return {
+            name: slot.metadata
+            for name, slot in self.slots.items()
+            if slot.state == "available" and slot.metadata is not None
+        }
+
+    def insert_available(
+        self,
+        assembly_name: str,
+        metadata: Dict[str, Any],
+        *,
+        source: str,
+        canonical_artifact: Any = None,
+    ) -> None:
+        if assembly_name not in self.slots:
+            raise BuilderError(
+                f"Assembly '{assembly_name}' is not part of this build pool"
+            )
+        slot = self.slots[assembly_name]
+        slot.state = "available"
+        slot.source = source
+        slot.metadata = metadata
+        slot.canonical_artifact = canonical_artifact
+        slot.runtime_artifact = canonical_artifact
+
+    def sync_available_metadata(
+        self,
+        metadata_by_name: Mapping[str, Dict[str, Any]],
+    ) -> None:
+        for assembly_name, metadata in metadata_by_name.items():
+            slot = self.slots.get(str(assembly_name))
+            if slot is None:
+                continue
+            if slot.state != "available":
+                self.insert_available(
+                    str(assembly_name),
+                    metadata,
+                    source=("cache" if metadata.get("cache_hit") else "built"),
+                )
+
+    def require_available_slot(self, assembly_name: str) -> _BuildArtifactSlot:
+        slot = self.slots.get(assembly_name)
+        if slot is None:
+            raise BuilderError(
+                f"Assembly '{assembly_name}' is not part of this build pool"
+            )
+        if slot.state != "available" or slot.metadata is None:
+            raise BuilderError(
+                f"Assembly '{assembly_name}' is not available in the build pool"
+            )
+        return slot
+
+    def metadata_for(self, assembly_name: str) -> Dict[str, Any]:
+        return self.require_available_slot(assembly_name).metadata or {}
+
+    def import_runtime_part(
+        self,
+        assembly_name: str,
+        selector: str,
+        *,
+        known_assembly_names: Sequence[str],
+        built_results_by_name: Mapping[str, Dict[str, Any]],
+        repository_dir: Path,
+        reference: Optional[str] = None,
+    ) -> Any:
+        slot = self.require_available_slot(assembly_name)
+        if selector not in slot.runtime_anchor_cache:
+            metadata = slot.metadata or {}
+            entries = _artifact_entries_for_selector(metadata, selector)
+            if len(entries) != 1:
+                _raise_unresolved_artifact_reference(
+                    label="Placement reference",
+                    reference=reference or f"{assembly_name}.{selector}",
+                    resolved_reference=reference,
+                    assembly_name=assembly_name,
+                    selector=selector,
+                    entries=entries,
+                    metadata=metadata,
+                    known_assembly_names=known_assembly_names,
+                    built_results_by_name=built_results_by_name,
+                    repository_dir=repository_dir,
+                )
+            imported_part = _import_dependency_part(
+                Path(entries[0]["path"]).expanduser().resolve()
+            )
+            if slot.runtime_transforms:
+                imported_part = _apply_translation_sequence(
+                    imported_part,
+                    slot.runtime_transforms,
+                )
+            slot.runtime_anchor_cache[selector] = imported_part
+        return slot.runtime_anchor_cache[selector]
+
+    def apply_runtime_transforms(
+        self,
+        assembly_name: str,
+        transforms: Sequence[Callable[[Any], Any]],
+        records: Sequence[Mapping[str, Any]],
+        offset_delta: Sequence[float],
+    ) -> None:
+        slot = self.require_available_slot(assembly_name)
+        slot.runtime_transforms.extend(transforms)
+        slot.placement_records.extend(deepcopy([dict(record) for record in records]))
+        slot.placement_offset = _add_translation_delta(
+            slot.placement_offset,
+            offset_delta,
+        )
+        for selector, part in list(slot.runtime_anchor_cache.items()):
+            slot.runtime_anchor_cache[selector] = _apply_translation_sequence(
+                part,
+                transforms,
+            )
+
+    def runtime_transforms_for(self, assembly_name: str) -> List[Callable[[Any], Any]]:
+        slot = self.slots.get(assembly_name)
+        if slot is None:
+            return []
+        return list(slot.runtime_transforms)
+
+    def placement_records_for(self, assembly_name: str) -> List[Dict[str, Any]]:
+        slot = self.slots.get(assembly_name)
+        if slot is None:
+            return []
+        return list(slot.placement_records)
+
+    def placement_offset_for(self, assembly_name: str) -> tuple[float, float, float]:
+        slot = self.slots.get(assembly_name)
+        if slot is None:
+            return (0.0, 0.0, 0.0)
+        return slot.placement_offset
+
+
+@dataclass
 class _PlacementExecutionState:
     alignments: List[Dict[str, Any]]
     known_assembly_names: List[str]
     placement_context: Dict[str, Any]
     active_assembly_names: set[str] = field(default_factory=set)
     graph_model: Optional[builder_graph_model.BuilderGraphModel] = None
+    build_pool: Optional[_BuildArtifactPool] = None
     cursor: int = 0
     executed_alignment_indices: set[int] = field(default_factory=set)
     translation_history: Dict[str, List[Callable[[Any], Any]]] = field(
@@ -1592,15 +1782,21 @@ def _resolve_dependency_injections(
     built_results_by_name: Mapping[str, Dict[str, Any]],
     repository_dir: Path,
     placement_state: Optional[_PlacementExecutionState] = None,
+    build_pool: Optional[_BuildArtifactPool] = None,
 ) -> List[_DependencyInjection]:
+    if build_pool is None and placement_state is not None:
+        build_pool = placement_state.build_pool
     injections: List[_DependencyInjection] = []
     for kwarg_name, spec in _resolve_injected_parts_config(entry).items():
         assembly_name = spec["assembly"]
-        metadata = _dependency_metadata_for_assembly(
-            assembly_name,
-            built_results_by_name,
-            repository_dir,
-        )
+        if build_pool is not None:
+            metadata = build_pool.metadata_for(assembly_name)
+        else:
+            metadata = _dependency_metadata_for_assembly(
+                assembly_name,
+                built_results_by_name,
+                repository_dir,
+            )
         if spec["artifact"] == "assembly":
             step_path = (
                 Path(metadata["artifacts"]["leader_step"]).expanduser().resolve()
@@ -1609,9 +1805,15 @@ def _resolve_dependency_injections(
         else:
             step_path = _dependency_step_path(metadata, spec["artifact"])
             imported_part = _import_dependency_part(step_path)
-        imported_part = _apply_placement_state_to_part(
-            imported_part, assembly_name, placement_state
-        )
+        if build_pool is not None:
+            imported_part = _apply_translation_sequence(
+                imported_part,
+                build_pool.runtime_transforms_for(assembly_name),
+            )
+        else:
+            imported_part = _apply_placement_state_to_part(
+                imported_part, assembly_name, placement_state
+            )
         injections.append(
             _DependencyInjection(
                 kwarg_name=kwarg_name,
@@ -1621,12 +1823,18 @@ def _resolve_dependency_injections(
                 source_version_inputs=dict(metadata.get("version_inputs", {})),
                 step_path=step_path,
                 part=imported_part,
-                placement_offset=_placement_offset_for_assembly(
-                    assembly_name, placement_state
+                placement_offset=(
+                    build_pool.placement_offset_for(assembly_name)
+                    if build_pool is not None
+                    else _placement_offset_for_assembly(assembly_name, placement_state)
                 ),
-                placement_transform_records=list(
-                    _placement_transform_records_for_assembly(
-                        assembly_name, placement_state
+                placement_transform_records=(
+                    build_pool.placement_records_for(assembly_name)
+                    if build_pool is not None
+                    else list(
+                        _placement_transform_records_for_assembly(
+                            assembly_name, placement_state
+                        )
                     )
                 ),
             )
@@ -2942,6 +3150,7 @@ def _initialize_placement_execution_state(
     *,
     active_assembly_names: Optional[Iterable[str]] = None,
     graph_model: Optional[builder_graph_model.BuilderGraphModel] = None,
+    build_pool: Optional[_BuildArtifactPool] = None,
 ) -> _PlacementExecutionState:
     if graph_model is None:
         if config_data is not None and config_data.get("assemblies") is not None:
@@ -2963,12 +3172,20 @@ def _initialize_placement_execution_state(
             else known_assembly_names
         )
     }
+    if build_pool is None:
+        build_pool = _BuildArtifactPool.from_metadata_map(
+            built_results_by_name,
+            planned_assembly_names=active_names,
+        )
+    else:
+        build_pool.sync_available_metadata(built_results_by_name)
     return _PlacementExecutionState(
         alignments=_placement_alignments(config_data),
         known_assembly_names=known_assembly_names,
         placement_context=_resolve_config_contexts(config_data)[2],
         active_assembly_names=active_names,
         graph_model=graph_model,
+        build_pool=build_pool,
         rigidity_graph=nx.Graph(),
     )
 
@@ -3127,10 +3344,23 @@ def _resolve_placement_anchor(
     placement_state: _PlacementExecutionState,
     built_results_by_name: Mapping[str, Dict[str, Any]],
     repository_dir: Path,
+    build_pool: Optional[_BuildArtifactPool] = None,
 ) -> tuple[str, str, Any]:
     assembly_name, selector = _parse_part_reference(
         reference, placement_state.known_assembly_names
     )
+    build_pool = build_pool or placement_state.build_pool
+    if build_pool is not None:
+        anchor = build_pool.import_runtime_part(
+            assembly_name,
+            selector,
+            known_assembly_names=placement_state.known_assembly_names,
+            built_results_by_name=built_results_by_name,
+            repository_dir=repository_dir,
+            reference=reference,
+        )
+        return assembly_name, selector, anchor
+
     metadata = _dependency_metadata_for_assembly(
         assembly_name,
         built_results_by_name,
@@ -3161,6 +3391,16 @@ def _advance_placement_execution(
     built_results_by_name: Mapping[str, Dict[str, Any]],
     repository_dir: Path,
 ) -> _PlacementExecutionState:
+    if placement_state.build_pool is None:
+        placement_state.build_pool = _BuildArtifactPool.from_metadata_map(
+            built_results_by_name,
+            planned_assembly_names=placement_state.active_assembly_names,
+        )
+    else:
+        placement_state.build_pool.sync_available_metadata(built_results_by_name)
+    build_pool = placement_state.build_pool
+    available_metadata_by_name = build_pool.metadata_by_name()
+
     if placement_state.graph_model is None:
         placement_state.graph_model = builder_graph_model.build_graph_model(
             [{"name": name} for name in placement_state.known_assembly_names],
@@ -3181,7 +3421,7 @@ def _advance_placement_execution(
         _format_step_index_ranges(active_source_steps),
         total_source_step_count - len(active_source_steps),
         _format_step_index_ranges(placement_state.executed_alignment_indices),
-        sorted(built_results_by_name),
+        sorted(available_metadata_by_name),
     )
 
     while placement_state.cursor < len(placement_steps):
@@ -3196,7 +3436,9 @@ def _advance_placement_execution(
             placement_state.rigidity_graph,
         )
         missing_assemblies = [
-            name for name in required_assemblies if name not in built_results_by_name
+            name
+            for name in required_assemblies
+            if name not in build_pool.available_names
         ]
         if missing_assemblies:
             _logger.info(
@@ -3261,8 +3503,9 @@ def _advance_placement_execution(
             assembly_name: _resolve_placement_anchor(
                 assembly_name,
                 placement_state=placement_state,
-                built_results_by_name=built_results_by_name,
+                built_results_by_name=available_metadata_by_name,
                 repository_dir=repository_dir,
+                build_pool=build_pool,
             )[2]
             for assembly_name in moving_group
         }
@@ -3270,14 +3513,16 @@ def _advance_placement_execution(
         _, _, moving_anchor = _resolve_placement_anchor(
             moving_reference_str,
             placement_state=placement_state,
-            built_results_by_name=built_results_by_name,
+            built_results_by_name=available_metadata_by_name,
             repository_dir=repository_dir,
+            build_pool=build_pool,
         )
         _, _, moving_part = _resolve_placement_anchor(
             moving_assembly_name,
             placement_state=placement_state,
-            built_results_by_name=built_results_by_name,
+            built_results_by_name=available_metadata_by_name,
             repository_dir=repository_dir,
+            build_pool=build_pool,
         )
         moved_anchor = moving_anchor
 
@@ -3290,14 +3535,16 @@ def _advance_placement_execution(
             _, _, target_anchor = _resolve_placement_anchor(
                 target_reference_str,
                 placement_state=placement_state,
-                built_results_by_name=built_results_by_name,
+                built_results_by_name=available_metadata_by_name,
                 repository_dir=repository_dir,
+                build_pool=build_pool,
             )
             _, _, target_part = _resolve_placement_anchor(
                 target_assembly_name,
                 placement_state=placement_state,
-                built_results_by_name=built_results_by_name,
+                built_results_by_name=available_metadata_by_name,
                 repository_dir=repository_dir,
+                build_pool=build_pool,
             )
 
             resolved_alignment = _resolve_alignment_enum(
@@ -3376,8 +3623,9 @@ def _advance_placement_execution(
                 *_resolve_placement_anchor(
                     reference,
                     placement_state=placement_state,
-                    built_results_by_name=built_results_by_name,
+                    built_results_by_name=available_metadata_by_name,
                     repository_dir=repository_dir,
+                    build_pool=build_pool,
                 )
             ),
         )
@@ -3440,6 +3688,12 @@ def _advance_placement_execution(
             )
             placement_state.placement_offsets[assembly_name] = _add_translation_delta(
                 placement_state.placement_offsets.get(assembly_name, (0.0, 0.0, 0.0)),
+                assembly_delta,
+            )
+            build_pool.apply_runtime_transforms(
+                assembly_name,
+                step_transforms,
+                step_records,
                 assembly_delta,
             )
 
@@ -3803,6 +4057,61 @@ def _apply_placement_alignments(
         assembly_transforms=translation_history,
         placed_assembly_names=relevant_assemblies,
     )
+
+
+def _apply_build_pool_runtime_placement(
+    scene_parts: List[Dict[str, Any]],
+    build_pool: _BuildArtifactPool,
+) -> _AppliedPlacementResult:
+    relevant_assemblies = {
+        str(item["assembly_name"])
+        for item in scene_parts
+        if item.get("assembly_name") is not None
+    }
+    assembly_transforms: Dict[str, List[Callable[[Any], Any]]] = {}
+    for assembly_name in sorted(relevant_assemblies):
+        transforms = build_pool.runtime_transforms_for(assembly_name)
+        records = build_pool.placement_records_for(assembly_name)
+        assembly_transforms[assembly_name] = list(transforms)
+        for index, transform in enumerate(transforms):
+            transform_record = records[index] if index < len(records) else None
+            _apply_transform_to_scene_parts(
+                scene_parts,
+                assembly_name,
+                transform,
+                transform_record=transform_record,
+            )
+    return _AppliedPlacementResult(
+        scene_parts=scene_parts,
+        assembly_transforms=assembly_transforms,
+        placed_assembly_names=relevant_assemblies,
+    )
+
+
+def _placement_state_from_build_pool(
+    config_data: Optional[Mapping[str, Any]],
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+    build_pool: _BuildArtifactPool,
+    *,
+    active_assembly_names: Optional[Iterable[str]] = None,
+) -> _PlacementExecutionState:
+    placement_state = _initialize_placement_execution_state(
+        config_data,
+        built_results_by_name,
+        active_assembly_names=active_assembly_names,
+        build_pool=build_pool,
+    )
+    for assembly_name in build_pool.available_names:
+        transforms = build_pool.runtime_transforms_for(assembly_name)
+        records = build_pool.placement_records_for(assembly_name)
+        offset = build_pool.placement_offset_for(assembly_name)
+        if transforms:
+            placement_state.translation_history[assembly_name] = transforms
+        if records:
+            placement_state.transform_records[assembly_name] = records
+        if offset != (0.0, 0.0, 0.0):
+            placement_state.placement_offsets[assembly_name] = offset
+    return placement_state
 
 
 def _resolve_process_data(
@@ -4454,6 +4763,9 @@ def build_from_file(
     repository_dir: Optional[str] = None,
     force: bool = False,
 ) -> List[Dict[str, Any]]:
+    global _LAST_BUILD_ARTIFACT_POOL
+    _LAST_BUILD_ARTIFACT_POOL = None
+
     config_file = Path(config_path).expanduser().resolve()
     if not config_file.exists():
         raise BuilderError(f"Assembly config file does not exist: {config_file}")
@@ -4501,11 +4813,13 @@ def build_from_file(
 
     results: List[Dict[str, Any]] = []
     built_results_by_name: Dict[str, Dict[str, Any]] = {}
+    build_pool = _BuildArtifactPool(active_build_assembly_names)
     placement_state = _initialize_placement_execution_state(
         config_data,
         built_results_by_name,
         active_assembly_names=active_build_assembly_names,
         graph_model=graph_model,
+        build_pool=build_pool,
     )
     for generation_index, generation_entries in enumerate(build_generations):
         for assembly_index, entry in enumerate(generation_entries):
@@ -4515,6 +4829,7 @@ def build_from_file(
                 built_results_by_name,
                 repository_path,
                 placement_state,
+                build_pool=build_pool,
             )
             generator = _load_generator_callable(resolved.generator_path)
             if resolved.is_collection:
@@ -4578,6 +4893,11 @@ def build_from_file(
                     cached_metadata["cache_hit"] = True
                     results.append(cached_metadata)
                     built_results_by_name[resolved.name] = cached_metadata
+                    build_pool.insert_available(
+                        resolved.name,
+                        cached_metadata,
+                        source="cache",
+                    )
                     placement_state = _advance_placement_execution(
                         placement_state,
                         built_results_by_name=built_results_by_name,
@@ -4712,12 +5032,19 @@ def build_from_file(
             _write_metadata(metadata_path, metadata)
             results.append(metadata)
             built_results_by_name[resolved.name] = metadata
+            build_pool.insert_available(
+                resolved.name,
+                metadata,
+                source="built",
+                canonical_artifact=generated_part,
+            )
             placement_state = _advance_placement_execution(
                 placement_state,
                 built_results_by_name=built_results_by_name,
                 repository_dir=repository_path,
             )
 
+    _LAST_BUILD_ARTIFACT_POOL = build_pool
     return results
 
 
@@ -4746,6 +5073,7 @@ def _export_scene_for_assembly(
     build_results: Sequence[Dict[str, Any]],
     selected_assembly: str,
     scene_assembly_names: Sequence[str],
+    build_pool: Optional[_BuildArtifactPool] = None,
 ) -> int:
     from shellforgepy.produce.arrange_and_export import arrange_and_export_parts
     from shellforgepy.workflow.workflow import (
@@ -4803,9 +5131,25 @@ def _export_scene_for_assembly(
         workflow_config, preview_options
     )
 
+    scene_parts_start = perf_counter()
+    _logger.info(
+        "Resolving %s scene parts for %d assembly(s)",
+        mode,
+        len(scene_assembly_names),
+    )
     scene_parts: List[Dict[str, Any]] = []
     seen_source_paths: set[str] = set()
-    for assembly_name in scene_assembly_names:
+    total_scene_assemblies = len(scene_assembly_names)
+    for assembly_index, assembly_name in enumerate(scene_assembly_names, start=1):
+        assembly_scene_parts_start = perf_counter()
+        scene_part_count_before = len(scene_parts)
+        _logger.info(
+            "Resolving %s scene assembly %d/%d: %s",
+            mode,
+            assembly_index,
+            total_scene_assemblies,
+            assembly_name,
+        )
         metadata = built_results_by_name.get(assembly_name)
         if metadata is None:
             metadata = _dependency_metadata_for_assembly(
@@ -4830,13 +5174,36 @@ def _export_scene_for_assembly(
             if source_path:
                 seen_source_paths.add(source_path)
             scene_parts.append(part)
-
-    applied_placement = _apply_placement_alignments(
-        scene_parts,
-        built_results_by_name=built_results_by_name,
-        repository_dir=repository_dir,
-        config_data=config_data,
+        _logger.info(
+            "Resolved %s scene assembly %d/%d: %s -> %d new part(s) in %.2fs",
+            mode,
+            assembly_index,
+            total_scene_assemblies,
+            assembly_name,
+            len(scene_parts) - scene_part_count_before,
+            perf_counter() - assembly_scene_parts_start,
+        )
+    _logger.info(
+        "Resolved %d %s scene part(s) in %.2fs",
+        len(scene_parts),
+        mode,
+        perf_counter() - scene_parts_start,
     )
+
+    placement_start = perf_counter()
+    _logger.info("Applying %s scene placement", mode)
+    if build_pool is not None:
+        applied_placement = _apply_build_pool_runtime_placement(
+            scene_parts,
+            build_pool,
+        )
+    else:
+        applied_placement = _apply_placement_alignments(
+            scene_parts,
+            built_results_by_name=built_results_by_name,
+            repository_dir=repository_dir,
+            config_data=config_data,
+        )
     if isinstance(applied_placement, _AppliedPlacementResult):
         scene_parts = applied_placement.scene_parts
     else:
@@ -4850,18 +5217,32 @@ def _export_scene_for_assembly(
                 if item.get("assembly_name") is not None
             },
         )
+    _logger.info(
+        "Applied %s scene placement in %.2fs for %d placed assembly(ies)",
+        mode,
+        perf_counter() - placement_start,
+        len(applied_placement.placed_assembly_names),
+    )
 
     if bool(getattr(args, "prototype", False)):
-        placement_state = _initialize_placement_execution_state(
-            config_data,
-            built_results_by_name,
-            active_assembly_names=scene_assembly_names,
-        )
-        placement_state = _advance_placement_execution(
-            placement_state,
-            built_results_by_name=built_results_by_name,
-            repository_dir=repository_dir,
-        )
+        if build_pool is not None:
+            placement_state = _placement_state_from_build_pool(
+                config_data,
+                built_results_by_name,
+                build_pool,
+                active_assembly_names=scene_assembly_names,
+            )
+        else:
+            placement_state = _initialize_placement_execution_state(
+                config_data,
+                built_results_by_name,
+                active_assembly_names=scene_assembly_names,
+            )
+            placement_state = _advance_placement_execution(
+                placement_state,
+                built_results_by_name=built_results_by_name,
+                repository_dir=repository_dir,
+            )
         scene_parts = _apply_prototype_configuration(
             scene_parts,
             selected_metadata=selected_metadata,
@@ -4879,6 +5260,11 @@ def _export_scene_for_assembly(
         )
 
     placed_assemblies_debug_path = run_directory / PLACED_ASSEMBLIES_DEBUG_FILENAME
+    placed_debug_start = perf_counter()
+    _logger.info(
+        "Materializing placed assembly bounding boxes for %d assembly(ies)",
+        len(applied_placement.placed_assembly_names),
+    )
     placed_leaders_by_assembly = _materialize_placed_leaders_by_assembly(
         applied_placement.placed_assembly_names,
         built_results_by_name=built_results_by_name,
@@ -4893,6 +5279,11 @@ def _export_scene_for_assembly(
             target_assembly=selected_assembly,
             mode=mode,
         ),
+    )
+    _logger.info(
+        "Wrote placed assembly bounding boxes to %s in %.2fs",
+        placed_assemblies_debug_path,
+        perf_counter() - placed_debug_start,
     )
 
     process_data = None
@@ -4966,6 +5357,13 @@ def _export_scene_for_assembly(
             and not bool(getattr(args, "upload", False))
         )
         with using_metrics_snapshot(combined_metrics_snapshot):
+            export_start = perf_counter()
+            _logger.info(
+                "Starting %s scene export with %d part(s) into %s",
+                mode,
+                len(exportable_scene_parts),
+                run_directory,
+            )
             arrange_and_export_parts(
                 exportable_scene_parts,
                 prod_gap=float(export_options["prod_gap"]),
@@ -4996,6 +5394,11 @@ def _export_scene_for_assembly(
                     export_options.get("visualize_plate_boundaries", True)
                 ),
             )
+            _logger.info(
+                "Finished %s scene export in %.2fs",
+                mode,
+                perf_counter() - export_start,
+            )
 
     if not manifest_path.exists():
         raise BuilderError(f"Expected workflow manifest at {manifest_path}")
@@ -5018,6 +5421,9 @@ def _export_scene_for_assembly(
 
 
 def run_builder(args: argparse.Namespace) -> int:
+    global _LAST_BUILD_ARTIFACT_POOL
+    _LAST_BUILD_ARTIFACT_POOL = None
+
     config_file = Path(args.config_file).expanduser().resolve()
     config_data = _load_builder_config(config_file)
     assemblies = _get_assemblies(config_data)
@@ -5076,6 +5482,7 @@ def run_builder(args: argparse.Namespace) -> int:
         repository_dir=args.repository_dir,
         force=bool(args.force),
     )
+    build_pool = _LAST_BUILD_ARTIFACT_POOL if visualization_mode else None
     _logger.info(f"Built {len(results)} assemblies; details:")
     for result in results:
         status = "cache" if result.get("cache_hit") else "built"
@@ -5110,13 +5517,16 @@ def run_builder(args: argparse.Namespace) -> int:
             if result["assembly_name"] in expanded_scene_set
         ]
 
-    return _export_scene_for_assembly(
-        args=args,
-        config_data=config_data,
-        build_results=results,
-        selected_assembly=requested_assemblies[0],
-        scene_assembly_names=scene_assemblies,
-    )
+    export_scene_kwargs = {
+        "args": args,
+        "config_data": config_data,
+        "build_results": results,
+        "selected_assembly": requested_assemblies[0],
+        "scene_assembly_names": scene_assemblies,
+    }
+    if build_pool is not None:
+        export_scene_kwargs["build_pool"] = build_pool
+    return _export_scene_for_assembly(**export_scene_kwargs)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

@@ -5766,6 +5766,35 @@ def test_advance_placement_execution_stops_until_missing_assembly_is_built(
     }
 
 
+def test_resolve_dependency_injections_requires_available_build_pool_slot(tmp_path):
+    entry = {
+        "name": "consumer",
+        "inject_parts": {
+            "provider": "provider.leader",
+        },
+    }
+    pool_without_provider = builder._BuildArtifactPool(["consumer"])
+
+    with pytest.raises(builder.BuilderError, match="not part of this build pool"):
+        builder._resolve_dependency_injections(
+            entry,
+            {},
+            tmp_path,
+            build_pool=pool_without_provider,
+        )
+
+    pool_with_unavailable_provider = builder._BuildArtifactPool(
+        ["consumer", "provider"]
+    )
+    with pytest.raises(builder.BuilderError, match="not available in the build pool"):
+        builder._resolve_dependency_injections(
+            entry,
+            {},
+            tmp_path,
+            build_pool=pool_with_unavailable_provider,
+        )
+
+
 def test_advance_placement_execution_stops_at_missing_prefix_even_when_later_step_is_ready(
     monkeypatch, tmp_path
 ):
@@ -5920,9 +5949,56 @@ def test_advance_placement_execution_supports_post_translation(monkeypatch, tmp_
     assert captured_post_translations == [(0.0, 5.0, 0.0)]
     assert placement_state.cursor == 1
     assert placement_state.placement_offsets == {"profile_b": (-10.0, 5.0, 0.0)}
+    assert (
+        placement_state.build_pool.slots["profile_b"].runtime_anchor_cache["leader"]
+        == "profile-b|ALIGN|POST"
+    )
     assert builder._apply_translation_sequence(
         "profile-b", placement_state.translation_history["profile_b"]
     ) == ("profile-b|ALIGN|POST")
+
+
+def test_apply_build_pool_runtime_placement_uses_final_slot_state():
+    build_pool = builder._BuildArtifactPool(["frame", "carriage"])
+    build_pool.insert_available(
+        "frame",
+        {"assembly_name": "frame", "artifacts": {}},
+        source="built",
+    )
+    build_pool.insert_available(
+        "carriage",
+        {"assembly_name": "carriage", "artifacts": {}},
+        source="built",
+    )
+    build_pool.apply_runtime_transforms(
+        "carriage",
+        [lambda part: f"{part}|placed"],
+        [{"kind": "translate", "vector": [1.0, 2.0, 3.0], "placement_step": 4}],
+        (1.0, 2.0, 3.0),
+    )
+    scene_parts = [
+        {
+            "name": "frame",
+            "part": "frame-part",
+            "assembly_name": "frame",
+            "transform_history": [],
+        },
+        {
+            "name": "carriage",
+            "part": "carriage-part",
+            "assembly_name": "carriage",
+            "transform_history": [],
+        },
+    ]
+
+    result = builder._apply_build_pool_runtime_placement(scene_parts, build_pool)
+
+    assert result.scene_parts[0]["part"] == "frame-part"
+    assert result.scene_parts[1]["part"] == "carriage-part|placed"
+    assert result.scene_parts[1]["transform_history"] == [
+        {"kind": "translate", "vector": [1.0, 2.0, 3.0], "placement_step": 4}
+    ]
+    assert result.assembly_transforms["carriage"][0]("x") == "x|placed"
 
 
 def test_advance_placement_execution_supports_post_rotation_without_alignment(
