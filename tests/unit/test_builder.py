@@ -3,6 +3,7 @@ import importlib
 import json
 import sys
 from pathlib import Path
+from typing import Mapping
 
 import pytest
 import shellforgepy.builder.builder as builder
@@ -5793,6 +5794,394 @@ def test_resolve_dependency_injections_requires_available_build_pool_slot(tmp_pa
             tmp_path,
             build_pool=pool_with_unavailable_provider,
         )
+
+
+def test_unresolved_artifact_diagnostic_skips_unbuilt_matching_scan_assemblies(
+    tmp_path,
+):
+    provider_metadata = {
+        "assembly_name": "provider",
+        "artifacts": {
+            "leader_step": str(tmp_path / "provider.step"),
+            "non_production_parts": [
+                {
+                    "index": 0,
+                    "name": "board",
+                    "path": str(tmp_path / "provider_board.step"),
+                }
+            ],
+        },
+    }
+    matching_metadata = {
+        "assembly_name": "matching_provider",
+        "artifacts": {
+            "leader_step": str(tmp_path / "matching_provider.step"),
+            "non_production_parts": [
+                {
+                    "index": 0,
+                    "name": "mount_screw",
+                    "path": str(tmp_path / "matching_mount_screw.step"),
+                }
+            ],
+        },
+    }
+
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder._raise_unresolved_artifact_reference(
+            label="Placement reference",
+            reference="provider.non_production_parts.mount_screw",
+            resolved_reference=None,
+            assembly_name="provider",
+            selector="non_production_parts.mount_screw",
+            entries=[],
+            metadata=provider_metadata,
+            known_assembly_names=[
+                "provider",
+                "calibration_assembly",
+                "matching_provider",
+            ],
+            built_results_by_name={
+                "provider": provider_metadata,
+                "matching_provider": matching_metadata,
+            },
+            repository_dir=tmp_path / "repository",
+        )
+
+    message = str(excinfo.value)
+    assert (
+        "Placement reference 'provider.non_production_parts.mount_screw' "
+        "matched no artifacts in assembly 'provider'."
+    ) in message
+    assert "Valid references for this assembly: provider.leader" in message
+    assert "provider.non_production_parts.board" in message
+    assert (
+        "Matching references in other assemblies: "
+        "matching_provider.non_production_parts.mount_screw"
+    ) in message
+    assert "calibration_assembly" not in message
+    assert "has no repository directory" not in message
+
+
+def _write_dirty_guard_project(
+    tmp_path: Path,
+    *,
+    package_name: str,
+    generator_lines: list[str],
+    resources: Mapping[str, str],
+    config_lines: list[str],
+) -> Path:
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / package_name
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(src_dir / "generators.py", "\n".join(generator_lines))
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    for assembly_name, generator_name in resources.items():
+        _write_file(
+            assemblies_dir / f"{assembly_name}.yaml",
+            "\n".join(
+                [
+                    "Parts:",
+                    f"  {assembly_name}:",
+                    "    Type: Shellforgepy::Assembly",
+                    "    Properties:",
+                    f"      Generator: {package_name}.generators.{generator_name}",
+                ]
+            ),
+        )
+
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(config_path, "\n".join(config_lines))
+    return config_path
+
+
+def _install_string_builder_io(monkeypatch):
+    def fake_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+
+    def fake_import(step_path):
+        return Path(step_path).read_text(encoding="utf-8")
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+    monkeypatch.setattr(builder, "_import_dependency_part", fake_import)
+
+
+def test_build_from_file_rejects_injection_after_skipped_provider_post_translation(
+    monkeypatch, tmp_path
+):
+    package_name = "dirty_guard_post_translation_demo_pkg"
+    config_path = _write_dirty_guard_project(
+        tmp_path,
+        package_name=package_name,
+        generator_lines=[
+            "def make_provider():",
+            "    return 'provider'",
+            "def make_consumer(*, provider):",
+            "    return f'consumer-on-{provider}'",
+        ],
+        resources={
+            "provider": "make_provider",
+            "consumer": "make_consumer",
+        },
+        config_lines=[
+            "assemblies:",
+            "  - name: frame",
+            "  - name: provider",
+            "  - name: consumer",
+            "    inject_parts:",
+            "      provider: provider.leader",
+            "placement:",
+            "  alignments:",
+            "    - part: provider",
+            "      to: frame",
+            "      post_translation: [1, 2, 3]",
+        ],
+    )
+
+    _install_string_builder_io(monkeypatch)
+    monkeypatch.delitem(sys.modules, package_name, raising=False)
+    monkeypatch.delitem(sys.modules, f"{package_name}.generators", raising=False)
+
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder.build_from_file(
+            config_path,
+            assembly_names=["consumer"],
+            repository_dir=tmp_path / "repository",
+        )
+
+    message = str(excinfo.value)
+    assert "placement-dirty assembly 'provider'" in message
+    assert "into 'consumer'" in message
+    assert "inject_parts.provider (leader)" in message
+    assert "source_step=0" in message
+    assert "post_translation=[1, 2, 3]" in message
+    assert "inactive assemblies: frame" in message
+    assert "dedicated template assembly" in message
+    assert "global placement steps" in message
+
+
+def test_build_from_file_rejects_injection_after_skipped_provider_post_rotation(
+    monkeypatch, tmp_path
+):
+    package_name = "dirty_guard_post_rotation_demo_pkg"
+    config_path = _write_dirty_guard_project(
+        tmp_path,
+        package_name=package_name,
+        generator_lines=[
+            "def make_provider():",
+            "    return 'provider'",
+            "def make_rail():",
+            "    return 'rail'",
+            "def make_consumer(*, provider):",
+            "    return f'consumer-on-{provider}'",
+        ],
+        resources={
+            "provider": "make_provider",
+            "rail": "make_rail",
+            "consumer": "make_consumer",
+        },
+        config_lines=[
+            "assemblies:",
+            "  - name: frame",
+            "  - name: provider",
+            "  - name: rail",
+            "  - name: consumer",
+            "    depends_on:",
+            "      - rail",
+            "    inject_parts:",
+            "      provider: provider.leader",
+            "placement:",
+            "  alignments:",
+            "    - part: provider",
+            "      to: frame",
+            "      post_rotation:",
+            "        angle: 90",
+            "        axis: [0, 0, 1]",
+            "        center: provider.CENTER",
+            "    - part: consumer",
+            "      to: rail",
+            "      alignment: CENTER",
+        ],
+    )
+
+    _install_string_builder_io(monkeypatch)
+    monkeypatch.delitem(sys.modules, package_name, raising=False)
+    monkeypatch.delitem(sys.modules, f"{package_name}.generators", raising=False)
+
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder.build_from_file(
+            config_path,
+            assembly_names=["consumer"],
+            repository_dir=tmp_path / "repository",
+        )
+
+    message = str(excinfo.value)
+    assert "placement-dirty assembly 'provider'" in message
+    assert "source_step=0" in message
+    assert (
+        "post_rotation={'angle': 90, 'axis': [0, 0, 1], 'center': 'provider.CENTER'}"
+        in message
+    )
+    assert "inactive assemblies: frame" in message
+
+
+def test_build_from_file_allows_injection_before_later_skipped_provider_post_transform(
+    monkeypatch, tmp_path
+):
+    package_name = "dirty_guard_late_post_transform_demo_pkg"
+    config_path = _write_dirty_guard_project(
+        tmp_path,
+        package_name=package_name,
+        generator_lines=[
+            "def make_provider():",
+            "    return 'provider'",
+            "def make_rail():",
+            "    return 'rail'",
+            "def make_consumer(*, provider):",
+            "    return f'consumer-on-{provider}'",
+        ],
+        resources={
+            "provider": "make_provider",
+            "rail": "make_rail",
+            "consumer": "make_consumer",
+        },
+        config_lines=[
+            "assemblies:",
+            "  - name: frame",
+            "  - name: provider",
+            "  - name: rail",
+            "  - name: consumer",
+            "    depends_on:",
+            "      - rail",
+            "    inject_parts:",
+            "      provider: provider.leader",
+            "placement:",
+            "  alignments:",
+            "    - part: consumer",
+            "      to: rail",
+            "      alignment: CENTER",
+            "    - part: provider",
+            "      to: frame",
+            "      post_rotation:",
+            "        angle: 90",
+            "        axis: [0, 0, 1]",
+            "        center: provider.CENTER",
+        ],
+    )
+
+    _install_string_builder_io(monkeypatch)
+    monkeypatch.setattr(
+        builder,
+        "_part_center",
+        lambda part: {
+            "consumer-on-provider": (10.0, 0.0, 0.0),
+            "consumer-on-provider|CENTER": (0.0, 0.0, 0.0),
+            "rail": (0.0, 0.0, 0.0),
+        }[part],
+    )
+    monkeypatch.setattr(
+        builder,
+        "_make_placement_translation",
+        lambda moving_anchor, target_anchor, *, alignment, axes=None, stack_gap=0: (
+            lambda part: f"{part}|CENTER"
+        ),
+    )
+    monkeypatch.delitem(sys.modules, package_name, raising=False)
+    monkeypatch.delitem(sys.modules, f"{package_name}.generators", raising=False)
+
+    results = builder.build_from_file(
+        config_path,
+        assembly_names=["consumer"],
+        repository_dir=tmp_path / "repository",
+    )
+
+    consumer_result = next(
+        result for result in results if result["assembly_name"] == "consumer"
+    )
+    assert (
+        Path(consumer_result["artifacts"]["leader_step"]).read_text(encoding="utf-8")
+        == "consumer-on-provider"
+    )
+    assert "source_placement_transforms" not in consumer_result["dependencies"][0]
+
+
+def test_build_from_file_allows_injection_after_active_provider_post_translation(
+    monkeypatch, tmp_path
+):
+    package_name = "dirty_guard_active_post_translation_demo_pkg"
+    config_path = _write_dirty_guard_project(
+        tmp_path,
+        package_name=package_name,
+        generator_lines=[
+            "def make_provider():",
+            "    return 'provider'",
+            "def make_consumer(*, provider):",
+            "    return f'consumer-on-{provider}'",
+        ],
+        resources={
+            "provider": "make_provider",
+            "consumer": "make_consumer",
+        },
+        config_lines=[
+            "assemblies:",
+            "  - name: provider",
+            "  - name: consumer",
+            "    inject_parts:",
+            "      provider: provider.leader",
+            "placement:",
+            "  alignments:",
+            "    - part: provider",
+            "      post_translation: [1, 2, 3]",
+        ],
+    )
+
+    captured_post_translations = []
+    _install_string_builder_io(monkeypatch)
+    monkeypatch.setattr(
+        builder,
+        "_part_center",
+        lambda part: {
+            "provider": (0.0, 0.0, 0.0),
+            "provider|POST": (1.0, 2.0, 3.0),
+        }[part],
+    )
+    monkeypatch.setattr(
+        builder,
+        "_make_post_translation",
+        lambda delta: captured_post_translations.append(delta)
+        or (lambda part: f"{part}|POST"),
+    )
+    monkeypatch.delitem(sys.modules, package_name, raising=False)
+    monkeypatch.delitem(sys.modules, f"{package_name}.generators", raising=False)
+
+    results = builder.build_from_file(
+        config_path,
+        assembly_names=["consumer"],
+        repository_dir=tmp_path / "repository",
+    )
+
+    consumer_result = next(
+        result for result in results if result["assembly_name"] == "consumer"
+    )
+    assert captured_post_translations == [(1.0, 2.0, 3.0)]
+    assert (
+        Path(consumer_result["artifacts"]["leader_step"]).read_text(encoding="utf-8")
+        == "consumer-on-provider|POST"
+    )
+    assert consumer_result["dependencies"][0]["source_placement_offset"] == [
+        1.0,
+        2.0,
+        3.0,
+    ]
+    assert consumer_result["dependencies"][0]["source_placement_transforms"] == [
+        {
+            "kind": "translate",
+            "vector": [1.0, 2.0, 3.0],
+            "placement_step": 0,
+        }
+    ]
 
 
 def test_advance_placement_execution_stops_at_missing_prefix_even_when_later_step_is_ready(

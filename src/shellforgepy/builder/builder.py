@@ -17,7 +17,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, time
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import networkx as nx
@@ -119,6 +119,7 @@ class _BuildArtifactSlot:
     runtime_transforms: List[Callable[[Any], Any]] = field(default_factory=list)
     placement_records: List[Dict[str, Any]] = field(default_factory=list)
     placement_offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    skipped_post_transform_records: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class _BuildArtifactPool:
@@ -217,6 +218,76 @@ class _BuildArtifactPool:
     def metadata_for(self, assembly_name: str) -> Dict[str, Any]:
         return self.require_available_slot(assembly_name).metadata or {}
 
+    def mark_skipped_post_transform_dirty(
+        self,
+        assembly_name: str,
+        record: Mapping[str, Any],
+    ) -> None:
+        slot = self.slots.get(assembly_name)
+        if slot is None:
+            return
+        slot.skipped_post_transform_records.append(deepcopy(dict(record)))
+
+    def require_injectable(
+        self,
+        assembly_name: str,
+        *,
+        consumer_assembly_name: str,
+        kwarg_name: str,
+        artifact: str,
+    ) -> None:
+        slot = self.require_available_slot(assembly_name)
+        if not slot.skipped_post_transform_records:
+            return
+
+        record_lines = []
+        for record in slot.skipped_post_transform_records:
+            transform_parts = []
+            if record.get("post_rotation") is not None:
+                transform_parts.append(f"post_rotation={record['post_rotation']!r}")
+            if record.get("post_translation") is not None:
+                transform_parts.append(
+                    f"post_translation={record['post_translation']!r}"
+                )
+            if not transform_parts:
+                transform_parts.append("explicit post transform")
+            inactive = record.get("inactive_assemblies") or []
+            inactive_text = (
+                f"; inactive assemblies: {', '.join(str(name) for name in inactive)}"
+                if inactive
+                else ""
+            )
+            target_text = (
+                f" to {record.get('target_reference')!r}"
+                if record.get("target_reference") is not None
+                else ""
+            )
+            record_lines.append(
+                "  - source_step={step}: part {part!r}{target}; {transforms}{inactive}".format(
+                    step=record.get("placement_step"),
+                    part=record.get("moving_reference"),
+                    target=target_text,
+                    transforms=", ".join(transform_parts),
+                    inactive=inactive_text,
+                )
+            )
+
+        raise BuilderError(
+            "Refusing to inject placement-dirty assembly "
+            f"'{assembly_name}' into '{consumer_assembly_name}' via "
+            f"inject_parts.{kwarg_name} ({artifact}).\n"
+            "A focused/selected build skipped placement step(s) that explicitly "
+            "apply post_rotation or post_translation to the injected provider:\n"
+            + "\n".join(record_lines)
+            + "\nContinuing would inject the untransformed provider artifact and can "
+            "produce build-order-dependent geometry.\n"
+            "Remedies: create a dedicated template assembly with the correct "
+            "orientation/offset parameters; move the transform into the consuming "
+            "generator after copying the injected part; or explicitly include/inject "
+            "the missing placement target so the placement step is active. Avoid "
+            "using global placement steps to prepare invisible injected templates."
+        )
+
     def import_runtime_part(
         self,
         assembly_name: str,
@@ -304,6 +375,7 @@ class _PlacementExecutionState:
     build_pool: Optional[_BuildArtifactPool] = None
     cursor: int = 0
     executed_alignment_indices: set[int] = field(default_factory=set)
+    checked_skipped_post_transform_indices: set[int] = field(default_factory=set)
     translation_history: Dict[str, List[Callable[[Any], Any]]] = field(
         default_factory=dict
     )
@@ -1790,6 +1862,12 @@ def _resolve_dependency_injections(
     for kwarg_name, spec in _resolve_injected_parts_config(entry).items():
         assembly_name = spec["assembly"]
         if build_pool is not None:
+            build_pool.require_injectable(
+                assembly_name,
+                consumer_assembly_name=str(entry.get("name") or "<unknown>"),
+                kwarg_name=kwarg_name,
+                artifact=spec["artifact"],
+            )
             metadata = build_pool.metadata_for(assembly_name)
         else:
             metadata = _dependency_metadata_for_assembly(
@@ -2465,11 +2543,21 @@ def _matching_selector_references(
     for assembly_name in sorted(set(str(item) for item in known_assembly_names)):
         if assembly_name == exclude_assembly:
             continue
-        metadata = _dependency_metadata_for_assembly(
-            assembly_name,
-            built_results_by_name,
-            repository_dir,
-        )
+        try:
+            metadata = _dependency_metadata_for_assembly(
+                assembly_name,
+                built_results_by_name,
+                repository_dir,
+            )
+        except BuilderError as exc:
+            _logger.debug(
+                "Skipping assembly '%s' while looking for matching references "
+                "for selector '%s': %s",
+                assembly_name,
+                selector,
+                exc,
+            )
+            continue
         if _artifact_entries_for_selector(metadata, selector):
             matches.append(f"{assembly_name}.{selector}")
 
@@ -3272,6 +3360,93 @@ def _placement_step_description(
     return f"{placement_step.moving_reference} to {placement_step.target_reference}"
 
 
+def _step_has_explicit_post_transform(
+    placement_step: builder_graph_model.PlacementStep,
+) -> bool:
+    return (
+        placement_step.spec.get("post_rotation") is not None
+        or placement_step.spec.get("post_translation") is not None
+    )
+
+
+def _step_referenced_assembly_names(
+    placement_step: builder_graph_model.PlacementStep,
+) -> set[str]:
+    referenced: set[str] = set()
+    if placement_step.is_rigid_group:
+        referenced.update(placement_step.rigid_group_assembly_names)
+    elif placement_step.moving_assembly_name is not None:
+        referenced.add(placement_step.moving_assembly_name)
+    if placement_step.target_assembly_name is not None:
+        referenced.add(placement_step.target_assembly_name)
+    return referenced
+
+
+def _mark_skipped_post_transform_steps_dirty(
+    placement_state: _PlacementExecutionState,
+    *,
+    active_graph_model: builder_graph_model.BuilderGraphModel,
+    build_pool: _BuildArtifactPool,
+    before_source_step: Optional[int] = None,
+) -> None:
+    if placement_state.graph_model is None:
+        return
+
+    active_step_indices = {step.index for step in active_graph_model.placement_steps}
+    active_assembly_names = set(placement_state.active_assembly_names)
+    for placement_step in placement_state.graph_model.placement_steps:
+        if placement_step.index in active_step_indices:
+            continue
+        if (
+            before_source_step is not None
+            and placement_step.index >= before_source_step
+        ):
+            continue
+        if (
+            placement_step.index
+            in placement_state.checked_skipped_post_transform_indices
+        ):
+            continue
+
+        placement_state.checked_skipped_post_transform_indices.add(placement_step.index)
+        if placement_step.is_rigid_group:
+            continue
+        moving_assembly_name = placement_step.moving_assembly_name
+        if moving_assembly_name not in build_pool.planned_names:
+            continue
+        if not _step_has_explicit_post_transform(placement_step):
+            continue
+
+        inactive_assemblies = sorted(
+            _step_referenced_assembly_names(placement_step) - active_assembly_names
+        )
+        record = {
+            "placement_step": placement_step.index,
+            "moving_assembly_name": moving_assembly_name,
+            "moving_reference": placement_step.moving_reference,
+            "target_assembly_name": placement_step.target_assembly_name,
+            "target_reference": placement_step.target_reference,
+            "inactive_assemblies": inactive_assemblies,
+        }
+        if placement_step.spec.get("post_rotation") is not None:
+            record["post_rotation"] = deepcopy(placement_step.spec["post_rotation"])
+        if placement_step.spec.get("post_translation") is not None:
+            record["post_translation"] = deepcopy(
+                placement_step.spec["post_translation"]
+            )
+        build_pool.mark_skipped_post_transform_dirty(
+            moving_assembly_name,
+            record,
+        )
+        _logger.info(
+            "Marked assembly '%s' placement-dirty because focused build skipped "
+            "source_step=%s with explicit post transform; inactive_assemblies=%s",
+            moving_assembly_name,
+            placement_step.index,
+            inactive_assemblies,
+        )
+
+
 def _format_step_index_ranges(step_indices: Iterable[int]) -> str:
     sorted_indices = sorted({int(index) for index in step_indices})
     if not sorted_indices:
@@ -3427,6 +3602,12 @@ def _advance_placement_execution(
     while placement_state.cursor < len(placement_steps):
         placement_step_nr = placement_state.cursor
         placement_step = placement_steps[placement_step_nr]
+        _mark_skipped_post_transform_steps_dirty(
+            placement_state,
+            active_graph_model=active_graph_model,
+            build_pool=build_pool,
+            before_source_step=placement_step.index,
+        )
         if placement_step.index in placement_state.executed_alignment_indices:
             placement_state.cursor += 1
             continue
@@ -3707,6 +3888,11 @@ def _advance_placement_execution(
         placement_state.cursor += 1
 
     if placement_state.cursor >= len(placement_steps):
+        _mark_skipped_post_transform_steps_dirty(
+            placement_state,
+            active_graph_model=active_graph_model,
+            build_pool=build_pool,
+        )
         _logger.info(
             "Placement cursor complete: executed %s active placement step(s); active_source_steps=%s",
             len(placement_steps),
@@ -4069,7 +4255,16 @@ def _apply_build_pool_runtime_placement(
         if item.get("assembly_name") is not None
     }
     assembly_transforms: Dict[str, List[Callable[[Any], Any]]] = {}
-    for assembly_name in sorted(relevant_assemblies):
+    last_log_time = time()
+    for i, assembly_name in enumerate(sorted(relevant_assemblies)):
+        if time() - last_log_time > 3:
+            _logger.info(
+                "Applying build pool runtime placement: assembly=%s; remaining=%s",
+                assembly_name,
+                len(relevant_assemblies) - i,
+            )
+            last_log_time = time()
+
         transforms = build_pool.runtime_transforms_for(assembly_name)
         records = build_pool.placement_records_for(assembly_name)
         assembly_transforms[assembly_name] = list(transforms)
@@ -4784,16 +4979,20 @@ def build_from_file(
     repository_path.mkdir(parents=True, exist_ok=True)
 
     assemblies = _get_assemblies(config_data)
-    graph_model = builder_graph_model.build_graph_model(assemblies, config_data)
+    full_graph_model = builder_graph_model.build_graph_model(assemblies, config_data)
+    graph_model = full_graph_model
     if assembly_names is not None:
         active_placement_assemblies = {str(name) for name in assembly_names}
         for assembly_name in list(active_placement_assemblies):
-            if assembly_name in graph_model.assembly_dependency_graph:
+            if assembly_name in full_graph_model.assembly_dependency_graph:
                 active_placement_assemblies.update(
-                    nx.ancestors(graph_model.assembly_dependency_graph, assembly_name)
+                    nx.ancestors(
+                        full_graph_model.assembly_dependency_graph,
+                        assembly_name,
+                    )
                 )
         graph_model = _restrict_placement_model_to_active_assemblies(
-            graph_model,
+            full_graph_model,
             active_placement_assemblies,
         )
     build_generations = _resolve_build_generations(
@@ -4818,7 +5017,7 @@ def build_from_file(
         config_data,
         built_results_by_name,
         active_assembly_names=active_build_assembly_names,
-        graph_model=graph_model,
+        graph_model=full_graph_model,
         build_pool=build_pool,
     )
     for generation_index, generation_entries in enumerate(build_generations):
