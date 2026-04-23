@@ -88,7 +88,7 @@ def _resolve_process_override_targets(process_overrides, used_master_configs):
 
 def generate_settings(
     process_data_file: Path, output_dir: Path, master_settings_dir: Path
-) -> None:
+) -> dict[str, object]:
     """Generate OrcaSlicer settings into ``output_dir``.
 
     Raises:
@@ -124,6 +124,13 @@ def generate_settings(
     selected_filament_master = None
     settings_files_used = []
     used_master_configs = []
+    generated_artifacts: dict[str, object] = {
+        "machine_settings_path": None,
+        "process_settings_path": None,
+        "filament_settings_paths": [],
+        "print_host_path": None,
+        "used_master_settings_files": [],
+    }
     for config_file in sorted(master_settings_dir.glob("*.yaml")):
         with config_file.open("r", encoding="utf-8") as file_handle:
             master_data = yaml.safe_load(file_handle)
@@ -177,6 +184,9 @@ def generate_settings(
                 ) as file_handle:
                     file_handle.write(print_host)
                 _logger.info(f"Saved print host to {output_dir / 'print_host.txt'}")
+                generated_artifacts["print_host_path"] = str(
+                    (output_dir / "print_host.txt").resolve()
+                )
 
         for key, value in process_overrides.items():
             if override_targets.get(key) != config:
@@ -185,11 +195,18 @@ def generate_settings(
             _logger.info(f"Overriding {key} in {name} with {value}")
             master_data[key] = str(value)
 
-        with (output_dir / f"{path_part}{name}.json").open(
-            "w", encoding="utf-8"
-        ) as file_handle:
+        json_path = (output_dir / f"{path_part}{name}.json").resolve()
+        with json_path.open("w", encoding="utf-8") as file_handle:
             json.dump(master_data, file_handle, indent=2)
         _logger.info(f"Saved {name} config to {path_part}{name}.json")
+        if master_data["type"] == "machine":
+            generated_artifacts["machine_settings_path"] = str(json_path)
+        elif master_data["type"] == "process":
+            generated_artifacts["process_settings_path"] = str(json_path)
+        elif master_data["type"] == "filament":
+            cast_list = generated_artifacts["filament_settings_paths"]
+            assert isinstance(cast_list, list)
+            cast_list.append(str(json_path))
 
         info_text = (
             " "
@@ -209,6 +226,7 @@ def generate_settings(
     _logger.info(
         f"Used the following master settings files:\n{'\n'.join(settings_files_used)}"
     )
+    generated_artifacts["used_master_settings_files"] = settings_files_used
 
     part_path = Path(process_data["part_file"]).expanduser()
     if not part_path.exists():
@@ -220,6 +238,8 @@ def generate_settings(
     else:
         shutil.copy(part_path, destination)
         _logger.info("Copied part file to %s", destination)
+
+    return generated_artifacts
 
 
 def parse_args(args=None):

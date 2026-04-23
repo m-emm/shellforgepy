@@ -23,6 +23,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 import networkx as nx
 import shellforgepy.builder.graph_model as builder_graph_model
 import yaml
+from shellforgepy.adapters._adapter import copy_part
 from shellforgepy.builder.errors import BuilderError
 from shellforgepy.construct.part_parameters import PartParameters
 from shellforgepy.metrics import (
@@ -37,6 +38,7 @@ _logger = logging.getLogger(__name__)
 
 _REF_PATTERN = re.compile(r"\$\{([A-Za-z0-9_./:-]+)\}")
 _SAFE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
+_COMPOSITE_TEMPLATE_PATTERN = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 BUILD_METADATA_SCHEMA_VERSION = 2
 PLACED_ASSEMBLIES_DEBUG_FILENAME = "placed_assemblies_bounding_boxes.json"
 PLACED_ASSEMBLIES_DEBUG_FLOAT_DIGITS = 4
@@ -45,6 +47,11 @@ DEFAULT_BED_WIDTH = 200.0
 _COLLECTION_ASSEMBLY_GENERATOR_PATH = (
     "shellforgepy.builder.builder._build_collection_assembly"
 )
+
+_COMPOSITE_ASSEMBLY_GENERATOR_PATH = (
+    "shellforgepy.builder.builder._build_composite_assembly"
+)
+
 _LAST_BUILD_ARTIFACT_POOL: Optional["_BuildArtifactPool"] = None
 
 
@@ -92,6 +99,7 @@ class _ResolvedAssembly:
     logical_part_name: str
     parameter_hash: str
     is_collection: bool = False
+    is_composite: bool = False
 
 
 @dataclass(frozen=True)
@@ -1015,6 +1023,233 @@ def _collection_assembly_enabled(
     return enabled
 
 
+def _supported_composite_artifacts() -> set[str]:
+    return {
+        "leader",
+        "fused",
+        "followers",
+        "cutters",
+        "non_production_parts",
+    }
+
+
+def _coerce_composite_name_list(
+    raw_value: Any,
+    *,
+    field_name: str,
+    logical_part_name: str,
+    resource_path: Path,
+) -> list[str]:
+    if not isinstance(raw_value, list):
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} has Composite selector field "
+            f"'{field_name}' that must resolve to a list"
+        )
+    return [str(item) for item in raw_value]
+
+
+def _normalize_composite_selector(
+    selector: Mapping[str, Any],
+    *,
+    channel_name: str,
+    public_parameters: Mapping[str, Any],
+    injected_parts: Mapping[str, Mapping[str, str]],
+    logical_part_name: str,
+    resource_path: Path,
+) -> Dict[str, Any]:
+    resolved_selector = _resolve_inline_mapping(selector, public_parameters)
+    source_path = resolved_selector.get("source")
+    if not source_path:
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} has Composite selector "
+            f"in {channel_name} missing source"
+        )
+    if str(source_path) != "injected":
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} has Composite selector "
+            f"in {channel_name} with unsupported source '{source_path}' "
+            "(only 'injected' is supported)"
+        )
+
+    inject_name = resolved_selector.get("assembly")
+    artifact_name = resolved_selector.get("artifact")
+    if not inject_name or not artifact_name:
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} has Composite selector "
+            f"in {channel_name} missing assembly or artifact"
+        )
+    inject_name = str(inject_name)
+    artifact_name = str(artifact_name)
+
+    artifact_root = artifact_name.split(".", 1)[0]
+    if artifact_name == "all" or artifact_root not in _supported_composite_artifacts():
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} has Composite selector "
+            f"in {channel_name} with unsupported artifact '{artifact_name}'"
+        )
+    if inject_name not in injected_parts:
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} references injected alias "
+            f"'{inject_name}' in Composite.{channel_name}, but it is not declared in "
+            "top-level inject_parts"
+        )
+    if injected_parts[inject_name].get("artifact") != "assembly":
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} references injected alias "
+            f"'{inject_name}' in Composite.{channel_name}, but top-level "
+            f"inject_parts.{inject_name} must inject the full assembly"
+        )
+
+    normalized_selector: Dict[str, Any] = {
+        "source": "injected",
+        "assembly": inject_name,
+        "artifact": artifact_name,
+    }
+
+    if "names" in resolved_selector:
+        normalized_selector["names"] = _coerce_composite_name_list(
+            resolved_selector["names"],
+            field_name="names",
+            logical_part_name=logical_part_name,
+            resource_path=resource_path,
+        )
+    if "exclude_names" in resolved_selector:
+        normalized_selector["exclude_names"] = _coerce_composite_name_list(
+            resolved_selector["exclude_names"],
+            field_name="exclude_names",
+            logical_part_name=logical_part_name,
+            resource_path=resource_path,
+        )
+
+    rename = resolved_selector.get("name")
+    name_template = resolved_selector.get("name_template")
+    if rename is not None and name_template is not None:
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} has Composite selector "
+            f"in {channel_name} that cannot define both 'name' and 'name_template'"
+        )
+    if channel_name == "Leader.Fused":
+        if rename is not None or name_template is not None:
+            raise BuilderError(
+                f"Part '{logical_part_name}' in {resource_path} has Composite selector "
+                "in Leader.Fused that cannot define 'name' or 'name_template'"
+            )
+    else:
+        if rename is not None:
+            normalized_selector["name"] = str(rename)
+        if name_template is not None:
+            normalized_selector["name_template"] = str(name_template)
+
+    return normalized_selector
+
+
+def _normalize_composite_channel(
+    raw_value: Any,
+    *,
+    channel_name: str,
+    public_parameters: Mapping[str, Any],
+    injected_parts: Mapping[str, Mapping[str, str]],
+    logical_part_name: str,
+    resource_path: Path,
+) -> list[Dict[str, Any]]:
+    if raw_value is None:
+        return []
+    if not isinstance(raw_value, list):
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} has Composite.{channel_name} "
+            "that must be a list"
+        )
+    normalized_selectors: list[Dict[str, Any]] = []
+    for selector in raw_value:
+        if not isinstance(selector, Mapping):
+            raise BuilderError(
+                f"Part '{logical_part_name}' in {resource_path} has Composite selector "
+                f"in {channel_name} that must be a mapping"
+            )
+        normalized_selectors.append(
+            _normalize_composite_selector(
+                selector,
+                channel_name=channel_name,
+                public_parameters=public_parameters,
+                injected_parts=injected_parts,
+                logical_part_name=logical_part_name,
+                resource_path=resource_path,
+            )
+        )
+    return normalized_selectors
+
+
+def _normalize_composite_spec(
+    composite_path: Mapping[str, Any],
+    *,
+    entry: Mapping[str, Any],
+    public_parameters: Mapping[str, Any],
+    logical_part_name: str,
+    resource_path: Path,
+) -> Dict[str, Any]:
+    if not isinstance(composite_path, Mapping):
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} has Composite that must be a mapping"
+        )
+    leader_path = composite_path.get("Leader")
+    if not isinstance(leader_path, Mapping):
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} has Composite Properties missing Leader"
+        )
+    fused_path = leader_path.get("Fused")
+    if fused_path is None:
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} has Composite Properties missing Fused"
+        )
+
+    injected_parts = _resolve_injected_parts_config(entry)
+    normalized_spec = {
+        "schema_version": 1,
+        "leader_fused": _normalize_composite_channel(
+            fused_path,
+            channel_name="Leader.Fused",
+            public_parameters=public_parameters,
+            injected_parts=injected_parts,
+            logical_part_name=logical_part_name,
+            resource_path=resource_path,
+        ),
+        "followers": _normalize_composite_channel(
+            composite_path.get("Followers", []),
+            channel_name="Followers",
+            public_parameters=public_parameters,
+            injected_parts=injected_parts,
+            logical_part_name=logical_part_name,
+            resource_path=resource_path,
+        ),
+        "cutters": _normalize_composite_channel(
+            composite_path.get("Cutters", []),
+            channel_name="Cutters",
+            public_parameters=public_parameters,
+            injected_parts=injected_parts,
+            logical_part_name=logical_part_name,
+            resource_path=resource_path,
+        ),
+        "non_production_parts": _normalize_composite_channel(
+            composite_path.get("NonProductionParts", []),
+            channel_name="NonProductionParts",
+            public_parameters=public_parameters,
+            injected_parts=injected_parts,
+            logical_part_name=logical_part_name,
+            resource_path=resource_path,
+        ),
+    }
+    if not normalized_spec["leader_fused"]:
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} has Composite.Leader.Fused "
+            "that must not be empty"
+        )
+    return normalized_spec
+
+
+def _stable_json_dumps(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
 def _resolve_assembly(
     config_path: Path,
     entry: Mapping[str, Any],
@@ -1023,6 +1258,21 @@ def _resolve_assembly(
     resource_path = _discover_resource_file(config_path, entry)
     resource_data = _load_yaml(resource_path)
     is_collection = _collection_assembly_enabled(resource_path, resource_data)
+    if is_collection:
+        raw_parts = resource_data.get("Parts", {})
+        if isinstance(raw_parts, Mapping):
+            for definition in raw_parts.values():
+                if not isinstance(definition, Mapping):
+                    continue
+                properties = definition.get("Properties", {})
+                if (
+                    isinstance(properties, Mapping)
+                    and properties.get("Composite") is not None
+                ):
+                    raise BuilderError(
+                        f"Assembly resource {resource_path} cannot declare both "
+                        "Builder.Collection and Properties.Composite"
+                    )
     if is_collection:
         logical_part_name = str(
             entry.get("logical_part_name")
@@ -1057,28 +1307,46 @@ def _resolve_assembly(
     if is_collection:
         generator_path = _COLLECTION_ASSEMBLY_GENERATOR_PATH
         generator_kwargs = {}
+        is_composite = False
     else:
         properties = part_definition.get("Properties", {})
         if not isinstance(properties, Mapping):
             raise BuilderError(
                 f"Part '{logical_part_name}' in {resource_path} has invalid Properties"
             )
-
-        generator_path = properties.get("Generator")
-        if not generator_path:
-            raise BuilderError(
-                f"Part '{logical_part_name}' in {resource_path} is missing Properties.Generator"
+        composite_path = properties.get("Composite")
+        if composite_path is not None:
+            if "Generator" in properties:
+                raise BuilderError(
+                    f"Part '{logical_part_name}' in {resource_path} cannot have both Composite and Generator properties"
+                )
+            normalized_composite_spec = _normalize_composite_spec(
+                composite_path,
+                entry=entry,
+                public_parameters=public_parameters,
+                logical_part_name=logical_part_name,
+                resource_path=resource_path,
             )
+            generator_kwargs = {"_composite_spec": normalized_composite_spec}
+            generator_path = _COMPOSITE_ASSEMBLY_GENERATOR_PATH
+            is_composite = True
+        else:
+            generator_path = properties.get("Generator")
+            if not generator_path:
+                raise BuilderError(
+                    f"Part '{logical_part_name}' in {resource_path} is missing Properties.Generator"
+                )
 
-        generator_properties = properties.get("Properties", {})
-        if not isinstance(generator_properties, Mapping):
-            raise BuilderError(
-                f"Part '{logical_part_name}' in {resource_path} has invalid Properties.Properties section"
+            generator_properties = properties.get("Properties", {})
+            if not isinstance(generator_properties, Mapping):
+                raise BuilderError(
+                    f"Part '{logical_part_name}' in {resource_path} has invalid Properties.Properties section"
+                )
+
+            generator_kwargs = _resolve_inline_mapping(
+                generator_properties, public_parameters
             )
-
-        generator_kwargs = _resolve_inline_mapping(
-            generator_properties, public_parameters
-        )
+            is_composite = False
     return _ResolvedAssembly(
         name=str(entry["name"]),
         entry=dict(entry),
@@ -1090,6 +1358,7 @@ def _resolve_assembly(
         logical_part_name=logical_part_name,
         parameter_hash="",
         is_collection=is_collection,
+        is_composite=is_composite,
     )
 
 
@@ -1103,6 +1372,270 @@ def _build_collection_assembly() -> Any:
     return LeaderFollowersCuttersPart(
         create_box(placeholder_size, placeholder_size, placeholder_size)
     )
+
+
+def _is_runtime_composite_assembly(part: Any) -> bool:
+    return all(
+        hasattr(part, attribute)
+        for attribute in (
+            "leader",
+            "followers",
+            "cutters",
+            "non_production_parts",
+            "follower_indices_by_name",
+            "cutter_indices_by_name",
+            "non_production_indices_by_name",
+        )
+    )
+
+
+def _runtime_composite_entries(
+    source_assembly: Any,
+    artifact: str,
+    *,
+    inject_name: str,
+) -> List[Dict[str, Any]]:
+    if not _is_runtime_composite_assembly(source_assembly):
+        raise BuilderError(
+            f"Injected composite source '{inject_name}' must be a full assembly, got "
+            f"{type(source_assembly).__name__}"
+        )
+
+    assembly_name = str(
+        getattr(source_assembly, "additional_data", {}).get(
+            "assembly_name", inject_name
+        )
+    )
+    if artifact == "leader":
+        return [
+            {
+                "part": source_assembly.leader,
+                "name": None,
+                "index": None,
+                "inject_name": inject_name,
+                "assembly_name": assembly_name,
+                "artifact": "leader",
+            }
+        ]
+    if artifact == "fused":
+        return [
+            {
+                "part": source_assembly.leaders_followers_fused(),
+                "name": None,
+                "index": None,
+                "inject_name": inject_name,
+                "assembly_name": assembly_name,
+                "artifact": "fused",
+            }
+        ]
+
+    if "." in artifact:
+        artifact_group, target_name = artifact.split(".", 1)
+    else:
+        artifact_group = artifact
+        target_name = None
+
+    if artifact_group == "followers":
+        parts = list(source_assembly.followers)
+        name_map = dict(source_assembly.follower_indices_by_name)
+    elif artifact_group == "cutters":
+        parts = list(source_assembly.cutters)
+        name_map = dict(source_assembly.cutter_indices_by_name)
+    elif artifact_group == "non_production_parts":
+        parts = list(source_assembly.non_production_parts)
+        name_map = dict(source_assembly.non_production_indices_by_name)
+    else:
+        raise BuilderError(f"Unsupported composite artifact selector '{artifact}'")
+
+    names_by_index = {index: name for name, index in name_map.items()}
+    entries = [
+        {
+            "part": part,
+            "name": names_by_index.get(index),
+            "index": index,
+            "inject_name": inject_name,
+            "assembly_name": assembly_name,
+            "artifact": artifact_group,
+        }
+        for index, part in enumerate(parts)
+    ]
+    if target_name is None:
+        return entries
+    return [entry for entry in entries if entry["name"] == target_name]
+
+
+def _filter_runtime_composite_entries(
+    entries: Sequence[Mapping[str, Any]],
+    selector: Mapping[str, Any],
+) -> List[Dict[str, Any]]:
+    filtered = [dict(entry) for entry in entries]
+    include_names = selector.get("names")
+    exclude_names = selector.get("exclude_names")
+    if include_names is not None:
+        include_set = {str(item) for item in include_names}
+        filtered = [entry for entry in filtered if entry.get("name") in include_set]
+    if exclude_names is not None:
+        exclude_set = {str(item) for item in exclude_names}
+        filtered = [entry for entry in filtered if entry.get("name") not in exclude_set]
+    return filtered
+
+
+def _format_runtime_composite_name(
+    template: str,
+    entry: Mapping[str, Any],
+) -> str:
+    values = {
+        "inject_name": entry.get("inject_name"),
+        "assembly_name": entry.get("assembly_name"),
+        "artifact": entry.get("artifact"),
+        "name": entry.get("name"),
+        "index": entry.get("index"),
+    }
+
+    def replace(match: re.Match[str]) -> str:
+        key = match.group(1)
+        if key not in values:
+            raise BuilderError(
+                f"Unknown placeholder '{key}' in composite name_template '{template}'"
+            )
+        value = values[key]
+        if value is None:
+            raise BuilderError(
+                f"Composite name_template '{template}' requires '{key}', but it is not "
+                "available for the selected source part"
+            )
+        return str(value)
+
+    return _COMPOSITE_TEMPLATE_PATTERN.sub(replace, template)
+
+
+def _resolve_runtime_composite_selector(
+    selector: Mapping[str, Any],
+    runtime_inputs: Mapping[str, Any],
+) -> List[Dict[str, Any]]:
+    inject_name = str(selector["assembly"])
+    source_assembly = runtime_inputs.get(inject_name)
+    if source_assembly is None:
+        raise BuilderError(
+            f"Missing injected assembly '{inject_name}' for composite selector"
+        )
+    entries = _runtime_composite_entries(
+        source_assembly,
+        str(selector["artifact"]),
+        inject_name=inject_name,
+    )
+    entries = _filter_runtime_composite_entries(entries, selector)
+    if not entries:
+        raise BuilderError(
+            "Composite selector resolved no parts: "
+            f"assembly={inject_name!r}, artifact={selector['artifact']!r}"
+        )
+
+    renamed_entries: List[Dict[str, Any]] = []
+    explicit_name = selector.get("name")
+    name_template = selector.get("name_template")
+    if explicit_name is not None and len(entries) != 1:
+        raise BuilderError(
+            f"Composite selector for '{inject_name}.{selector['artifact']}' defines "
+            "'name' but resolves to more than one part"
+        )
+
+    for entry in entries:
+        renamed = dict(entry)
+        if explicit_name is not None:
+            renamed["name"] = str(explicit_name)
+        elif name_template is not None:
+            renamed["name"] = _format_runtime_composite_name(
+                str(name_template),
+                renamed,
+            )
+        renamed_entries.append(renamed)
+    return renamed_entries
+
+
+def _clone_runtime_part(part: Any) -> Any:
+    try:
+        return copy_part(part)
+    except Exception:
+        return part
+
+
+def _composite_name_already_used(result: Any, name: str) -> bool:
+    return (
+        name in getattr(result, "follower_indices_by_name", {})
+        or name in getattr(result, "cutter_indices_by_name", {})
+        or name in getattr(result, "non_production_indices_by_name", {})
+    )
+
+
+def _append_runtime_composite_entries(
+    result: Any,
+    *,
+    channel: str,
+    entries: Sequence[Mapping[str, Any]],
+) -> None:
+    for entry in entries:
+        name = entry.get("name")
+        part = _clone_runtime_part(entry["part"])
+        if name is not None and _composite_name_already_used(result, str(name)):
+            raise BuilderError(
+                f"Composite part name collision for '{name}' while appending to "
+                f"{channel}"
+            )
+        if channel == "followers":
+            if name is not None:
+                result.add_named_follower(part, str(name))
+            else:
+                result.followers.append(part)
+        elif channel == "cutters":
+            if name is not None:
+                result.add_named_cutter(part, str(name))
+            else:
+                result.cutters.append(part)
+        elif channel == "non_production_parts":
+            if name is not None:
+                result.add_named_non_production_part(part, str(name))
+            else:
+                result.non_production_parts.append(part)
+        else:
+            raise BuilderError(f"Unsupported composite output channel '{channel}'")
+
+
+def _build_composite_assembly(**kwargs: Any) -> Any:
+    from shellforgepy.construct.leader_followers_cutters_part import (
+        LeaderFollowersCuttersPart,
+    )
+
+    composite_spec = kwargs.pop("_composite_spec", {})
+    if not isinstance(composite_spec, Mapping):
+        raise BuilderError(
+            "Invalid _composite_spec argument for composite assembly: "
+            f"{composite_spec!r}"
+        )
+
+    leader_entries: List[Dict[str, Any]] = []
+    for selector in composite_spec.get("leader_fused", []):
+        leader_entries.extend(_resolve_runtime_composite_selector(selector, kwargs))
+    if not leader_entries:
+        raise BuilderError("Composite assembly resolved no leader parts to fuse")
+
+    leader = _clone_runtime_part(leader_entries[0]["part"])
+    for entry in leader_entries[1:]:
+        leader = leader.fuse(_clone_runtime_part(entry["part"]))
+
+    result = LeaderFollowersCuttersPart(leader)
+    for channel in ("followers", "cutters", "non_production_parts"):
+        channel_entries: List[Dict[str, Any]] = []
+        for selector in composite_spec.get(channel, []):
+            channel_entries.extend(
+                _resolve_runtime_composite_selector(selector, kwargs)
+            )
+        _append_runtime_composite_entries(
+            result,
+            channel=channel,
+            entries=channel_entries,
+        )
+    return result
 
 
 def _load_generator_callable(generator_path: str) -> Callable[..., Any]:
@@ -1364,12 +1897,19 @@ def _version_inputs(
     generator: Callable[..., Any],
     generator_path: str,
     resource_path: Path,
+    composite_spec: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     inputs: Dict[str, Any] = {
         "generator_path": generator_path,
         "resource_path": str(resource_path.resolve()),
-        "resource_sha256": _file_sha256(resource_path.resolve()),
     }
+    if composite_spec is None:
+        inputs["resource_sha256"] = _file_sha256(resource_path.resolve())
+    else:
+        composite_spec_payload = _stable_json_dumps(composite_spec)
+        inputs["composite_spec_sha256"] = hashlib.sha256(
+            composite_spec_payload.encode("utf-8")
+        ).hexdigest()
     generator_source_path = _generator_source_path(generator, generator_path)
     if generator_source_path is not None:
         inputs["generator_source_path"] = str(generator_source_path)
@@ -1892,6 +2432,12 @@ def _resolve_dependency_injections(
             imported_part = _apply_placement_state_to_part(
                 imported_part, assembly_name, placement_state
             )
+        if (
+            spec["artifact"] == "assembly"
+            and hasattr(imported_part, "additional_data")
+            and isinstance(getattr(imported_part, "additional_data"), dict)
+        ):
+            imported_part.additional_data.setdefault("assembly_name", assembly_name)
         injections.append(
             _DependencyInjection(
                 kwarg_name=kwarg_name,
@@ -5060,6 +5606,11 @@ def build_from_file(
                 generator=generator,
                 generator_path=resolved.generator_path,
                 resource_path=resolved.resource_path,
+                composite_spec=(
+                    resolved.generator_kwargs.get("_composite_spec")
+                    if resolved.is_composite
+                    else None
+                ),
             )
             parameter_hash = _hash_with_dependencies(
                 {
@@ -5391,31 +5942,12 @@ def _export_scene_for_assembly(
 
     placement_start = perf_counter()
     _logger.info("Applying %s scene placement", mode)
-    if build_pool is not None:
-        applied_placement = _apply_build_pool_runtime_placement(
-            scene_parts,
-            build_pool,
-        )
-    else:
-        applied_placement = _apply_placement_alignments(
-            scene_parts,
-            built_results_by_name=built_results_by_name,
-            repository_dir=repository_dir,
-            config_data=config_data,
-        )
-    if isinstance(applied_placement, _AppliedPlacementResult):
-        scene_parts = applied_placement.scene_parts
-    else:
-        scene_parts = applied_placement
-        applied_placement = _AppliedPlacementResult(
-            scene_parts=scene_parts,
-            assembly_transforms={},
-            placed_assembly_names={
-                str(item["assembly_name"])
-                for item in scene_parts
-                if item.get("assembly_name") is not None
-            },
-        )
+
+    applied_placement = _apply_build_pool_runtime_placement(
+        scene_parts,
+        build_pool,
+    )
+    scene_parts = applied_placement.scene_parts
     _logger.info(
         "Applied %s scene placement in %.2fs for %d placed assembly(ies)",
         mode,

@@ -18,7 +18,7 @@ from shellforgepy.metrics import (
     snapshot_metrics,
     using_metrics_snapshot,
 )
-from shellforgepy.simple import create_box, translate
+from shellforgepy.simple import create_box, get_bounding_box, translate
 
 
 def _write_file(path: Path, content: str) -> None:
@@ -5906,6 +5906,608 @@ def _install_string_builder_io(monkeypatch):
 
     monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
     monkeypatch.setattr(builder, "_import_dependency_part", fake_import)
+
+
+def _install_geometry_builder_io(monkeypatch):
+    exported_parts = {}
+
+    def fake_export(part, destination):
+        resolved = str(destination.resolve())
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(resolved, encoding="utf-8")
+        exported_parts[resolved] = part
+
+    def fake_import(step_path):
+        return exported_parts[str(Path(step_path).resolve())]
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+    monkeypatch.setattr(builder, "_import_dependency_part", fake_import)
+    return exported_parts
+
+
+def _clear_demo_package(monkeypatch, package_name: str) -> None:
+    monkeypatch.delitem(sys.modules, package_name, raising=False)
+    monkeypatch.delitem(sys.modules, f"{package_name}.generators", raising=False)
+
+
+def _write_declarative_composite_demo_project(
+    tmp_path: Path,
+    *,
+    package_name: str,
+    composite_resource_lines: list[str],
+    config_lines: list[str] | None = None,
+) -> tuple[Path, Path]:
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / package_name
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "generators.py",
+        "\n".join(
+            [
+                "from shellforgepy.construct.leader_followers_cutters_part import LeaderFollowersCuttersPart",
+                "from shellforgepy.simple import create_box, translate",
+                "",
+                "def make_source_left():",
+                "    part = LeaderFollowersCuttersPart(",
+                "        leader=translate(0, 0, 0)(create_box(10, 10, 10))",
+                "    )",
+                "    part.add_named_follower(",
+                "        translate(0, 0, 12)(create_box(2, 2, 2)),",
+                "        'guide',",
+                "    )",
+                "    part.followers.append(translate(4, 0, 12)(create_box(1, 1, 1)))",
+                "    part.add_named_cutter(",
+                "        translate(1, 1, 0)(create_box(1, 1, 12)),",
+                "        'mount_hole',",
+                "    )",
+                "    part.add_named_non_production_part(",
+                "        translate(0, 0, -2)(create_box(2, 2, 2)),",
+                "        'screw',",
+                "    )",
+                "    part.non_production_parts.append(",
+                "        translate(3, 0, -2)(create_box(1, 1, 1))",
+                "    )",
+                "    return part",
+                "",
+                "def make_source_right():",
+                "    part = LeaderFollowersCuttersPart(",
+                "        leader=translate(20, 0, 0)(create_box(8, 8, 8))",
+                "    )",
+                "    part.add_named_follower(",
+                "        translate(20, 0, 10)(create_box(2, 2, 2)),",
+                "        'flange',",
+                "    )",
+                "    part.followers.append(translate(24, 0, 10)(create_box(1, 1, 1)))",
+                "    part.add_named_cutter(",
+                "        translate(21, 1, 0)(create_box(1, 1, 10)),",
+                "        'slot',",
+                "    )",
+                "    part.add_named_non_production_part(",
+                "        translate(20, 0, -2)(create_box(2, 2, 2)),",
+                "        'bolt',",
+                "    )",
+                "    part.non_production_parts.append(",
+                "        translate(24, 0, -2)(create_box(1, 1, 1))",
+                "    )",
+                "    return part",
+                "",
+                "def inspect_composite(*, composite):",
+                "    follower_names = sorted(composite.follower_indices_by_name)",
+                "    cutter_names = sorted(composite.cutter_indices_by_name)",
+                "    nonprod_names = sorted(composite.non_production_indices_by_name)",
+                "    return (",
+                "        f\"followers={len(composite.followers)}:{','.join(follower_names)};\"",
+                "        f\"cutters={len(composite.cutters)}:{','.join(cutter_names)};\"",
+                "        f\"nonprod={len(composite.non_production_parts)}:{','.join(nonprod_names)}\"",
+                "    )",
+                "",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(
+        assemblies_dir / "source_left.yaml",
+        "\n".join(
+            [
+                "Parts:",
+                "  SourceLeft:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                f"      Generator: {package_name}.generators.make_source_left",
+            ]
+        ),
+    )
+    _write_file(
+        assemblies_dir / "source_right.yaml",
+        "\n".join(
+            [
+                "Parts:",
+                "  SourceRight:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                f"      Generator: {package_name}.generators.make_source_right",
+            ]
+        ),
+    )
+    composite_resource_path = assemblies_dir / "composite.yaml"
+    _write_file(composite_resource_path, "\n".join(composite_resource_lines))
+    _write_file(
+        assemblies_dir / "consumer.yaml",
+        "\n".join(
+            [
+                "Parts:",
+                "  Consumer:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                f"      Generator: {package_name}.generators.inspect_composite",
+            ]
+        ),
+    )
+
+    if config_lines is None:
+        config_lines = [
+            "assemblies:",
+            "  - name: source_left",
+            "  - name: source_right",
+            "  - name: composite",
+            "    depends_on:",
+            "      - source_left",
+            "      - source_right",
+            "    inject_parts:",
+            "      left: source_left",
+            "      right: source_right",
+            "  - name: consumer",
+            "    depends_on:",
+            "      - composite",
+            "    inject_parts:",
+            "      composite: composite",
+        ]
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(config_path, "\n".join(config_lines))
+    return config_path, composite_resource_path
+
+
+def _base_composite_resource_lines() -> list[str]:
+    return [
+        "Parts:",
+        "  Composite:",
+        "    Type: Shellforgepy::Assembly",
+        "    Properties:",
+        "      Composite:",
+        "        Leader:",
+        "          Fused:",
+        "            - source: injected",
+        "              assembly: left",
+        "              artifact: leader",
+        "            - source: injected",
+        "              assembly: right",
+        "              artifact: fused",
+        "        Followers:",
+        "          - source: injected",
+        "            assembly: left",
+        "            artifact: followers",
+        "            names:",
+        "              - guide",
+        "            name_template: '{inject_name}_{name}'",
+        "          - source: injected",
+        "            assembly: right",
+        "            artifact: followers",
+        "            exclude_names:",
+        "              - flange",
+        "            name_template: '{inject_name}_follower_{index}'",
+        "          - source: injected",
+        "            assembly: left",
+        "            artifact: leader",
+        "            name: left_body",
+        "        Cutters:",
+        "          - source: injected",
+        "            assembly: right",
+        "            artifact: cutters.slot",
+        "            name: right_slot",
+        "        NonProductionParts:",
+        "          - source: injected",
+        "            assembly: left",
+        "            artifact: non_production_parts.screw",
+        "            name_template: '{inject_name}_{name}'",
+        "          - source: injected",
+        "            assembly: right",
+        "            artifact: non_production_parts",
+        "            exclude_names:",
+        "              - bolt",
+        "            name_template: '{inject_name}_nonprod_{index}'",
+    ]
+
+
+def test_build_from_file_builds_declarative_composite_assembly_from_injected_assemblies(
+    monkeypatch, tmp_path
+):
+    package_name = "declarative_composite_demo_pkg"
+    config_path, _ = _write_declarative_composite_demo_project(
+        tmp_path,
+        package_name=package_name,
+        composite_resource_lines=_base_composite_resource_lines(),
+    )
+    _install_geometry_builder_io(monkeypatch)
+    _clear_demo_package(monkeypatch, package_name)
+
+    results = builder.build_from_file(config_path)
+
+    composite_result = next(
+        result for result in results if result["assembly_name"] == "composite"
+    )
+    assert composite_result["generator"] == builder._COMPOSITE_ASSEMBLY_GENERATOR_PATH
+    assert "composite_spec_sha256" in composite_result["version_inputs"]
+    assert "resource_sha256" not in composite_result["version_inputs"]
+
+    composite_part = builder._import_dependency_assembly(composite_result)
+    assert sorted(composite_part.follower_indices_by_name) == [
+        "left_body",
+        "left_guide",
+        "right_follower_1",
+    ]
+    assert sorted(composite_part.cutter_indices_by_name) == ["right_slot"]
+    assert sorted(composite_part.non_production_indices_by_name) == [
+        "left_screw",
+        "right_nonprod_1",
+    ]
+    assert len(composite_part.followers) == 3
+    assert len(composite_part.cutters) == 1
+    assert len(composite_part.non_production_parts) == 2
+
+    composite_bbox = get_bounding_box(composite_part.leader)
+    assert composite_bbox[0][0] <= 0.0
+    assert composite_bbox[1][0] >= 28.0
+    assert composite_bbox[1][2] >= 12.0
+
+    consumer_result = next(
+        result for result in results if result["assembly_name"] == "consumer"
+    )
+    consumer_payload = builder._import_dependency_part(
+        Path(consumer_result["artifacts"]["leader_step"])
+    )
+    assert (
+        consumer_payload == "followers=3:left_body,left_guide,right_follower_1;"
+        "cutters=1:right_slot;"
+        "nonprod=2:left_screw,right_nonprod_1"
+    )
+
+
+def test_build_from_file_rebuilds_composite_when_composite_spec_changes_but_not_for_visualization_changes(
+    monkeypatch, tmp_path
+):
+    package_name = "declarative_composite_cache_demo_pkg"
+    config_path, composite_resource_path = _write_declarative_composite_demo_project(
+        tmp_path,
+        package_name=package_name,
+        composite_resource_lines=_base_composite_resource_lines(),
+    )
+    _install_geometry_builder_io(monkeypatch)
+    _clear_demo_package(monkeypatch, package_name)
+
+    first_results = builder.build_from_file(config_path)
+    first_composite = next(
+        result for result in first_results if result["assembly_name"] == "composite"
+    )
+
+    _write_file(
+        composite_resource_path,
+        "\n".join(
+            _base_composite_resource_lines()
+            + [
+                "Builder:",
+                "  Visualization:",
+                "    parts:",
+                "      - source: injected",
+                "        assembly: left",
+                "        artifact: all",
+            ]
+        ),
+    )
+    second_results = builder.build_from_file(config_path)
+    second_composite = next(
+        result for result in second_results if result["assembly_name"] == "composite"
+    )
+
+    assert second_composite["cache_hit"] is True
+    assert second_composite["parameter_hash"] == first_composite["parameter_hash"]
+
+    changed_lines = _base_composite_resource_lines()
+    changed_lines[19] = "            name_template: '{inject_name}_renamed_{name}'"
+    _write_file(composite_resource_path, "\n".join(changed_lines))
+    third_results = builder.build_from_file(config_path)
+    third_composite = next(
+        result for result in third_results if result["assembly_name"] == "composite"
+    )
+
+    assert third_composite["cache_hit"] is False
+    assert third_composite["parameter_hash"] != first_composite["parameter_hash"]
+
+
+def test_build_from_file_allows_name_template_for_unnamed_entries_when_template_does_not_use_name(
+    monkeypatch, tmp_path
+):
+    package_name = "declarative_composite_unnamed_template_demo_pkg"
+    composite_lines = [
+        "Parts:",
+        "  Composite:",
+        "    Type: Shellforgepy::Assembly",
+        "    Properties:",
+        "      Composite:",
+        "        Leader:",
+        "          Fused:",
+        "            - source: injected",
+        "              assembly: left",
+        "              artifact: leader",
+        "        Followers:",
+        "          - source: injected",
+        "            assembly: left",
+        "            artifact: followers",
+        "            exclude_names:",
+        "              - guide",
+        "            name_template: '{inject_name}_{index}'",
+    ]
+    config_path, _ = _write_declarative_composite_demo_project(
+        tmp_path,
+        package_name=package_name,
+        composite_resource_lines=composite_lines,
+        config_lines=[
+            "assemblies:",
+            "  - name: source_left",
+            "  - name: composite",
+            "    depends_on:",
+            "      - source_left",
+            "    inject_parts:",
+            "      left: source_left",
+        ],
+    )
+    _install_geometry_builder_io(monkeypatch)
+    _clear_demo_package(monkeypatch, package_name)
+
+    results = builder.build_from_file(config_path)
+    composite_result = next(
+        result for result in results if result["assembly_name"] == "composite"
+    )
+    composite_part = builder._import_dependency_assembly(composite_result)
+
+    assert sorted(composite_part.follower_indices_by_name) == ["left_1"]
+    assert len(composite_part.followers) == 1
+
+
+def test_build_from_file_rejects_composite_name_template_using_name_for_unnamed_entries(
+    monkeypatch, tmp_path
+):
+    package_name = "declarative_composite_bad_template_demo_pkg"
+    composite_lines = [
+        "Parts:",
+        "  Composite:",
+        "    Type: Shellforgepy::Assembly",
+        "    Properties:",
+        "      Composite:",
+        "        Leader:",
+        "          Fused:",
+        "            - source: injected",
+        "              assembly: left",
+        "              artifact: leader",
+        "        Followers:",
+        "          - source: injected",
+        "            assembly: left",
+        "            artifact: followers",
+        "            exclude_names:",
+        "              - guide",
+        "            name_template: '{inject_name}_{name}'",
+    ]
+    config_path, _ = _write_declarative_composite_demo_project(
+        tmp_path,
+        package_name=package_name,
+        composite_resource_lines=composite_lines,
+        config_lines=[
+            "assemblies:",
+            "  - name: source_left",
+            "  - name: composite",
+            "    depends_on:",
+            "      - source_left",
+            "    inject_parts:",
+            "      left: source_left",
+        ],
+    )
+    _install_geometry_builder_io(monkeypatch)
+    _clear_demo_package(monkeypatch, package_name)
+
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder.build_from_file(config_path)
+
+    assert "requires 'name'" in str(excinfo.value)
+
+
+def test_build_from_file_rejects_composite_name_override_for_multi_match_selector(
+    monkeypatch, tmp_path
+):
+    package_name = "declarative_composite_multi_name_demo_pkg"
+    composite_lines = [
+        "Parts:",
+        "  Composite:",
+        "    Type: Shellforgepy::Assembly",
+        "    Properties:",
+        "      Composite:",
+        "        Leader:",
+        "          Fused:",
+        "            - source: injected",
+        "              assembly: left",
+        "              artifact: leader",
+        "        Followers:",
+        "          - source: injected",
+        "            assembly: left",
+        "            artifact: followers",
+        "            name: all_followers",
+    ]
+    config_path, _ = _write_declarative_composite_demo_project(
+        tmp_path,
+        package_name=package_name,
+        composite_resource_lines=composite_lines,
+        config_lines=[
+            "assemblies:",
+            "  - name: source_left",
+            "  - name: composite",
+            "    depends_on:",
+            "      - source_left",
+            "    inject_parts:",
+            "      left: source_left",
+        ],
+    )
+    _install_geometry_builder_io(monkeypatch)
+    _clear_demo_package(monkeypatch, package_name)
+
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder.build_from_file(config_path)
+
+    assert "defines 'name' but resolves to more than one part" in str(excinfo.value)
+
+
+def test_build_from_file_rejects_composite_alias_that_is_not_full_assembly(
+    monkeypatch, tmp_path
+):
+    package_name = "declarative_composite_bad_injection_demo_pkg"
+    config_path, _ = _write_declarative_composite_demo_project(
+        tmp_path,
+        package_name=package_name,
+        composite_resource_lines=_base_composite_resource_lines(),
+        config_lines=[
+            "assemblies:",
+            "  - name: source_left",
+            "  - name: source_right",
+            "  - name: composite",
+            "    depends_on:",
+            "      - source_left",
+            "      - source_right",
+            "    inject_parts:",
+            "      left: source_left.leader",
+            "      right: source_right",
+        ],
+    )
+    _clear_demo_package(monkeypatch, package_name)
+
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder.build_from_file(config_path)
+
+    assert "inject_parts.left must inject the full assembly" in str(excinfo.value)
+
+
+def test_build_from_file_rejects_composite_selector_with_unknown_injected_alias(
+    monkeypatch, tmp_path
+):
+    package_name = "declarative_composite_unknown_alias_demo_pkg"
+    composite_lines = _base_composite_resource_lines()
+    composite_lines = [
+        (
+            "              assembly: missing"
+            if line == "              assembly: left"
+            else line
+        )
+        for line in composite_lines
+    ]
+    config_path, _ = _write_declarative_composite_demo_project(
+        tmp_path,
+        package_name=package_name,
+        composite_resource_lines=composite_lines,
+    )
+    _clear_demo_package(monkeypatch, package_name)
+
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder.build_from_file(config_path)
+
+    assert "references injected alias 'missing'" in str(excinfo.value)
+
+
+def test_build_from_file_rejects_composite_selector_with_unsupported_artifact_all(
+    monkeypatch, tmp_path
+):
+    package_name = "declarative_composite_artifact_all_demo_pkg"
+    composite_lines = [
+        "Parts:",
+        "  Composite:",
+        "    Type: Shellforgepy::Assembly",
+        "    Properties:",
+        "      Composite:",
+        "        Leader:",
+        "          Fused:",
+        "            - source: injected",
+        "              assembly: left",
+        "              artifact: all",
+    ]
+    config_path, _ = _write_declarative_composite_demo_project(
+        tmp_path,
+        package_name=package_name,
+        composite_resource_lines=composite_lines,
+        config_lines=[
+            "assemblies:",
+            "  - name: source_left",
+            "  - name: composite",
+            "    depends_on:",
+            "      - source_left",
+            "    inject_parts:",
+            "      left: source_left",
+        ],
+    )
+    _clear_demo_package(monkeypatch, package_name)
+
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder.build_from_file(config_path)
+
+    assert "unsupported artifact 'all'" in str(excinfo.value)
+
+
+def test_build_from_file_rejects_composite_name_collisions_across_channels(
+    monkeypatch, tmp_path
+):
+    package_name = "declarative_composite_collision_demo_pkg"
+    composite_lines = [
+        "Parts:",
+        "  Composite:",
+        "    Type: Shellforgepy::Assembly",
+        "    Properties:",
+        "      Composite:",
+        "        Leader:",
+        "          Fused:",
+        "            - source: injected",
+        "              assembly: left",
+        "              artifact: leader",
+        "        Followers:",
+        "          - source: injected",
+        "            assembly: left",
+        "            artifact: leader",
+        "            name: duplicate",
+        "        NonProductionParts:",
+        "          - source: injected",
+        "            assembly: right",
+        "            artifact: non_production_parts.bolt",
+        "            name: duplicate",
+    ]
+    config_path, _ = _write_declarative_composite_demo_project(
+        tmp_path,
+        package_name=package_name,
+        composite_resource_lines=composite_lines,
+        config_lines=[
+            "assemblies:",
+            "  - name: source_left",
+            "  - name: source_right",
+            "  - name: composite",
+            "    depends_on:",
+            "      - source_left",
+            "      - source_right",
+            "    inject_parts:",
+            "      left: source_left",
+            "      right: source_right",
+        ],
+    )
+    _install_geometry_builder_io(monkeypatch)
+    _clear_demo_package(monkeypatch, package_name)
+
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder.build_from_file(config_path)
+
+    assert "Composite part name collision for 'duplicate'" in str(excinfo.value)
 
 
 def test_build_from_file_rejects_injection_after_skipped_provider_post_translation(

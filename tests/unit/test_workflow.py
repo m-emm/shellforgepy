@@ -44,6 +44,26 @@ def _make_args(target: Path, runs_dir: Path, **overrides):
     return argparse.Namespace(**values)
 
 
+def _fake_slicer_artifacts(
+    output_dir: Path,
+    *,
+    machine_name: str = "machine_settings.json",
+    process_name: str = "process_settings.json",
+    filament_names: list[str] | None = None,
+):
+    if filament_names is None:
+        filament_names = []
+    return {
+        "machine_settings_path": str((output_dir / machine_name).resolve()),
+        "process_settings_path": str((output_dir / process_name).resolve()),
+        "filament_settings_paths": [
+            str((output_dir / "filaments" / name).resolve()) for name in filament_names
+        ],
+        "print_host_path": None,
+        "used_master_settings_files": [],
+    }
+
+
 def test_run_workflow_allows_obj_only_geometry_runs(monkeypatch, tmp_path):
     target = tmp_path / "design.py"
     target.write_text("print('hello')\n", encoding="utf-8")
@@ -108,8 +128,11 @@ def test_complete_workflow_run_slices_each_manifest_plate(monkeypatch, tmp_path)
     slicer_inputs = []
 
     def fake_generate_settings(*, process_data_file, output_dir, master_settings_dir):
+        output_dir = Path(output_dir)
         generated_process_inputs.append(Path(process_data_file).name)
-        (Path(output_dir) / "machine_settings.json").write_text("{}", encoding="utf-8")
+        (output_dir / "machine_settings.json").write_text("{}", encoding="utf-8")
+        (output_dir / "process_settings.json").write_text("{}", encoding="utf-8")
+        return _fake_slicer_artifacts(output_dir)
 
     def fake_execute_subprocess(cmd, *, env=None, cwd=None, stdin_data=None):
         if "--load-settings" in cmd:
@@ -203,6 +226,12 @@ def test_complete_workflow_run_loads_only_current_plate_filament(monkeypatch, tm
             json.dumps({"name": filament_name}),
             encoding="utf-8",
         )
+        return _fake_slicer_artifacts(
+            output_dir,
+            machine_name=machine_name,
+            process_name=process_name,
+            filament_names=[f"{filament_name}.json"],
+        )
 
     def fake_execute_subprocess(cmd, *, env=None, cwd=None, stdin_data=None):
         if "--load-filaments" in cmd:
@@ -254,6 +283,86 @@ def test_complete_workflow_run_loads_only_current_plate_filament(monkeypatch, tm
     ]
 
 
+def test_complete_workflow_run_excludes_builder_debug_json_from_orca_settings(
+    monkeypatch, tmp_path
+):
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    plate_stl = run_directory / "machine_plate_a.stl"
+    plate_stl.write_text("solid a\n", encoding="utf-8")
+    plate_process = run_directory / "machine_plate_a_process.json"
+    plate_process.write_text("{}", encoding="utf-8")
+    (run_directory / "placed_assemblies_bounding_boxes.json").write_text(
+        json.dumps({"schema_version": "debug"}),
+        encoding="utf-8",
+    )
+
+    orca_exec = tmp_path / "orca"
+    orca_exec.write_text("#!/bin/sh\n", encoding="utf-8")
+    master_settings_dir = tmp_path / "masters"
+    master_settings_dir.mkdir()
+
+    slicer_settings_args = []
+
+    def fake_generate_settings(*, process_data_file, output_dir, master_settings_dir):
+        output_dir = Path(output_dir)
+        (output_dir / "MegeMasterMachine.json").write_text("{}", encoding="utf-8")
+        (output_dir / "ProcessMegeMaster.json").write_text("{}", encoding="utf-8")
+        return _fake_slicer_artifacts(
+            output_dir,
+            machine_name="MegeMasterMachine.json",
+            process_name="ProcessMegeMaster.json",
+        )
+
+    def fake_execute_subprocess(cmd, *, env=None, cwd=None, stdin_data=None):
+        if "--load-settings" in cmd:
+            slicer_settings_args.append(cmd[cmd.index("--load-settings") + 1])
+        return SubprocessResult(0, [], [])
+
+    monkeypatch.setattr(workflow_module, "generate_settings", fake_generate_settings)
+    monkeypatch.setattr(workflow_module, "execute_subprocess", fake_execute_subprocess)
+
+    args = argparse.Namespace(
+        slice=True,
+        upload=False,
+        open=False,
+        part_file=None,
+        process_file=None,
+        master_settings_dir=str(master_settings_dir),
+        orca_executable=str(orca_exec),
+        orca_debug=None,
+        printer=None,
+    )
+    config = {"orca": {"debug_level": 6}}
+    manifest = {
+        "plates": [
+            {
+                "name": "plate_a",
+                "assembly_path": str(plate_stl),
+                "process_data_path": str(plate_process),
+            }
+        ]
+    }
+
+    result = complete_workflow_run(
+        args,
+        config=config,
+        run_directory=run_directory,
+        manifest=manifest,
+        target_label="machine",
+    )
+
+    assert result == 0
+    assert slicer_settings_args == [
+        ";".join(
+            [
+                str(run_directory / "MegeMasterMachine.json"),
+                str(run_directory / "ProcessMegeMaster.json"),
+            ]
+        )
+    ]
+
+
 def test_complete_workflow_run_errors_for_manifest_plate_without_process_data(
     monkeypatch, tmp_path
 ):
@@ -272,7 +381,10 @@ def test_complete_workflow_run_errors_for_manifest_plate_without_process_data(
     master_settings_dir.mkdir()
 
     def fake_generate_settings(*, process_data_file, output_dir, master_settings_dir):
-        (Path(output_dir) / "machine_settings.json").write_text("{}", encoding="utf-8")
+        output_dir = Path(output_dir)
+        (output_dir / "machine_settings.json").write_text("{}", encoding="utf-8")
+        (output_dir / "process_settings.json").write_text("{}", encoding="utf-8")
+        return _fake_slicer_artifacts(output_dir)
 
     def fake_execute_subprocess(cmd, *, env=None, cwd=None, stdin_data=None):
         return SubprocessResult(0, [], [])
@@ -340,7 +452,10 @@ def test_complete_workflow_run_open_starts_orca_for_each_plate(monkeypatch, tmp_
     popen_calls = []
 
     def fake_generate_settings(*, process_data_file, output_dir, master_settings_dir):
-        (Path(output_dir) / "machine_settings.json").write_text("{}", encoding="utf-8")
+        output_dir = Path(output_dir)
+        (output_dir / "machine_settings.json").write_text("{}", encoding="utf-8")
+        (output_dir / "process_settings.json").write_text("{}", encoding="utf-8")
+        return _fake_slicer_artifacts(output_dir)
 
     def fake_execute_subprocess(cmd, *, env=None, cwd=None, stdin_data=None):
         if "--export-3mf" in cmd:
@@ -420,7 +535,10 @@ def test_complete_workflow_run_preserves_and_uploads_each_plate_gcode(
     upload_calls = []
 
     def fake_generate_settings(*, process_data_file, output_dir, master_settings_dir):
-        (Path(output_dir) / "machine_settings.json").write_text("{}", encoding="utf-8")
+        output_dir = Path(output_dir)
+        (output_dir / "machine_settings.json").write_text("{}", encoding="utf-8")
+        (output_dir / "process_settings.json").write_text("{}", encoding="utf-8")
+        return _fake_slicer_artifacts(output_dir)
 
     def fake_execute_subprocess(cmd, *, env=None, cwd=None, stdin_data=None):
         if "--load-settings" in cmd:
@@ -674,7 +792,10 @@ def test_complete_workflow_run_uses_obj_renderer_for_single_plate_gcode_preview(
     render_calls = []
 
     def fake_generate_settings(*, process_data_file, output_dir, master_settings_dir):
-        (Path(output_dir) / "machine_settings.json").write_text("{}", encoding="utf-8")
+        output_dir = Path(output_dir)
+        (output_dir / "machine_settings.json").write_text("{}", encoding="utf-8")
+        (output_dir / "process_settings.json").write_text("{}", encoding="utf-8")
+        return _fake_slicer_artifacts(output_dir)
 
     def fake_execute_subprocess(cmd, *, env=None, cwd=None, stdin_data=None):
         if "--load-settings" in cmd:
@@ -804,7 +925,10 @@ def test_complete_workflow_run_uses_plate_obj_for_multi_plate_gcode_previews(
     render_calls = []
 
     def fake_generate_settings(*, process_data_file, output_dir, master_settings_dir):
-        (Path(output_dir) / "machine_settings.json").write_text("{}", encoding="utf-8")
+        output_dir = Path(output_dir)
+        (output_dir / "machine_settings.json").write_text("{}", encoding="utf-8")
+        (output_dir / "process_settings.json").write_text("{}", encoding="utf-8")
+        return _fake_slicer_artifacts(output_dir)
 
     def fake_execute_subprocess(cmd, *, env=None, cwd=None, stdin_data=None):
         if "--load-settings" in cmd:

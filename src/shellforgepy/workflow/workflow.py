@@ -288,12 +288,12 @@ def execute_subprocess(
     return SubprocessResult(returncode, stdout_lines, stderr_lines)
 
 
-def _ensure_path(path: Optional[Path], description: str) -> Path:
+def _ensure_path(path: Optional[Path | str], description: str) -> Path:
     if path is None:
         raise WorkflowError(
             f"Could not determine {description}. Provide it explicitly."
         )
-    resolved = path.expanduser()
+    resolved = Path(path).expanduser()
     if not resolved.exists():
         raise WorkflowError(f"{description} does not exist: {resolved}")
     return resolved
@@ -308,17 +308,64 @@ def _resolve_manifest_path(base_dir: Path, value: Optional[str]) -> Optional[Pat
     return candidate
 
 
-def _gather_jsons(directory: Path) -> List[Path]:
-    json_files = []
-    for candidate in directory.glob("*.json"):
-        if not candidate.is_file():
-            continue
-        if candidate.name == MANIFEST_FILENAME:
-            continue
-        if candidate.name.endswith("_process.json"):
-            continue
-        json_files.append(candidate)
-    return sorted(json_files)
+def _write_manifest(run_directory: Path, manifest: Dict[str, object]) -> None:
+    manifest_path = run_directory / MANIFEST_FILENAME
+    with manifest_path.open("w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, indent=2, sort_keys=True)
+
+
+def _normalize_generated_slicer_artifacts(
+    generated: object,
+    *,
+    process_data_path: Path,
+) -> Dict[str, object]:
+    if not isinstance(generated, dict):
+        raise WorkflowError(
+            "generate_settings() must return a mapping describing generated slicer artifacts."
+        )
+
+    machine_settings_path = generated.get("machine_settings_path")
+    process_settings_path = generated.get("process_settings_path")
+    filament_settings_paths = generated.get("filament_settings_paths", [])
+    print_host_path = generated.get("print_host_path")
+    used_master_settings_files = generated.get("used_master_settings_files", [])
+
+    normalized: Dict[str, object] = {
+        "machine_settings_path": str(
+            _ensure_path(machine_settings_path, "generated machine settings JSON")
+        ),
+        "process_settings_path": str(
+            _ensure_path(process_settings_path, "generated process settings JSON")
+        ),
+        "filament_settings_paths": [],
+        "print_host_path": None,
+        "used_master_settings_files": [],
+    }
+
+    if not isinstance(filament_settings_paths, list):
+        raise WorkflowError("filament_settings_paths must be a list of JSON paths.")
+    normalized["filament_settings_paths"] = [
+        str(
+            _ensure_path(
+                path, f"generated filament settings JSON for {process_data_path.name}"
+            )
+        )
+        for path in filament_settings_paths
+    ]
+
+    if print_host_path is not None:
+        normalized["print_host_path"] = str(
+            _ensure_path(print_host_path, "generated print host file")
+        )
+
+    if isinstance(used_master_settings_files, list):
+        normalized["used_master_settings_files"] = [
+            str(path) for path in used_master_settings_files
+        ]
+    else:
+        raise WorkflowError("used_master_settings_files must be a list.")
+
+    return normalized
 
 
 def _gather_filament_jsons(directory: Path) -> List[Path]:
@@ -667,6 +714,7 @@ def complete_workflow_run(
                     "obj_path": _resolve_manifest_path(
                         run_directory, entry.get("obj_path")
                     ),
+                    "manifest_entry": entry,
                 }
             )
 
@@ -793,6 +841,7 @@ def complete_workflow_run(
                     "part_path": resolved_part,
                     "process_path": resolved_process,
                     "obj_path": job.get("obj_path"),
+                    "manifest_entry": job.get("manifest_entry"),
                 }
             )
     else:
@@ -810,6 +859,7 @@ def complete_workflow_run(
                 "obj_path": _resolve_manifest_path(
                     run_directory, manifest.get("obj_path")
                 ),
+                "manifest_entry": None,
             }
         ]
 
@@ -881,7 +931,7 @@ def complete_workflow_run(
 
         _logger.info("Generating OrcaSlicer settings in %s", run_directory)
         try:
-            generate_settings(
+            generated_artifacts = generate_settings(
                 process_data_file=current_process_path,
                 output_dir=run_directory,
                 master_settings_dir=master_settings_dir,
@@ -891,11 +941,34 @@ def complete_workflow_run(
                 f"Failed to generate OrcaSlicer settings: {exc}"
             ) from exc
 
-        settings_files = _gather_jsons(run_directory)
-        filament_files = _resolve_current_filament_jsons(
-            directory=run_directory,
+        slicer_artifacts = _normalize_generated_slicer_artifacts(
+            generated_artifacts,
             process_data_path=current_process_path,
         )
+        settings_files = [
+            Path(str(slicer_artifacts["machine_settings_path"])),
+            Path(str(slicer_artifacts["process_settings_path"])),
+        ]
+        filament_files = [
+            Path(path)
+            for path in slicer_artifacts["filament_settings_paths"]
+            if isinstance(path, str)
+        ]
+        slicer_manifest_data: Dict[str, object] = {
+            "machine_settings_path": str(settings_files[0]),
+            "process_settings_path": str(settings_files[1]),
+            "filament_settings_paths": [str(path) for path in filament_files],
+            "print_host_path": slicer_artifacts.get("print_host_path"),
+            "used_master_settings_files": slicer_artifacts.get(
+                "used_master_settings_files", []
+            ),
+        }
+        manifest_entry = job.get("manifest_entry")
+        if isinstance(manifest_entry, dict):
+            manifest_entry["slicer"] = slicer_manifest_data
+        else:
+            manifest["slicer"] = slicer_manifest_data
+        _write_manifest(run_directory, manifest)
 
         if not settings_files:
             raise WorkflowError(
@@ -948,6 +1021,15 @@ def complete_workflow_run(
             previous_snapshot=gcode_snapshot_before,
         )
         preserved_gcode_paths.extend(preserved_paths)
+        if preserved_paths:
+            slicer_manifest_data["gcode_paths"] = [
+                str(path) for path in preserved_paths
+            ]
+            if isinstance(manifest_entry, dict):
+                manifest_entry["slicer"] = slicer_manifest_data
+            else:
+                manifest["slicer"] = slicer_manifest_data
+            _write_manifest(run_directory, manifest)
 
         preview_path = (
             run_directory
@@ -1011,6 +1093,14 @@ def complete_workflow_run(
                 _logger.info("Generated preview image: %s", preview_path)
             except Exception as exc:  # pragma: no cover - best effort
                 _logger.warning("Preview generation failed: %s", exc)
+
+        if preview_generated and preview_path.exists():
+            slicer_manifest_data["preview_path"] = str(preview_path)
+            if isinstance(manifest_entry, dict):
+                manifest_entry["slicer"] = slicer_manifest_data
+            else:
+                manifest["slicer"] = slicer_manifest_data
+            _write_manifest(run_directory, manifest)
 
     created_files = _list_created_files(run_directory)
     run_info = {}
