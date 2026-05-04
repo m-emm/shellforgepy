@@ -5276,7 +5276,7 @@ def _resolve_prototype_anchor_part(
             use_self_for_selected=True,
         )
     anchor = _import_dependency_part(Path(entries[0]["path"]).expanduser().resolve())
-    return _apply_placement_state_to_part(anchor, assembly_name, placement_state)
+    return anchor
 
 
 def _apply_prototype_configuration(
@@ -5292,6 +5292,9 @@ def _apply_prototype_configuration(
 ) -> List[Dict[str, Any]]:
     from shellforgepy.construct.alignment import Alignment
     from shellforgepy.geometry.keepouts import create_box_hole_cutter
+    from shellforgepy.produce.arrange_and_export import (
+        apply_production_orientation_to_part_entries,
+    )
     from shellforgepy.simple import align, translate
 
     production_section = _builder_section(
@@ -5322,8 +5325,12 @@ def _apply_prototype_configuration(
         or set()
     )
 
+    production_oriented_scene_parts = apply_production_orientation_to_part_entries(
+        scene_parts
+    )
+
     filtered_scene_parts: List[Dict[str, Any]] = []
-    for item in scene_parts:
+    for item in production_oriented_scene_parts:
         name = str(item.get("name"))
         if include_parts is not None and name not in include_parts:
             continue
@@ -5366,14 +5373,6 @@ def _apply_prototype_configuration(
         if around is None:
             raise BuilderError("Prototype box cutter requires 'around'")
         around_reference = str(_resolve_inline_value(around, context))
-        anchor_part = _resolve_prototype_anchor_part(
-            around_reference,
-            selected_assembly=selected_assembly,
-            built_results_by_name=built_results_by_name,
-            repository_dir=repository_dir,
-            placement_state=placement_state,
-            config_data=config_data,
-        )
 
         resolved_size = _resolve_inline_value(cutter_spec.get("size"), context)
         if not isinstance(resolved_size, (list, tuple)) or len(resolved_size) != 3:
@@ -5386,13 +5385,7 @@ def _apply_prototype_configuration(
         )
         cutter_size = float(_resolve_inline_value(resolved_cutter_size, context))
 
-        keep_volume = create_box_hole_cutter(
-            size[0],
-            size[1],
-            size[2],
-            cutter_size=cutter_size,
-        )
-        keep_volume = align(keep_volume, anchor_part, Alignment.CENTER)
+        resolved_offset = None
         if cutter_spec.get("offset") is not None:
             resolved_offset = _resolve_inline_value(cutter_spec.get("offset"), context)
             if (
@@ -5402,11 +5395,6 @@ def _apply_prototype_configuration(
                 raise BuilderError(
                     "Prototype box cutter offset must resolve to three values"
                 )
-            keep_volume = translate(
-                float(resolved_offset[0]),
-                float(resolved_offset[1]),
-                float(resolved_offset[2]),
-            )(keep_volume)
 
         for target_name in target_names:
             target_part = by_name.get(target_name)
@@ -5414,6 +5402,41 @@ def _apply_prototype_configuration(
                 raise BuilderError(
                     f"Prototype box cutter #{index + 1} targets unknown part '{target_name}'"
                 )
+            anchor_part = _resolve_prototype_anchor_part(
+                around_reference,
+                selected_assembly=selected_assembly,
+                built_results_by_name=built_results_by_name,
+                repository_dir=repository_dir,
+                placement_state=placement_state,
+                config_data=config_data,
+            )
+            oriented_anchor_part = apply_production_orientation_to_part_entries(
+                [
+                    {
+                        "name": f"{target_name} prototype anchor",
+                        "part": anchor_part,
+                        "flip": target_part.get("flip", False),
+                        "prod_rotation_angle": target_part.get("prod_rotation_angle"),
+                        "prod_rotation_axis": target_part.get("prod_rotation_axis"),
+                        "transform_history": [],
+                    }
+                ]
+            )[0]["part"]
+
+            keep_volume = create_box_hole_cutter(
+                size[0],
+                size[1],
+                size[2],
+                cutter_size=cutter_size,
+            )
+            keep_volume = align(keep_volume, oriented_anchor_part, Alignment.CENTER)
+            if resolved_offset is not None:
+                keep_volume = translate(
+                    float(resolved_offset[0]),
+                    float(resolved_offset[1]),
+                    float(resolved_offset[2]),
+                )(keep_volume)
+
             target_part["part"] = keep_volume.use_as_cutter_on(target_part["part"])
             transform_history = list(target_part.get("transform_history") or [])
             transform_history.append(
@@ -5941,39 +5964,35 @@ def _export_scene_for_assembly(
     )
 
     placement_start = perf_counter()
-    _logger.info("Applying %s scene placement", mode)
-
-    applied_placement = _apply_build_pool_runtime_placement(
-        scene_parts,
-        build_pool,
-    )
-    scene_parts = applied_placement.scene_parts
-    _logger.info(
-        "Applied %s scene placement in %.2fs for %d placed assembly(ies)",
-        mode,
-        perf_counter() - placement_start,
-        len(applied_placement.placed_assembly_names),
-    )
+    if production_mode:
+        placed_assembly_names = {
+            str(item["assembly_name"])
+            for item in scene_parts
+            if item.get("assembly_name") is not None
+        }
+        applied_placement = _AppliedPlacementResult(
+            scene_parts=scene_parts,
+            assembly_transforms={},
+            placed_assembly_names=placed_assembly_names,
+        )
+        _logger.info(
+            "Skipping assembly placement for production scene; print orientation uses canonical artifacts"
+        )
+    else:
+        _logger.info("Applying %s scene placement", mode)
+        applied_placement = _apply_build_pool_runtime_placement(
+            scene_parts,
+            build_pool,
+        )
+        scene_parts = applied_placement.scene_parts
+        _logger.info(
+            "Applied %s scene placement in %.2fs for %d placed assembly(ies)",
+            mode,
+            perf_counter() - placement_start,
+            len(applied_placement.placed_assembly_names),
+        )
 
     if bool(getattr(args, "prototype", False)):
-        if build_pool is not None:
-            placement_state = _placement_state_from_build_pool(
-                config_data,
-                built_results_by_name,
-                build_pool,
-                active_assembly_names=scene_assembly_names,
-            )
-        else:
-            placement_state = _initialize_placement_execution_state(
-                config_data,
-                built_results_by_name,
-                active_assembly_names=scene_assembly_names,
-            )
-            placement_state = _advance_placement_execution(
-                placement_state,
-                built_results_by_name=built_results_by_name,
-                repository_dir=repository_dir,
-            )
         scene_parts = _apply_prototype_configuration(
             scene_parts,
             selected_metadata=selected_metadata,
@@ -5981,7 +6000,7 @@ def _export_scene_for_assembly(
             selected_assembly=selected_assembly,
             built_results_by_name=built_results_by_name,
             repository_dir=repository_dir,
-            placement_state=placement_state,
+            placement_state=None,
             config_data=config_data,
         )
 

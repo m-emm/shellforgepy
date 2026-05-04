@@ -112,6 +112,9 @@ def _copy_transform_history(entry):
     return [deepcopy(dict(item)) for item in entry.get("transform_history", [])]
 
 
+_PRODUCTION_ORIENTATION_APPLIED_KEY = "_production_orientation_applied"
+
+
 def _append_transform_record(entry, record):
     history = _copy_transform_history(entry)
     history.append(deepcopy(dict(record)))
@@ -458,6 +461,81 @@ def _arrange_prepared_parts_on_bed(
     ]
 
 
+def _apply_production_orientation_to_part_entry(
+    part_entry,
+    *,
+    max_build_height=None,
+):
+    oriented_entry = dict(part_entry)
+    oriented_entry["name"] = str(oriented_entry["name"])
+    oriented_entry["transform_history"] = _copy_transform_history(part_entry)
+
+    shape = oriented_entry["part"]
+    if not oriented_entry.get(_PRODUCTION_ORIENTATION_APPLIED_KEY, False):
+        if oriented_entry.get("flip", False):
+            _logger.info("Flipping part '%s'", oriented_entry["name"])
+            shape = rotate_part(shape, angle=180, axis=(0, 1, 0))
+            oriented_entry["transform_history"].append(
+                {
+                    "kind": "rotate",
+                    "angle_deg": 180.0,
+                    "axis": [0.0, 1.0, 0.0],
+                    "center": [0.0, 0.0, 0.0],
+                }
+            )
+
+        if (
+            oriented_entry.get("prod_rotation_angle") is not None
+            and oriented_entry.get("prod_rotation_axis") is not None
+        ):
+            angle = oriented_entry["prod_rotation_angle"]
+            axis = oriented_entry["prod_rotation_axis"]
+            _logger.info(
+                "Rotating part '%s' by %s° around axis %s",
+                oriented_entry["name"],
+                angle,
+                axis,
+            )
+            shape = rotate_part(shape, angle=angle, axis=axis)
+            oriented_entry["transform_history"].append(
+                {
+                    "kind": "rotate",
+                    "angle_deg": float(angle),
+                    "axis": [float(value) for value in axis],
+                    "center": [0.0, 0.0, 0.0],
+                }
+            )
+        else:
+            _logger.info("No production rotation for part '%s'", oriented_entry["name"])
+
+    oriented_entry["part"] = shape
+    oriented_entry[_PRODUCTION_ORIENTATION_APPLIED_KEY] = True
+
+    if max_build_height is not None:
+        min_point, max_point = get_bounding_box(shape)
+        depth = max_point[2] - min_point[2]
+        if depth > max_build_height:
+            raise ValueError(
+                f"Part {oriented_entry['name']} exceeds max_build_height ({max_build_height} mm)"
+            )
+
+    return oriented_entry
+
+
+def apply_production_orientation_to_part_entries(
+    parts_list,
+    *,
+    max_build_height=None,
+):
+    return [
+        _apply_production_orientation_to_part_entry(
+            part_entry,
+            max_build_height=max_build_height,
+        )
+        for part_entry in parts_list
+    ]
+
+
 def _arrange_parts_for_production(
     parts_list,
     *,
@@ -475,59 +553,20 @@ def _arrange_parts_for_production(
     if bed_depth is None:
         bed_depth = bed_width  # assume square bed
 
-    # Prepare parts as rectangles with dimensions, applying production transformations
+    oriented_parts = apply_production_orientation_to_part_entries(
+        parts_list,
+        max_build_height=max_build_height,
+    )
+
     rects = []
-    for part_entry in parts_list:
+    for part_entry in oriented_parts:
         shape = part_entry["part"]
-        transform_history = _copy_transform_history(part_entry)
-
-        # Apply flip transformation if needed (180° rotation around Y-axis)
-        if part_entry.get("flip", False):
-            _logger.info(f"Flipping part '{part_entry['name']}'")
-            # Rotate 180° around Y-axis to flip for printing
-            shape = rotate_part(shape, angle=180, axis=(0, 1, 0))
-            transform_history.append(
-                {
-                    "kind": "rotate",
-                    "angle_deg": 180.0,
-                    "axis": [0.0, 1.0, 0.0],
-                    "center": [0.0, 0.0, 0.0],
-                }
-            )
-
-        # Apply production rotation if specified
-        if (
-            part_entry.get("prod_rotation_angle") is not None
-            and part_entry.get("prod_rotation_axis") is not None
-        ):
-            angle = part_entry["prod_rotation_angle"]
-            axis = part_entry["prod_rotation_axis"]
-            _logger.info(
-                f"Rotating part '{part_entry['name']}' by {angle}° around axis {axis}"
-            )
-            shape = rotate_part(shape, angle=angle, axis=axis)
-            transform_history.append(
-                {
-                    "kind": "rotate",
-                    "angle_deg": float(angle),
-                    "axis": [float(value) for value in axis],
-                    "center": [0.0, 0.0, 0.0],
-                }
-            )
-        else:
-            _logger.info(f"No production rotation for part '{part_entry['name']}'")
 
         # Get bounding box after transformations
         min_point, max_point = get_bounding_box(shape)
         width = max_point[0] - min_point[0]
         height = max_point[1] - min_point[1]
         depth = max_point[2] - min_point[2]
-
-        # Check build height constraints
-        if max_build_height is not None and depth > max_build_height:
-            raise ValueError(
-                f"Part {part_entry['name']} exceeds max_build_height ({max_build_height} mm)"
-            )
 
         rects.append(
             {
@@ -544,7 +583,7 @@ def _arrange_parts_for_production(
                 "source_version_inputs": deepcopy(
                     part_entry.get("source_version_inputs", {})
                 ),
-                "transform_history": transform_history,
+                "transform_history": _copy_transform_history(part_entry),
                 "obj_metadata": deepcopy(part_entry.get("obj_metadata")),
             }
         )
@@ -1095,14 +1134,9 @@ def arrange_and_export_parts(
 
     # Use production arrangement or simple positioning
     if prod:
-        # Use sophisticated production arrangement with flipping and rotation
-        arranged_parts = _arrange_parts_for_production(
+        arranged_parts = apply_production_orientation_to_part_entries(
             parts_list,
-            gap=prod_gap,
-            bed_width=bed_width,
             max_build_height=max_build_height,
-            verbose=verbose,
-            enforce_bed_size=enforce_bed_size,
         )
     else:
         arranged_parts = []

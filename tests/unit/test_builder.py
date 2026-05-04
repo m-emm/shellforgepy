@@ -2363,6 +2363,133 @@ def test_export_scene_for_assembly_passes_merged_plate_process_data_to_export(
     }
 
 
+def test_export_scene_for_assembly_skips_runtime_placement_in_production(
+    monkeypatch, tmp_path
+):
+    import os
+
+    resource_path = tmp_path / "holder.yaml"
+    resource_path.write_text(
+        "\n".join(
+            [
+                "Builder:",
+                "  Production:",
+                "    process_data:",
+                "      filament: petg",
+                "    parts:",
+                "      - source: self",
+                "        artifact: leader",
+                "        name: holder",
+                "        prod_rotation_angle: 90",
+                "        prod_rotation_axis: [0, 1, 0]",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    build_results = [
+        {
+            "assembly_name": "holder",
+            "artifact_dir": str(tmp_path / "repo" / "holder"),
+            "repository_dir": str(tmp_path / "repo"),
+            "resource_file": str(resource_path),
+            "public_parameters": {},
+            "generator_kwargs": {},
+            "generator_context": {},
+            "artifacts": {},
+        }
+    ]
+    build_pool = builder._BuildArtifactPool(["holder"])
+    build_pool.insert_available("holder", build_results[0], source="built")
+    build_pool.apply_runtime_transforms(
+        "holder",
+        [lambda part: f"{part}|placed"],
+        [{"kind": "rotate", "angle": 90.0, "axis": [0.0, 1.0, 0.0]}],
+        (0.0, 0.0, 0.0),
+    )
+
+    captured = {}
+
+    def fake_materialize_rule_parts(*args, **kwargs):
+        return [
+            {
+                "name": "holder",
+                "part": "holder-local",
+                "assembly_name": "holder",
+                "source_path": str(tmp_path / "repo" / "holder.step"),
+                "transform_history": [],
+                "prod_rotation_angle": 90,
+                "prod_rotation_axis": [0, 1, 0],
+            }
+        ]
+
+    def fake_arrange_and_export_parts(parts, *args, **kwargs):
+        captured["parts"] = [dict(part) for part in parts]
+        run_directory = Path(kwargs["export_directory"])
+        obj_path = run_directory / "holder.obj"
+        obj_path.write_text("# obj\n", encoding="utf-8")
+        manifest_path = Path(os.environ["SHELLFORGEPY_WORKFLOW_MANIFEST"])
+        manifest_path.write_text(json.dumps({"obj_path": str(obj_path)}))
+
+    monkeypatch.setattr(builder, "_materialize_rule_parts", fake_materialize_rule_parts)
+    monkeypatch.setattr(
+        builder,
+        "_materialize_placed_leaders_by_assembly",
+        lambda *args, **kwargs: {},
+    )
+    monkeypatch.setattr(builder, "_scene_metrics_assembly_names", lambda **kwargs: [])
+    monkeypatch.setattr(
+        builder,
+        "_combined_metrics_snapshot_for_results",
+        lambda build_results, assembly_names: None,
+    )
+    monkeypatch.setattr(
+        arrange_and_export_module,
+        "arrange_and_export_parts",
+        fake_arrange_and_export_parts,
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "get_config_path",
+        lambda override=None: tmp_path / "config.json",
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "load_config",
+        lambda path: {"render": {"enabled": False}},
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "complete_workflow_run",
+        lambda *args, **kwargs: 0,
+    )
+
+    result = builder._export_scene_for_assembly(
+        args=argparse.Namespace(
+            config=None,
+            run_id="test",
+            runs_dir=str(tmp_path / "runs"),
+            production=True,
+            slice=False,
+            upload=False,
+            visualize=True,
+            prototype=False,
+            verbose=False,
+            plate=None,
+        ),
+        config_data={"assemblies": [{"name": "holder"}]},
+        build_results=build_results,
+        selected_assembly="holder",
+        scene_assembly_names=["holder"],
+        build_pool=build_pool,
+    )
+
+    assert result == 0
+    assert captured["parts"][0]["part"] == "holder-local"
+    assert captured["parts"][0]["transform_history"] == []
+    assert captured["parts"][0]["prod_rotation_angle"] == 90
+
+
 def test_export_scene_for_assembly_uses_selected_assembly_for_export_base_name(
     monkeypatch, tmp_path
 ):
@@ -8406,3 +8533,84 @@ def test_apply_prototype_configuration_filters_and_clips_parts(monkeypatch, tmp_
         "alignment": simple.Alignment.CENTER,
         "offset": (1.0, 2.0, 3.0),
     }
+
+
+def test_apply_prototype_configuration_orients_anchor_like_target(
+    monkeypatch, tmp_path
+):
+    import shellforgepy.geometry.keepouts as keepouts
+    import shellforgepy.simple as simple
+
+    metadata = {
+        "assembly_name": "sample_assembly",
+        "public_parameters": {},
+        "generator_kwargs": {},
+        "generator_context": {"BIG_THING": 500},
+    }
+    resource_data = {
+        "Builder": {
+            "Production": {
+                "prototype": {
+                    "include_parts": ["hinge"],
+                    "box_cutters": [
+                        {
+                            "part": "hinge",
+                            "around": "self.non_production_parts.hinge_pin",
+                            "size": [10, 20, 30],
+                        }
+                    ],
+                }
+            }
+        }
+    }
+    scene_parts = [
+        {
+            "name": "hinge",
+            "part": "hinge-local",
+            "transform_history": [],
+            "prod_rotation_angle": 90,
+            "prod_rotation_axis": [0, 1, 0],
+        }
+    ]
+
+    class FakeKeepVolume:
+        def use_as_cutter_on(self, part):
+            return f"clipped:{part}"
+
+    captured = {}
+
+    def fake_rotate_part(part, *, angle, axis):
+        return f"rotated({part},{angle},{tuple(axis)})"
+
+    def fake_align(part, anchor, alignment):
+        captured["anchor"] = anchor
+        captured["alignment"] = alignment
+        return part
+
+    monkeypatch.setattr(arrange_and_export_module, "rotate_part", fake_rotate_part)
+    monkeypatch.setattr(
+        keepouts,
+        "create_box_hole_cutter",
+        lambda *args, **kwargs: FakeKeepVolume(),
+    )
+    monkeypatch.setattr(simple, "align", fake_align)
+    monkeypatch.setattr(
+        builder,
+        "_resolve_prototype_anchor_part",
+        lambda *args, **kwargs: "anchor-local",
+    )
+
+    prototype_parts = builder._apply_prototype_configuration(
+        scene_parts,
+        selected_metadata=metadata,
+        selected_resource_data=resource_data,
+        selected_assembly="sample_assembly",
+        built_results_by_name={"sample_assembly": metadata},
+        repository_dir=tmp_path,
+        placement_state=None,
+        config_data=None,
+    )
+
+    assert prototype_parts[0]["part"] == "clipped:rotated(hinge-local,90,(0, 1, 0))"
+    assert captured["anchor"] == "rotated(anchor-local,90,(0, 1, 0))"
+    assert captured["alignment"] == simple.Alignment.CENTER
