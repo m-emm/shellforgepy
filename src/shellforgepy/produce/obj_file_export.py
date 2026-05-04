@@ -1,3 +1,4 @@
+import json
 from typing import Dict, Mapping, Optional, Sequence, Tuple
 
 
@@ -30,13 +31,66 @@ def _animation_to_xyz(vector) -> tuple[float, float, float]:
     return (float(vector[0]), float(vector[1]), float(vector[2]))
 
 
+def _normalize_animation_comment_payload(animation_entry):
+    if isinstance(animation_entry, Mapping):
+        animation_type = str(animation_entry.get("type", "")).strip().lower()
+        if animation_type != "rotation":
+            raise ValueError(
+                "animation mapping entries must use type='rotation' when exporting OBJ comments"
+            )
+
+        normalized = {
+            "type": "rotation",
+            "axis": list(_animation_to_xyz(animation_entry.get("axis"))),
+            "angle_degrees": float(animation_entry.get("angle_degrees")),
+        }
+
+        if "center" in animation_entry:
+            center = animation_entry.get("center")
+            if len(center) == 3:
+                try:
+                    normalized["center"] = list(_animation_to_xyz(center))
+                except (TypeError, ValueError):
+                    normalized["center"] = [
+                        str(component).upper() for component in center
+                    ]
+            else:
+                normalized["center"] = [str(component).upper() for component in center]
+        elif "center_alignments" in animation_entry:
+            normalized["center"] = [
+                str(component).upper()
+                for component in animation_entry.get("center_alignments")
+            ]
+        elif "origin" in animation_entry:
+            normalized["center"] = list(
+                _animation_to_xyz(animation_entry.get("origin"))
+            )
+        elif "origin_anchor" in animation_entry:
+            normalized["center"] = [
+                str(component).upper()
+                for component in animation_entry.get("origin_anchor")
+            ]
+
+        return normalized
+
+    return _animation_to_xyz(animation_entry)
+
+
 def _write_animation_comments(file_obj, animation) -> None:
     if not animation:
         return
 
-    for animation_key, vector in animation.items():
-        x, y, z = _animation_to_xyz(vector)
-        file_obj.write(f"# shellforgepy_anim {animation_key} {x} {y} {z}\n")
+    for animation_key, entry in animation.items():
+        normalized = _normalize_animation_comment_payload(entry)
+        if isinstance(normalized, tuple):
+            x, y, z = normalized
+            file_obj.write(f"# shellforgepy_anim {animation_key} {x} {y} {z}\n")
+        else:
+            file_obj.write(
+                "# shellforgepy_anim "
+                f"{animation_key} "
+                f"{json.dumps(normalized, separators=(',', ':'), sort_keys=True)}\n"
+            )
 
 
 def _normalize_hierarchy_value(value) -> str:

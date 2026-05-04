@@ -23,7 +23,16 @@ def test_part_list_add_and_as_list():
         "cube",
         prod_rotation_angle=45.0,
         prod_rotation_axis=(0, 1, 0),
-        animation={"x_axis": (220, 0, 0), "z": (0, 0, 200)},
+        animation={
+            "x_axis": (220, 0, 0),
+            "z": (0, 0, 200),
+            "lid_open": {
+                "type": "rotation",
+                "axis": (1, 0, 0),
+                "angle_degrees": 90,
+                "center": ("BACK", "BOTTOM"),
+            },
+        },
     )
 
     follower = translate(5, 0, 0)(create_box(1, 1, 1))
@@ -37,6 +46,12 @@ def test_part_list_add_and_as_list():
     assert cube_entry["animation"] == {
         "x_axis": [220.0, 0.0, 0.0],
         "z": [0.0, 0.0, 200.0],
+        "lid_open": {
+            "type": "rotation",
+            "axis": [1.0, 0.0, 0.0],
+            "angle_degrees": 90.0,
+            "center_alignments": ["back", "bottom"],
+        },
     }
     assert cube_entry["part"] is not None  # Just check it exists
 
@@ -55,6 +70,28 @@ def test_part_list_animation_validation_raises():
 
     with pytest.raises(ValueError, match="animation vector"):
         plist.add(shape, "part", animation={"x": (1, 2)})
+
+
+def test_part_list_rotation_animation_requires_single_center_definition():
+    plist = PartList()
+    shape = create_box(1, 1, 1)
+
+    with pytest.raises(
+        ValueError, match="exactly one center, origin, or origin_anchor field"
+    ):
+        plist.add(
+            shape,
+            "part",
+            animation={
+                "lid_open": {
+                    "type": "rotation",
+                    "axis": (1, 0, 0),
+                    "angle_degrees": 90,
+                    "center": (0, 0, 0),
+                    "origin": (0, 0, 0),
+                }
+            },
+        )
 
 
 def test_leader_followers_translate_and_rotate():

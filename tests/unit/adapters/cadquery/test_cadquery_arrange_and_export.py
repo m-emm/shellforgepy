@@ -304,6 +304,45 @@ def test_arrange_and_export_writes_obj_animation_comments():
 
 
 @pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
+def test_arrange_and_export_writes_obj_rotation_animation_comments():
+    """Rotation animation metadata from PartList should be serialized into the OBJ file."""
+    part_list = PartList()
+    box = create_box(10, 10, 10)
+    part_list.add(
+        box,
+        "lid",
+        animation={
+            "lid_open": {
+                "type": "rotation",
+                "axis": (1, 0, 0),
+                "angle_degrees": 90,
+                "center": ("BACK", "BOTTOM"),
+            }
+        },
+    )
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        arrange_and_export_parts(
+            part_list,
+            prod_gap=2.0,
+            bed_width=50.0,
+            script_file="test_anim_rotation.py",
+            export_directory=temp_dir,
+        )
+
+        obj_path = Path(temp_dir) / "test_anim_rotation.obj"
+        assert obj_path.exists()
+
+        with obj_path.open() as f:
+            obj_content = f.read()
+
+        assert (
+            '# shellforgepy_anim lid_open {"angle_degrees":90.0,"axis":[1.0,0.0,0.0],'
+            '"center":["BACK","BOTTOM"],"type":"rotation"}'
+        ) in obj_content
+
+
+@pytest.mark.skipif(not cadquery_available, reason="CadQuery not available")
 def test_arrange_and_export_obj_only_skips_fusion(monkeypatch):
     """OBJ-only exports should not instantiate the fusion collector."""
     import shellforgepy.produce.arrange_and_export as arrange_and_export_module

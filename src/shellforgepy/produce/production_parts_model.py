@@ -17,7 +17,7 @@ class PartInfo:
     prod_rotation_angle: Optional[float] = None
     prod_rotation_axis: Optional[Tuple[float, float, float]] = None
     color: Optional[Tuple[float, float, float]] = None  # RGB tuple (0.0-1.0)
-    animation: Optional[dict[str, Tuple[float, float, float]]] = None
+    animation: Optional[dict[str, Any]] = None
 
 
 def _normalize_xyz_tuple(value, *, field_name: str) -> Tuple[float, float, float]:
@@ -26,18 +26,107 @@ def _normalize_xyz_tuple(value, *, field_name: str) -> Tuple[float, float, float
     return tuple(float(component) for component in value)
 
 
-def _normalize_animation(animation) -> Optional[dict[str, Tuple[float, float, float]]]:
+def _normalize_alignment_list(value, *, field_name: str) -> tuple[str, ...]:
+    if not value:
+        raise ValueError(f"{field_name} must contain at least one alignment value")
+
+    allowed_values = {"left", "right", "front", "back", "bottom", "top", "center"}
+    normalized = tuple(str(component).strip().lower() for component in value)
+    for index, component in enumerate(normalized):
+        if component not in allowed_values:
+            raise ValueError(
+                f"{field_name}[{index}] must be one of {sorted(allowed_values)}"
+            )
+    return normalized
+
+
+def _normalize_rotation_center(value, *, field_name: str):
+    if len(value) == 3:
+        try:
+            return _normalize_xyz_tuple(value, field_name=field_name)
+        except (TypeError, ValueError):
+            pass
+
+    return _normalize_alignment_list(value, field_name=field_name)
+
+
+def _normalize_animation_entry(value, *, field_name: str):
+    if hasattr(value, "items"):
+        animation_type = str(value.get("type", "")).strip().lower()
+        if animation_type != "rotation":
+            raise ValueError(
+                f"{field_name} must be an XYZ vector or a rotation animation"
+            )
+
+        center_field_names = [
+            key for key in ("center", "origin", "origin_anchor") if key in value
+        ]
+        if len(center_field_names) != 1:
+            raise ValueError(
+                f"{field_name} rotation must define exactly one center, origin, or origin_anchor field"
+            )
+
+        normalized = {
+            "type": "rotation",
+            "axis": _normalize_xyz_tuple(
+                value.get("axis"), field_name=f"{field_name} axis"
+            ),
+            "angle_degrees": float(value.get("angle_degrees")),
+        }
+
+        if "center" in value:
+            center = _normalize_rotation_center(
+                value.get("center"), field_name=f"{field_name} center"
+            )
+            if (
+                isinstance(center, tuple)
+                and len(center) == 3
+                and all(isinstance(component, float) for component in center)
+            ):
+                normalized["center"] = center
+            else:
+                normalized["center_alignments"] = center
+        elif "origin" in value:
+            normalized["center"] = _normalize_xyz_tuple(
+                value.get("origin"), field_name=f"{field_name} origin"
+            )
+        else:
+            normalized["center_alignments"] = _normalize_alignment_list(
+                value.get("origin_anchor"),
+                field_name=f"{field_name} origin_anchor",
+            )
+
+        return normalized
+
+    return _normalize_xyz_tuple(value, field_name=field_name)
+
+
+def _serialize_animation_entry(value):
+    if hasattr(value, "items"):
+        serialized = {}
+        for key, item_value in value.items():
+            if isinstance(item_value, tuple):
+                serialized[key] = list(item_value)
+            else:
+                serialized[key] = item_value
+        return serialized
+    return list(value)
+
+
+def _normalize_animation(animation) -> Optional[dict[str, Any]]:
     if animation is None:
         return None
     if not hasattr(animation, "items"):
-        raise ValueError("animation must be a dict of animation key to XYZ vector")
+        raise ValueError(
+            "animation must be a dict of animation key to XYZ vector or rotation animation"
+        )
 
-    normalized_animation: dict[str, Tuple[float, float, float]] = {}
-    for key, vector in animation.items():
+    normalized_animation: dict[str, Any] = {}
+    for key, value in animation.items():
         if not isinstance(key, str) or not key:
             raise ValueError("animation keys must be non-empty strings")
-        normalized_animation[key] = _normalize_xyz_tuple(
-            vector, field_name=f"animation vector for '{key}'"
+        normalized_animation[key] = _normalize_animation_entry(
+            value, field_name=f"animation vector for '{key}'"
         )
     return normalized_animation
 
@@ -111,7 +200,10 @@ class PartList:
                 ),
                 "color": (list(info.color) if info.color is not None else None),
                 "animation": (
-                    {key: list(vector) for key, vector in info.animation.items()}
+                    {
+                        key: _serialize_animation_entry(value)
+                        for key, value in info.animation.items()
+                    }
                     if info.animation is not None
                     else None
                 ),

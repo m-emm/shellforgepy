@@ -238,6 +238,50 @@ def test_export_colored_meshes_to_obj_writes_animation_comments():
         ) < obj_content.index("\nv 0.0 0.0 0.0")
 
 
+def test_export_colored_meshes_to_obj_writes_rotation_animation_comments():
+    """OBJ writer should emit JSON metadata for rotation animations."""
+    from shellforgepy.produce.obj_file_export import export_colored_meshes_to_obj
+
+    vertices = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+        ],
+        dtype=float,
+    )
+    triangles = np.array([[0, 1, 2]], dtype=np.int32)
+    meshes = [
+        (
+            vertices,
+            triangles,
+            "lid",
+            (0.1, 0.2, 0.3),
+            {
+                "lid_open": {
+                    "type": "rotation",
+                    "axis": (1, 0, 0),
+                    "angle_degrees": 90,
+                    "center": ("BACK", "BOTTOM"),
+                }
+            },
+        )
+    ]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        obj_path = os.path.join(tmpdir, "animated_rotation.obj")
+
+        export_colored_meshes_to_obj(meshes, obj_path)
+
+        with open(obj_path) as f:
+            obj_content = f.read()
+
+        assert (
+            '# shellforgepy_anim lid_open {"angle_degrees":90.0,"axis":[1.0,0.0,0.0],'
+            '"center":["BACK","BOTTOM"],"type":"rotation"}'
+        ) in obj_content
+
+
 def test_export_colored_meshes_to_obj_writes_hierarchy_comments():
     """OBJ writer should emit hierarchy comments when provided."""
     from shellforgepy.produce.obj_file_export import export_colored_meshes_to_obj

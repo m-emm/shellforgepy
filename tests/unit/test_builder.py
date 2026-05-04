@@ -4180,6 +4180,63 @@ def test_materialize_rule_parts_resolves_animation_from_metadata_context(
     assert parts[0]["animation"] == {"bed_y": [0, 325, 0]}
 
 
+def test_materialize_rule_parts_resolves_rotation_animation_from_metadata_context(
+    monkeypatch, tmp_path
+):
+    leader_step = tmp_path / "lid.step"
+    leader_step.write_text("lid", encoding="utf-8")
+
+    metadata = {
+        "assembly_name": "creality_psu",
+        "public_parameters": {"lid_open_angle": 90},
+        "generator_kwargs": {},
+        "generator_context": {"BIG_THING": 500},
+        "artifacts": {"leader_step": str(leader_step)},
+    }
+    resource_data = {
+        "Builder": {
+            "Visualization": {
+                "parts": [
+                    {
+                        "source": "self",
+                        "artifact": "leader",
+                        "name": "lid",
+                        "animation": {
+                            "lid_open": {
+                                "type": "rotation",
+                                "axis": [1, 0, 0],
+                                "angle_degrees": {"$ref": "lid_open_angle"},
+                                "center": ["BACK", "BOTTOM"],
+                            }
+                        },
+                    }
+                ]
+            }
+        }
+    }
+
+    monkeypatch.setattr(builder, "_import_dependency_part", lambda path: f"part:{path}")
+
+    parts = builder._materialize_rule_parts(
+        metadata,
+        resource_data,
+        "visualization",
+        {"creality_psu": metadata},
+        tmp_path,
+        None,
+    )
+
+    assert len(parts) == 1
+    assert parts[0]["animation"] == {
+        "lid_open": {
+            "type": "rotation",
+            "axis": [1, 0, 0],
+            "angle_degrees": 90,
+            "center": ["BACK", "BOTTOM"],
+        }
+    }
+
+
 def test_materialize_rule_parts_attaches_obj_metadata_for_assembly_grouping(
     monkeypatch, tmp_path
 ):
