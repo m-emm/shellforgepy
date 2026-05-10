@@ -9,6 +9,7 @@ from shellforgepy.adapters._adapter import (
     tesellate,
 )
 from shellforgepy.geometry.modifications import (
+    create_convex_hull,
     find_planar_surface_features,
     fit_part_between,
     orient_for_flatness,
@@ -427,6 +428,27 @@ def test_transform_with_function_tesselating_affine_transform():
     assert np.allclose(max_point, (5.0, -2.0, 4.5), atol=1e-6)
     assert np.allclose(size, (4.0, 3.0, 4.0), atol=1e-6)
     assert np.isclose(get_volume(transformed), original_volume * 2.0, rtol=1e-3)
+
+
+def test_create_convex_hull_single_box():
+    box = create_box(2, 3, 4)
+
+    hull = create_convex_hull(box)
+
+    assert np.allclose(get_bounding_box_size(hull), (2, 3, 4), atol=1e-6)
+    assert np.isclose(get_volume(hull), get_volume(box), rtol=1e-3)
+
+
+def test_create_convex_hull_bridges_separate_boxes():
+    box = create_box(2, 2, 2)
+    shifted_box = translate(4, 0, 0)(box)
+
+    hull = create_convex_hull(box, shifted_box)
+
+    min_point, max_point = get_bounding_box(hull)
+    assert np.allclose(min_point, (0, 0, 0), atol=1e-6)
+    assert np.allclose(max_point, (6, 2, 2), atol=1e-6)
+    assert np.isclose(get_volume(hull), 24.0, rtol=1e-3)
 
 
 def test_find_planar_surface_features_box():

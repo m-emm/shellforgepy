@@ -97,6 +97,38 @@ def normalize(v):
     return v / n if n > 0 else v
 
 
+def shortest_arc_axis_angle(a, b):
+    """
+    Return the shortest rotation from vector ``a`` to vector ``b``.
+
+    Returns:
+        tuple[np.ndarray, float]: Rotation axis and angle in degrees.
+    """
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+
+    if np.linalg.norm(a) <= 0 or np.linalg.norm(b) <= 0:
+        raise ValueError("Cannot calculate shortest arc for a zero-length vector")
+
+    a = normalize(a)
+    b = normalize(b)
+    dot = np.clip(np.dot(a, b), -1.0, 1.0)
+
+    if dot > 1.0 - 1e-12:
+        return np.array([1.0, 0.0, 0.0]), 0.0
+
+    if dot < -1.0 + 1e-12:
+        axis = (
+            np.array([1.0, 0.0, 0.0]) if abs(a[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+        )
+        axis = normalize(axis - a * np.dot(a, axis))
+        return axis, 180.0
+
+    axis = normalize(np.cross(a, b))
+    angle = float(np.degrees(np.arccos(dot)))
+    return axis, angle
+
+
 def are_normals_similar(n1: np.ndarray, n2: np.ndarray, tol: float = 1e-3) -> bool:
     """
     Checks if two normals are nearly aligned (dot product close to 1.0).

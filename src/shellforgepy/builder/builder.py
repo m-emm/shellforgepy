@@ -6294,7 +6294,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Rebuild even when a matching hashed metadata file already exists.",
+        help="Rebuild even when a matching hashed metadata file already exists. Makes everything very slow, use sparingly - the cache is usually correct.",
     )
     parser.add_argument(
         "--visualize",

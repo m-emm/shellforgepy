@@ -12,6 +12,7 @@ from shellforgepy.construct.construct_utils import (
     point_in_polygon_2d,
     point_sequence_interpolator_in_arc_length,
     select_uniform_cylindrical_vertices,
+    shortest_arc_axis_angle,
     split_triangle_topologically,
     triangle_edges,
 )
@@ -68,6 +69,33 @@ def test_split_triangle_topologically_one_edge_split():
         if edge == normalize_edge(0, 1):
             continue  # the original edge was split; its pieces shouldn't reappear
         assert count in (1, 2)
+
+
+def test_shortest_arc_axis_angle_right_angle():
+    axis, angle = shortest_arc_axis_angle((1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+
+    assert np.allclose(axis, (0.0, 0.0, 1.0))
+    assert math.isclose(angle, 90.0)
+
+
+def test_shortest_arc_axis_angle_aligned():
+    axis, angle = shortest_arc_axis_angle((2.0, 0.0, 0.0), (4.0, 0.0, 0.0))
+
+    assert np.allclose(axis, (1.0, 0.0, 0.0))
+    assert math.isclose(angle, 0.0)
+
+
+def test_shortest_arc_axis_angle_opposite():
+    axis, angle = shortest_arc_axis_angle((1.0, 0.0, 0.0), (-1.0, 0.0, 0.0))
+
+    assert math.isclose(np.linalg.norm(axis), 1.0)
+    assert math.isclose(float(np.dot(axis, (1.0, 0.0, 0.0))), 0.0, abs_tol=1e-12)
+    assert math.isclose(angle, 180.0)
+
+
+def test_shortest_arc_axis_angle_rejects_zero_vectors():
+    with pytest.raises(ValueError):
+        shortest_arc_axis_angle((0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
 
 
 def test_split_triangle_topologically_two_edge_split():

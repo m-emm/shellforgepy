@@ -56,6 +56,7 @@ from shellforgepy.construct.construct_utils import (
     normalize,
     point_sequence_interpolator_in_arc_length,
     point_string,
+    shortest_arc_axis_angle,
 )
 from shellforgepy.construct.leader_followers_cutters_part import (
     LeaderFollowersCuttersPart,
@@ -115,6 +116,7 @@ from shellforgepy.geometry.mesh_utils import (
     write_stl_binary,
 )
 from shellforgepy.geometry.modifications import (
+    create_convex_hull,
     cut_in_two,
     fit_part_between,
     orient_for_flatness,
@@ -221,6 +223,7 @@ __all__ = [
     "create_triangular_prism_geometry",
     "create_triangular_prism",
     "create_conical_head_screw",
+    "create_convex_hull",
     "cut_in_two",
     "deserialize_structured_step",
     "directed_box_at",
@@ -269,6 +272,7 @@ __all__ = [
     "reset_to_original_orientation",
     "rotate",
     "scale",
+    "shortest_arc_axis_angle",
     "slice_part",
     "stack_alignment_of",
     "step_cached",

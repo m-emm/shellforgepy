@@ -18,8 +18,9 @@ from shellforgepy.construct.bounding_box_helpers import bottom_bounding_box_poin
 from shellforgepy.construct.construct_utils import (
     fibonacci_sphere,
     normalize,
-    rotation_matrix_from_vectors,
+    shortest_arc_axis_angle,
 )
+from shellforgepy.geometry.mesh_utils import convert_to_traditional_face_vertex_maps
 from shellforgepy.geometry.spherical_tools import (
     coordinate_system_transform,
     coordinate_system_transform_to_matrix,
@@ -358,33 +359,11 @@ def orient_for_flatness(part, samples=100, z_rotation_samples=8):
         up_current = direction / np.linalg.norm(direction)
         up_target = np.array([0, 0, 1])
 
-        # Use rotation_matrix_from_vectors to get the rotation
-        R = rotation_matrix_from_vectors(up_current, up_target)
-
-        # Convert to axis-angle representation for rotate_part
-        # Extract axis and angle from rotation matrix
-        trace = np.trace(R)
-        angle_rad = np.arccos(np.clip((trace - 1) / 2, -1, 1))
-
-        if angle_rad < 1e-6:
+        axis, angle_deg = shortest_arc_axis_angle(up_current, up_target)
+        if angle_deg < 1e-6:
             # No rotation needed, direction is already aligned with Z
             primarily_oriented_part = part
         else:
-            # Extract rotation axis
-            if np.isclose(angle_rad, np.pi):
-                # Special case for 180-degree rotation
-                # Find eigenvector with eigenvalue 1
-                eigenvals, eigenvecs = np.linalg.eigh(R)
-                axis = eigenvecs[:, np.isclose(eigenvals, 1)].flatten()
-            else:
-                # General case
-                axis = np.array(
-                    [R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]]
-                ) / (2 * np.sin(angle_rad))
-
-            axis = axis / np.linalg.norm(axis)
-            angle_deg = np.degrees(angle_rad)
-
             # Apply primary rotation
             primarily_oriented_part = rotate(angle_deg, axis=tuple(axis))(part)
 
@@ -739,7 +718,7 @@ def orient_max_planar_area(
             )
             break
         if optimize_bed_adhesion_area or optimize_bed_adhesion_extent:
-            axis, angle_deg = _shortest_arc_axis_angle(normal, down_vector)
+            axis, angle_deg = shortest_arc_axis_angle(normal, down_vector)
             rotated_part = (
                 part if angle_deg < 1e-12 else rotate(angle_deg, axis=tuple(axis))(part)
             )
@@ -768,7 +747,7 @@ def orient_max_planar_area(
             elif optimize_bed_adhesion_extent:
                 best_part = rotated_part
             else:
-                axis, angle_deg = _shortest_arc_axis_angle(normal, down_vector)
+                axis, angle_deg = shortest_arc_axis_angle(normal, down_vector)
                 best_part = (
                     part
                     if angle_deg < 1e-12
@@ -838,34 +817,79 @@ def transform_with_function_tesselating(part, transform_function):
     return retval
 
 
+def create_convex_hull(*parts, dedupe_decimals=12):
+    """
+    Create a convex hull solid around one or more parts.
+
+    The implementation is adapter-agnostic: it tessellates the supplied parts,
+    calculates a numeric convex hull from the tessellated vertices, then rebuilds
+    the result through ``create_solid_from_traditional_face_vertex_maps``.
+    """
+    if not parts:
+        raise ValueError("create_convex_hull requires at least one part")
+
+    unique_vertices = {}
+    for part in parts:
+        vertices, triangles = tesellate(part)
+        if not triangles:
+            continue
+        for vertex in vertices:
+            point = _vertex_to_array(vertex)
+            key = tuple(np.round(point, dedupe_decimals))
+            if key not in unique_vertices:
+                unique_vertices[key] = point
+
+    hull_points = np.array(list(unique_vertices.values()), dtype=np.float64)
+    if len(hull_points) < 4:
+        raise ValueError(
+            "At least four non-coplanar points are required for a convex hull"
+        )
+
+    hull = ConvexHull(hull_points)
+    hull_center = np.mean(hull_points[hull.vertices], axis=0)
+
+    faces = []
+    for simplex in hull.simplices:
+        a, b, c = (
+            hull_points[simplex[0]],
+            hull_points[simplex[1]],
+            hull_points[simplex[2]],
+        )
+        normal = np.cross(b - a, c - a)
+        face_center = (a + b + c) / 3.0
+        if np.dot(normal, face_center - hull_center) < 0:
+            faces.append((int(simplex[0]), int(simplex[2]), int(simplex[1])))
+        else:
+            faces.append(tuple(int(index) for index in simplex))
+
+    return create_solid_from_traditional_face_vertex_maps(
+        convert_to_traditional_face_vertex_maps(hull_points, faces)
+    )
+
+
 # ---------------------------
 # Geometry on the sphere S^2
 # ---------------------------
 
 
-def _unit(v):
-    n = np.linalg.norm(v)
-    return v if n == 0 else (v / n)
-
-
 def _tangent_basis(u):
     """Return two orthonormal tangent vectors at unit u."""
-    u = _unit(u)
+    u = normalize(u)
     a = np.array([1.0, 0.0, 0.0]) if abs(u[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
-    t1 = _unit(np.cross(u, a))
+    t1 = normalize(np.cross(u, a))
     t2 = np.cross(u, t1)  # already unit if u,t1 unit and orthogonal
     return t1, t2
 
 
 def _exp_map(u, v_tan):
     """Exponential map at u: v_tan is tangent (3D), ||v_tan|| = step (radians)."""
-    u = _unit(u)
+    u = normalize(u)
     theta = np.linalg.norm(v_tan)
     if theta < 1e-15:
         return u
     k = v_tan / theta
     # exp_u(v) = cos(theta) u + sin(theta) k
-    return _unit(np.cos(theta) * u + np.sin(theta) * k)
+    return normalize(np.cos(theta) * u + np.sin(theta) * k)
 
 
 def _geodesic_point(u, dir_tan_unit, t):
@@ -878,24 +902,9 @@ def _geodesic_point(u, dir_tan_unit, t):
 # ---------------------------
 
 
-def _shortest_arc_axis_angle(a, b):
-    a = _unit(a)
-    b = _unit(b)
-    dot = np.clip(np.dot(a, b), -1.0, 1.0)
-    if dot > 1 - 1e-12:
-        return np.array([1, 0, 0]), 0.0
-    if dot < -1 + 1e-12:
-        axis = np.array([1, 0, 0]) if abs(a[0]) < 0.9 else np.array([0, 1, 0])
-        axis = _unit(axis - a * np.dot(a, axis))
-        return axis, 180.0
-    axis = _unit(np.cross(a, b))
-    ang = np.degrees(np.arccos(dot))
-    return axis, ang
-
-
 def _align_u_to_Z(part, u):
     """Rotate part so that direction u maps to +Z; return rotated part."""
-    axis, ang = _shortest_arc_axis_angle(u, np.array([0.0, 0.0, 1.0]))
+    axis, ang = shortest_arc_axis_angle(u, np.array([0.0, 0.0, 1.0]))
     if ang < 1e-12:
         return part
     return rotate(ang, axis=tuple(axis))(part)
@@ -914,7 +923,7 @@ class HeightOracle:
         self.num_calls = 0
 
     def _key(self, u):
-        u = _unit(u)
+        u = normalize(u)
         return tuple(np.round(u, 8))  # quantize for cache hits
 
     def h(self, u):
@@ -967,7 +976,7 @@ def _grad_spsa(oracle, u, c_rad=np.deg2rad(0.8), rng=None):
     t1, t2 = _tangent_basis(u)
     xi1 = 1 if rng.random() < 0.5 else -1
     xi2 = 1 if rng.random() < 0.5 else -1
-    v = _unit(xi1 * t1 + xi2 * t2)  # random tangent unit
+    v = normalize(xi1 * t1 + xi2 * t2)  # random tangent unit
     u_p = _exp_map(u, v * c_rad)
     u_m = _exp_map(u, -v * c_rad)
     f_p = oracle.h(u_p)
@@ -989,7 +998,7 @@ def _golden_section_line_search(
     Minimize phi(t) = h(exp_u(t * dir_hat)) for t in [t_lo, t_hi].
     dir_tan can be any nonzero tangent vector.
     """
-    dir_hat = _unit(dir_tan)
+    dir_hat = normalize(dir_tan)
     phi = lambda t: oracle.h(_geodesic_point(u, dir_hat, t))
 
     gr = (np.sqrt(5) - 1) / 2  # ~0.618
@@ -1052,7 +1061,7 @@ def orient_for_flatness_riemannian(
     seeds = list(fib_sphere(coarse_samples))
     for _ in range(random_starts):
         v = rng.normal(size=3)
-        v = _unit(v)
+        v = normalize(v)
         seeds.append(v)
 
     # Evaluate seeds and keep a handful of best as starts
@@ -1072,7 +1081,7 @@ def orient_for_flatness_riemannian(
     total_iters = 0
 
     for u0 in starts:
-        u = _unit(u0)
+        u = normalize(u0)
         h_curr = oracle.h(u)
         if logger:
             logger.info(f"[start] h={h_curr:.6f}  u={u}")
@@ -1095,8 +1104,8 @@ def orient_for_flatness_riemannian(
                 break
 
             # Update along geodesic
-            u = _geodesic_point(u, _unit(d), t_star)
-            u = _unit(u)
+            u = _geodesic_point(u, normalize(d), t_star)
+            u = normalize(u)
             h_curr = h_next
             history.append((h_curr, u))
             if logger:
@@ -1188,19 +1197,14 @@ def cut_in_two(part, cut_point=None, cut_normal=None, cut_thickness=0):
     top_cutter = translate(-cutter_size / 2, -cutter_size / 2, -cutter_size)(top_cutter)
     top_cutter = translate(0, 0, cutter_size)(top_cutter)
 
-    normal_unit = normal / np.linalg.norm(normal)
+    normal_unit = normalize(normal)
     z_axis = np.array((0.0, 0.0, 1.0))
-    cos_angle = np.dot(z_axis, normal_unit)
-    cos_angle = max(-1.0, min(1.0, cos_angle))
-    angle = math.degrees(math.acos(cos_angle))
+    axis, angle = shortest_arc_axis_angle(z_axis, normal_unit)
 
     if abs(angle) > 1e-6:
-        axis = np.cross(z_axis, normal_unit)
-        axis_length = np.linalg.norm(axis)
-        if axis_length > 1e-6:
-            axis_vector = tuple(axis / axis_length)
-            cutter = rotate(angle, axis=axis_vector)(cutter)
-            top_cutter = rotate(angle, axis=axis_vector)(top_cutter)
+        axis_vector = tuple(axis)
+        cutter = rotate(angle, axis=axis_vector)(cutter)
+        top_cutter = rotate(angle, axis=axis_vector)(top_cutter)
 
     cutter = translate(point[0], point[1], point[2])(cutter)
     top_cutter = translate(point[0], point[1], point[2])(top_cutter)
