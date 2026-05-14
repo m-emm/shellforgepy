@@ -433,18 +433,31 @@ def create_ring(
     direction=(0.0, 0.0, 1.0),
     angle: Optional[float] = None,
 ):
-    """Create a ring (hollow cylinder) using CadQuery.
+    """Create a ring or partial ring.
+
+    With the default ``origin=(0, 0, 0)`` and ``direction=(0, 0, 1)``, the ring
+    lies in the XY plane and extends from ``z=0`` to ``z=height``. Partial rings
+    start on the positive X axis: an ``angle=0`` radial edge points toward
+    ``(outer_radius, 0, z)``, and positive sweep angles turn counterclockwise
+    toward positive Y.
+
+    Example:
+        ``create_ring(outer_radius=10, inner_radius=5, height=2, angle=90)``
+        creates a quarter ring in the +X/+Y quadrant. Its straight radial sides
+        lie on the +X axis and +Y axis, and its Z extent is from ``0`` to ``2``.
 
     Args:
-        outer_radius: Outer radius of the ring
-        inner_radius: Inner radius of the ring (must be less than outer_radius)
-        height: Height of the ring
-        origin: Origin point as (x, y, z), defaults to (0, 0, 0)
-        direction: Direction vector as (x, y, z), defaults to (0, 0, 1)
-        angle: Optional angle in degrees for partial ring
+        outer_radius: Outer radius of the ring.
+        inner_radius: Inner radius of the ring. Must be less than
+            ``outer_radius``.
+        height: Height of the ring along ``direction``.
+        origin: Base center of the full ring's coordinate system.
+        direction: Extrusion direction for the ring height.
+        angle: Optional sweep angle in degrees for a partial ring. ``None``
+            creates a full 360 degree ring.
 
     Returns:
-        solid representing the ring
+        Solid representing the ring.
     """
     if outer_radius <= inner_radius:
         raise ValueError("Outer radius must be greater than inner radius")
@@ -457,6 +470,63 @@ def create_ring(
 
     # Cut inner from outer to create ring
     return outer_cyl.cut(inner_cyl)
+
+
+def create_rounded_ends_ring(outer_radius, inner_radius, thickness, angle):
+    """Create a partial ring with rounded ends.
+
+    The provided ``angle`` is the sweep of the straight-sided ring segment
+    before the rounded end caps are added. With the default orientation used by
+    ``create_ring``, the segment lies in the XY plane, starts on the positive X
+    axis, and positive sweep angles turn counterclockwise toward positive Y. The
+    part extends from ``z=0`` to ``z=thickness``.
+
+    The rounded caps are full cylinders with radius
+    ``(outer_radius - inner_radius) / 2``. Their centers sit on the ring
+    centerline at the zero-angle end and at the requested sweep angle.
+
+    Example:
+        ``create_rounded_ends_ring(outer_radius=14, inner_radius=10,
+        thickness=1, angle=90)`` creates a rounded quarter ring in the +X/+Y
+        quadrant. One cap is centered at ``(12, 0, 0)``, the other at
+        ``(0, 12, 0)``, and the solid extends from ``z=0`` to ``z=1``.
+    """
+    if inner_radius < 0:
+        raise ValueError("Inner radius must be non-negative")
+    if outer_radius <= inner_radius:
+        raise ValueError("Outer radius must be greater than inner radius")
+    if thickness <= 0:
+        raise ValueError("Thickness must be positive")
+    if angle <= 0 or angle >= 360:
+        raise ValueError("Angle must be between 0 and 360 degrees")
+
+    ring_width = outer_radius - inner_radius
+    cap_radius = ring_width / 2.0
+    centerline_radius = inner_radius + cap_radius
+    end_angle = math.radians(angle)
+
+    ring = create_ring(
+        outer_radius=outer_radius,
+        inner_radius=inner_radius,
+        height=thickness,
+        angle=angle,
+    )
+    start_cap = create_cylinder(
+        cap_radius,
+        thickness,
+        origin=(centerline_radius, 0.0, 0.0),
+    )
+    end_cap = create_cylinder(
+        cap_radius,
+        thickness,
+        origin=(
+            centerline_radius * math.cos(end_angle),
+            centerline_radius * math.sin(end_angle),
+            0.0,
+        ),
+    )
+
+    return ring.fuse(start_cap).fuse(end_cap)
 
 
 def create_ring_segment_between_points(

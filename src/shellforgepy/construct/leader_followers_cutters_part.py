@@ -274,6 +274,32 @@ class LeaderFollowersCuttersPart:
     def get_named_cutter(self, name):
         return self.get_cutter_part_by_name(name)
 
+    def aligned_from_cutter(self, name, to, alignment, axes=None, stack_gap=0):
+        """Return an aligned copy using a named cutter."""
+
+        return self.align_translation_from_cutter(
+            name,
+            to,
+            alignment,
+            axes=axes,
+            stack_gap=stack_gap,
+        )(self)
+
+    def align_translation_from_cutter(
+        self, name, to, alignment, axes=None, stack_gap=0
+    ):
+        """Create an alignment translation using a named cutter."""
+
+        from shellforgepy.construct.alignment_operations import align_translation
+
+        return align_translation(
+            self.get_cutter_part_by_name(name),
+            to,
+            alignment,
+            axes=axes,
+            stack_gap=stack_gap,
+        )
+
     def get_non_production_index_by_name(self, name):
         """Get the index of a named non-production part.
 

@@ -12,6 +12,7 @@ from shellforgepy.geometry.higher_order_solids import (
     create_right_triangle,
     create_ring,
     create_ring_segment_between_points,
+    create_rounded_ends_ring,
     create_rounded_slab,
     create_screw_thread,
     directed_box_at,
@@ -403,6 +404,63 @@ def test_create_ring():
         assert False, "Should have raised ValueError"
     except ValueError:
         pass
+
+
+def test_create_rounded_ends_ring_adds_end_caps():
+    outer_radius = 14.0
+    inner_radius = 10.0
+    thickness = 1.0
+    angle = 30.0
+    cap_radius = (outer_radius - inner_radius) / 2.0
+    centerline_radius = inner_radius + cap_radius
+
+    rounded_ring = create_rounded_ends_ring(
+        outer_radius=outer_radius,
+        inner_radius=inner_radius,
+        thickness=thickness,
+        angle=angle,
+    )
+    base_ring = create_ring(
+        outer_radius=outer_radius,
+        inner_radius=inner_radius,
+        height=thickness,
+        angle=angle,
+    )
+
+    assert rounded_ring is not None
+    assert get_volume(rounded_ring) > get_volume(base_ring)
+
+    bb_min, bb_max = get_bounding_box(rounded_ring)
+    end_angle = math.radians(angle)
+
+    assert np.isclose(bb_min[0], centerline_radius * math.cos(end_angle) - cap_radius)
+    assert np.isclose(bb_max[0], outer_radius)
+    assert np.isclose(bb_min[1], -cap_radius)
+    assert np.isclose(
+        bb_max[1],
+        centerline_radius * math.sin(end_angle) + cap_radius,
+    )
+    assert np.isclose(bb_min[2], 0.0)
+    assert np.isclose(bb_max[2], thickness)
+
+
+def test_create_rounded_ends_ring_validates_inputs():
+    with pytest.raises(ValueError):
+        create_rounded_ends_ring(
+            outer_radius=10, inner_radius=-1, thickness=1, angle=30
+        )
+    with pytest.raises(ValueError):
+        create_rounded_ends_ring(
+            outer_radius=10, inner_radius=10, thickness=1, angle=30
+        )
+    with pytest.raises(ValueError):
+        create_rounded_ends_ring(outer_radius=10, inner_radius=8, thickness=0, angle=30)
+    with pytest.raises(ValueError):
+        create_rounded_ends_ring(outer_radius=10, inner_radius=8, thickness=1, angle=0)
+    with pytest.raises(ValueError):
+        create_rounded_ends_ring(
+            outer_radius=10, inner_radius=8, thickness=1, angle=360
+        )
 
 
 def test_create_ring_segment_between_points_xy_plane_alignment():
