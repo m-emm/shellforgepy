@@ -8,6 +8,8 @@ import logging
 import os
 import zipfile
 from copy import deepcopy
+from fnmatch import fnmatchcase
+from functools import lru_cache
 from os import PathLike
 from pathlib import Path
 
@@ -158,30 +160,111 @@ def _mesh_cache_root(mesh_cache_dir=None):
     return cache_root
 
 
-def _render_signature_payload(part_entry, *, tolerance, angular_tolerance):
+def _step_geometry_payload_bytes(data: bytes) -> bytes:
+    data_marker = data.upper().find(b"DATA;")
+    if data_marker == -1:
+        return data
+    return data[data_marker:]
+
+
+@lru_cache(maxsize=4096)
+def _source_artifact_signature_for_stat(
+    source_path: str, size_bytes: int, mtime_ns: int
+):
+    path = Path(source_path)
+    data = path.read_bytes()
+    suffix = path.suffix.lower()
+    if suffix in {".step", ".stp"}:
+        payload = _step_geometry_payload_bytes(data)
+        algorithm = "step-data-sha256"
+    else:
+        payload = data
+        algorithm = "file-sha256"
+    return {
+        "algorithm": algorithm,
+        "payload_size_bytes": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
+
+
+def _source_artifact_signature(source_path):
+    if not source_path:
+        return None
+    path = Path(source_path).expanduser()
+    try:
+        resolved_path = path.resolve()
+        stat_result = resolved_path.stat()
+    except OSError:
+        return None
+    if not resolved_path.is_file():
+        return None
+    return _source_artifact_signature_for_stat(
+        str(resolved_path),
+        int(stat_result.st_size),
+        int(stat_result.st_mtime_ns),
+    )
+
+
+def _legacy_render_source_identity(part_entry):
     source_path = part_entry.get("source_path")
     source_parameter_hash = part_entry.get("source_parameter_hash")
     if not source_path and not source_parameter_hash:
+        return None
+    return {
+        "source_path": str(source_path) if source_path else None,
+        "source_parameter_hash": source_parameter_hash,
+        "source_version_inputs": _normalize_signature_value(
+            part_entry.get("source_version_inputs", {})
+        ),
+    }
+
+
+def _render_source_identity(part_entry, *, use_source_artifact_signature=True):
+    source_path = part_entry.get("source_path")
+    if use_source_artifact_signature:
+        artifact_signature = _source_artifact_signature(source_path)
+        if artifact_signature is not None:
+            return {"source_artifact": _normalize_signature_value(artifact_signature)}
+    return _legacy_render_source_identity(part_entry)
+
+
+def _render_signature_payload(
+    part_entry,
+    *,
+    tolerance,
+    angular_tolerance,
+    use_source_artifact_signature=True,
+):
+    source_identity = _render_source_identity(
+        part_entry,
+        use_source_artifact_signature=use_source_artifact_signature,
+    )
+    if source_identity is None:
         return None
     return {
         "adapter_id": adapter_get_adapter_id(),
         "export_format": "obj_mesh",
         "tolerance": _normalize_signature_value(tolerance),
         "angular_tolerance": _normalize_signature_value(angular_tolerance),
-        "source_path": str(source_path) if source_path else None,
-        "source_parameter_hash": source_parameter_hash,
-        "source_version_inputs": _normalize_signature_value(
-            part_entry.get("source_version_inputs", {})
-        ),
+        **source_identity,
         "transform_history": _canonical_transform_history(
             part_entry.get("transform_history", [])
         ),
     }
 
 
-def _render_signature(part_entry, *, tolerance, angular_tolerance):
+def _render_signature(
+    part_entry,
+    *,
+    tolerance,
+    angular_tolerance,
+    use_source_artifact_signature=True,
+):
     payload = _render_signature_payload(
-        part_entry, tolerance=tolerance, angular_tolerance=angular_tolerance
+        part_entry,
+        tolerance=tolerance,
+        angular_tolerance=angular_tolerance,
+        use_source_artifact_signature=use_source_artifact_signature,
     )
     if payload is None:
         return None, None
@@ -273,6 +356,24 @@ def _build_colored_meshes(
             )
             if signature is not None:
                 cached_mesh = _load_cached_mesh(cache_root, signature)
+                if cached_mesh is None:
+                    legacy_signature, _ = _render_signature(
+                        entry,
+                        tolerance=tolerance,
+                        angular_tolerance=angular_tolerance,
+                        use_source_artifact_signature=False,
+                    )
+                    if legacy_signature is not None and legacy_signature != signature:
+                        cached_mesh = _load_cached_mesh(cache_root, legacy_signature)
+                        if cached_mesh is not None and payload is not None:
+                            vertices, triangles, _ = cached_mesh
+                            _store_cached_mesh(
+                                cache_root,
+                                signature,
+                                vertices,
+                                triangles,
+                                payload,
+                            )
 
         if cached_mesh is not None:
             vertices, triangles, _ = cached_mesh
@@ -613,6 +714,7 @@ def _split_parts_into_plates(
         declared_plates: Optional declarative plate specification. Supports:
             - [{"name": "plate_a", "parts": ["part_1", "part_2"]}, ...]
             - {"plate_a": ["part_1", "part_2"], "plate_b": ["part_3"]}
+            Part names may use shell-style wildcards, e.g. "bracket_*".
         auto_assign_plates: If True, unassigned parts are packed onto auto-generated
             plates using a greedy first-fit decreasing shelf heuristic.
     """
@@ -646,16 +748,29 @@ def _split_parts_into_plates(
 
             plate_parts = []
             for part_name in part_names:
-                if part_name not in by_name:
+                part_name = str(part_name)
+                if any(char in part_name for char in "*?["):
+                    matched_names = [
+                        name for name in sorted(by_name) if fnmatchcase(name, part_name)
+                    ]
+                    if not matched_names:
+                        raise ValueError(
+                            f"Plate '{plate_name}' pattern '{part_name}' matched no parts"
+                        )
+                elif part_name in by_name:
+                    matched_names = [part_name]
+                else:
                     raise ValueError(
                         f"Plate '{plate_name}' references unknown part '{part_name}'"
                     )
-                if part_name in assigned_names:
-                    raise ValueError(
-                        f"Part '{part_name}' is assigned to multiple declared plates"
-                    )
-                assigned_names.add(part_name)
-                plate_parts.append(by_name[part_name])
+
+                for matched_name in matched_names:
+                    if matched_name in assigned_names:
+                        raise ValueError(
+                            f"Part '{matched_name}' is assigned to multiple declared plates"
+                        )
+                    assigned_names.add(matched_name)
+                    plate_parts.append(by_name[matched_name])
             if plate_parts:
                 plates.append((plate_name, plate_parts))
 

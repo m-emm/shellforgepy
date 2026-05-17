@@ -40,6 +40,36 @@ def test_split_parts_into_declared_plates_and_auto_assignment():
     ]
 
 
+def test_split_parts_into_declared_plates_accepts_wildcard_part_names():
+    arranged_parts = [
+        {"name": "elko_sleeve_plate_1", "width": 20, "height": 20},
+        {"name": "elko_sleeve_plate_2", "width": 20, "height": 20},
+        {"name": "side_walls", "width": 80, "height": 80},
+    ]
+
+    plates = _split_parts_into_plates(
+        arranged_parts,
+        declared_plates=[
+            {
+                "name": "board_holder_elko_sleeve_plates",
+                "parts": ["elko_sleeve_plate_*"],
+            },
+            {"name": "board_holder_side_walls", "parts": ["side_walls"]},
+        ],
+        auto_assign_plates=False,
+        gap=5.0,
+    )
+
+    assert [name for name, _ in plates] == [
+        "board_holder_elko_sleeve_plates",
+        "board_holder_side_walls",
+    ]
+    assert [[part["name"] for part in members] for _, members in plates] == [
+        ["elko_sleeve_plate_1", "elko_sleeve_plate_2"],
+        ["side_walls"],
+    ]
+
+
 def test_split_parts_into_auto_plates_spills_when_next_part_no_longer_fits():
     arranged_parts = [
         {"name": "large", "width": 70, "height": 70},
@@ -478,6 +508,126 @@ def test_arrange_and_export_uses_four_millimeter_default_gap(monkeypatch):
 
     assert result == "ok"
     assert captured["prod_gap"] == pytest.approx(4.0)
+
+
+def test_render_signature_uses_step_data_hash_for_source_artifacts(tmp_path):
+    first_step = tmp_path / "first.step"
+    second_step = tmp_path / "second.step"
+    changed_step = tmp_path / "changed.step"
+    first_step.write_text(
+        "ISO-10303-21;\n"
+        "HEADER;\n"
+        "FILE_NAME('shape','2026-05-15T13:17:36',('Author'),('Open CASCADE'),"
+        "'processor','system','Unknown');\n"
+        "ENDSEC;\n"
+        "DATA;\n"
+        "#1 = CARTESIAN_POINT('',(1.0,2.0,3.0));\n"
+        "ENDSEC;\n"
+        "END-ISO-10303-21;\n",
+        encoding="utf-8",
+    )
+    second_step.write_text(
+        first_step.read_text(encoding="utf-8").replace(
+            "2026-05-15T13:17:36", "2026-05-15T13:21:06"
+        ),
+        encoding="utf-8",
+    )
+    changed_step.write_text(
+        first_step.read_text(encoding="utf-8").replace(
+            "(1.0,2.0,3.0)", "(1.0,2.0,4.0)"
+        ),
+        encoding="utf-8",
+    )
+
+    base_entry = {
+        "name": "box",
+        "part": "shape-1",
+        "source_parameter_hash": "old-build-hash",
+        "source_version_inputs": {"generator_source_sha256": "old-source"},
+        "transform_history": [{"kind": "translate", "vector": [1.0, 2.0, 3.0]}],
+    }
+    first_signature, first_payload = _render_signature(
+        {**base_entry, "source_path": str(first_step)},
+        tolerance=0.1,
+        angular_tolerance=0.1,
+    )
+    second_signature, second_payload = _render_signature(
+        {
+            **base_entry,
+            "source_path": str(second_step),
+            "source_parameter_hash": "new-build-hash",
+            "source_version_inputs": {"generator_source_sha256": "new-source"},
+        },
+        tolerance=0.1,
+        angular_tolerance=0.1,
+    )
+    changed_signature, _ = _render_signature(
+        {**base_entry, "source_path": str(changed_step)},
+        tolerance=0.1,
+        angular_tolerance=0.1,
+    )
+
+    assert first_signature == second_signature
+    assert changed_signature != first_signature
+    assert "source_artifact" in first_payload
+    assert first_payload["source_artifact"] == second_payload["source_artifact"]
+
+
+def test_build_colored_meshes_migrates_legacy_mesh_cache(monkeypatch, tmp_path):
+    import shellforgepy.produce.arrange_and_export as arrange_and_export_module
+
+    monkeypatch.setattr(
+        arrange_and_export_module,
+        "adapter_tesellate",
+        lambda *args, **kwargs: pytest.fail("legacy cache should be reused"),
+    )
+    monkeypatch.setattr(
+        arrange_and_export_module, "adapter_get_adapter_id", lambda: "test-adapter"
+    )
+
+    source_step = tmp_path / "source.step"
+    source_step.write_text(
+        "ISO-10303-21;\nHEADER;\nFILE_NAME('shape','now',(),(),'','','');\n"
+        "ENDSEC;\nDATA;\n#1 = CARTESIAN_POINT('',(1.0,2.0,3.0));\n"
+        "ENDSEC;\nEND-ISO-10303-21;\n",
+        encoding="utf-8",
+    )
+    part_entry = {
+        "name": "box",
+        "part": "shape-1",
+        "source_path": str(source_step),
+        "source_parameter_hash": "abc123",
+        "source_version_inputs": {"resource_sha256": "deadbeef"},
+        "transform_history": [{"kind": "translate", "vector": [1.0, 2.0, 3.0]}],
+    }
+    legacy_signature, legacy_payload = _render_signature(
+        part_entry,
+        tolerance=0.1,
+        angular_tolerance=0.1,
+        use_source_artifact_signature=False,
+    )
+    new_signature, _ = _render_signature(
+        part_entry,
+        tolerance=0.1,
+        angular_tolerance=0.1,
+    )
+    assert legacy_signature != new_signature
+
+    np.savez_compressed(
+        tmp_path / f"{legacy_signature}.npz",
+        vertices=np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+        triangles=np.asarray([[0, 1, 2]], dtype=np.int64),
+    )
+    (tmp_path / f"{legacy_signature}.json").write_text(
+        json.dumps(legacy_payload),
+        encoding="utf-8",
+    )
+
+    meshes = _build_colored_meshes([part_entry], mesh_cache_dir=tmp_path)
+
+    assert len(meshes) == 1
+    assert (tmp_path / f"{new_signature}.npz").exists()
+    assert (tmp_path / f"{new_signature}.json").exists()
 
 
 def test_build_colored_meshes_recovers_from_truncated_cache(

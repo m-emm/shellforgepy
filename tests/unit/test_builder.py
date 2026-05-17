@@ -6358,6 +6358,74 @@ def test_build_from_file_builds_declarative_composite_assembly_from_injected_ass
     )
 
 
+def test_build_from_file_allows_wildcard_composite_name_filters(monkeypatch, tmp_path):
+    package_name = "declarative_composite_wildcard_demo_pkg"
+    composite_lines = [
+        "Parts:",
+        "  Composite:",
+        "    Type: Shellforgepy::Assembly",
+        "    Properties:",
+        "      Composite:",
+        "        Leader:",
+        "          Fused:",
+        "            - source: injected",
+        "              assembly: left",
+        "              artifact: leader",
+        "        Followers:",
+        "          - source: injected",
+        "            assembly: left",
+        "            artifact: followers",
+        "            names:",
+        "              - gui*",
+        "            name_template: '{name}'",
+        "          - source: injected",
+        "            assembly: right",
+        "            artifact: followers",
+        "            exclude_names:",
+        "              - flang*",
+        "            name_template: 'right_{index}'",
+    ]
+    config_path, _ = _write_declarative_composite_demo_project(
+        tmp_path,
+        package_name=package_name,
+        composite_resource_lines=composite_lines,
+    )
+    _install_geometry_builder_io(monkeypatch)
+    _clear_demo_package(monkeypatch, package_name)
+
+    results = builder.build_from_file(config_path)
+
+    composite_result = next(
+        result for result in results if result["assembly_name"] == "composite"
+    )
+    composite_part = builder._import_dependency_assembly(composite_result)
+    assert sorted(composite_part.follower_indices_by_name) == ["guide", "right_1"]
+
+
+def test_scene_artifact_filters_allow_wildcard_names():
+    entries = [
+        {"name": "elko_sleeve_plate_1"},
+        {"name": "elko_sleeve_plate_2"},
+        {"name": "tpu_cover"},
+        {"name": None},
+    ]
+
+    included = builder._filter_artifact_entries(
+        entries,
+        {"names": ["elko_sleeve_plate_*"]},
+    )
+    excluded = builder._filter_artifact_entries(
+        entries,
+        {"exclude_names": ["elko_sleeve_plate_*"]},
+    )
+
+    assert [entry["name"] for entry in included] == [
+        "elko_sleeve_plate_1",
+        "elko_sleeve_plate_2",
+    ]
+    assert [entry["name"] for entry in excluded] == ["tpu_cover", None]
+
+
 def test_build_from_file_rebuilds_composite_when_composite_spec_changes_but_not_for_visualization_changes(
     monkeypatch, tmp_path
 ):

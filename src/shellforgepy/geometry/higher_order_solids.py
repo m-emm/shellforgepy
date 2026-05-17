@@ -222,6 +222,9 @@ def directed_cylinder_at(
     height,
 ):
     """Create a cylinder oriented along ``direction`` starting at ``base_point``.
+    Note: This is an advance function, mainly to be used for free geometry creation.
+    For most orthogonal-style use cases, it's better to create a regular cylinder and then
+    orient it using the alignment operations in ``shellforgepy.construct.alignment_operations``.
 
     Args:
         base_point: XYZ coordinates of the cylinder's base centre in millimetres.

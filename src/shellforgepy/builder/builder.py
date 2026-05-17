@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 from pathlib import Path
 from time import perf_counter, time
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
@@ -1472,11 +1473,25 @@ def _filter_runtime_composite_entries(
     include_names = selector.get("names")
     exclude_names = selector.get("exclude_names")
     if include_names is not None:
-        include_set = {str(item) for item in include_names}
-        filtered = [entry for entry in filtered if entry.get("name") in include_set]
+        include_patterns = [str(item) for item in include_names]
+        filtered = [
+            entry
+            for entry in filtered
+            if entry.get("name") is not None
+            and any(
+                fnmatchcase(str(entry["name"]), pattern) for pattern in include_patterns
+            )
+        ]
     if exclude_names is not None:
-        exclude_set = {str(item) for item in exclude_names}
-        filtered = [entry for entry in filtered if entry.get("name") not in exclude_set]
+        exclude_patterns = [str(item) for item in exclude_names]
+        filtered = [
+            entry
+            for entry in filtered
+            if entry.get("name") is None
+            or not any(
+                fnmatchcase(str(entry["name"]), pattern) for pattern in exclude_patterns
+            )
+        ]
     return filtered
 
 
@@ -3188,9 +3203,14 @@ def _filter_artifact_entries(
     filtered: List[Dict[str, Any]] = []
     for entry in entries:
         name = entry.get("name")
-        if include_set is not None and str(name) not in include_set:
+        if include_set is not None and (
+            name is None
+            or not any(fnmatchcase(str(name), pattern) for pattern in include_set)
+        ):
             continue
-        if name is not None and str(name) in exclude_set:
+        if name is not None and any(
+            fnmatchcase(str(name), pattern) for pattern in exclude_set
+        ):
             continue
         filtered.append(dict(entry))
     return filtered
