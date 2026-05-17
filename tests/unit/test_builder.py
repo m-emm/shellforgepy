@@ -6426,6 +6426,125 @@ def test_scene_artifact_filters_allow_wildcard_names():
     assert [entry["name"] for entry in excluded] == ["tpu_cover", None]
 
 
+def test_materialize_production_rule_expands_num_copies(monkeypatch, tmp_path):
+    source_path = tmp_path / "component.step"
+    source_path.write_text("step", encoding="utf-8")
+    imported_part = {"source": "component"}
+    copied_parts = []
+
+    monkeypatch.setattr(
+        builder,
+        "_import_dependency_part",
+        lambda path: imported_part,
+    )
+
+    def fake_copy_part(part):
+        copied = {"copy_of": part}
+        copied_parts.append(copied)
+        return copied
+
+    monkeypatch.setattr(builder, "copy_part", fake_copy_part)
+
+    scene_parts = builder._materialize_rule_parts(
+        {
+            "assembly_name": "component_assembly",
+            "artifacts": {"leader_step": str(source_path)},
+            "parameter_hash": "abc123",
+            "version_inputs": {},
+        },
+        {
+            "Builder": {
+                "Production": {
+                    "parts": [
+                        {
+                            "source": "self",
+                            "artifact": "leader",
+                            "name": "component",
+                            "num_copies": 3,
+                        }
+                    ]
+                }
+            }
+        },
+        "production",
+        {},
+        tmp_path,
+    )
+
+    assert [part["name"] for part in scene_parts] == [
+        "component",
+        "component_copy_2",
+        "component_copy_3",
+    ]
+    assert [part["copy_index"] for part in scene_parts] == [1, 2, 3]
+    assert [part["copy_source_name"] for part in scene_parts] == [
+        "component",
+        "component",
+        "component",
+    ]
+    assert scene_parts[0]["part"] is imported_part
+    assert scene_parts[1]["part"] is copied_parts[0]
+    assert scene_parts[2]["part"] is copied_parts[1]
+
+
+def test_scene_rules_use_production_section_num_copies_as_default():
+    metadata = {
+        "artifacts": {"leader_step": "component.step"},
+        "public_parameters": {"num_copies": 3},
+    }
+    resource_data = {
+        "Builder": {
+            "Production": {
+                "num_copies": {"$ref": "num_copies"},
+                "parts": [
+                    {
+                        "source": "self",
+                        "artifact": "leader",
+                        "name": "component",
+                    }
+                ],
+            }
+        }
+    }
+
+    rules = builder._scene_rules_for_mode(metadata, resource_data, "production")
+
+    assert rules == [
+        {
+            "source": "self",
+            "artifact": "leader",
+            "name": "component",
+            "num_copies": {"$ref": "num_copies"},
+        }
+    ]
+
+    assert (
+        builder._normalize_scene_num_copies(
+            rules[0],
+            builder._metadata_resolution_context(metadata),
+        )
+        == 3
+    )
+
+
+def test_declared_plate_parts_expand_exact_copy_source_names():
+    plates = [{"name": "component_plate", "parts": ["component"]}]
+    scene_parts = [
+        {"name": "component", "copy_source_name": "component"},
+        {"name": "component_copy_2", "copy_source_name": "component"},
+        {"name": "component_copy_3", "copy_source_name": "component"},
+    ]
+
+    expanded = builder._expand_declared_plate_parts_for_copies(plates, scene_parts)
+
+    assert expanded == [
+        {
+            "name": "component_plate",
+            "parts": ["component", "component_copy_2", "component_copy_3"],
+        }
+    ]
+
+
 def test_build_from_file_rebuilds_composite_when_composite_spec_changes_but_not_for_visualization_changes(
     monkeypatch, tmp_path
 ):

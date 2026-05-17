@@ -2947,10 +2947,17 @@ def _scene_rules_for_mode(
     section = _builder_section(resource_data, section_name, config_data)
     parts = section.get("parts")
     if parts is None:
-        return _default_scene_rules(metadata, mode)
-    if not isinstance(parts, list):
-        raise BuilderError(f"Builder.{section_name}.parts must be a list")
-    return [dict(item) for item in parts]
+        rules = _default_scene_rules(metadata, mode)
+    else:
+        if not isinstance(parts, list):
+            raise BuilderError(f"Builder.{section_name}.parts must be a list")
+        rules = [dict(item) for item in parts]
+
+    section_num_copies = section.get("num_copies")
+    if mode == "production" and section_num_copies is not None:
+        for rule in rules:
+            rule.setdefault("num_copies", section_num_copies)
+    return rules
 
 
 def _artifact_entries_for_selector(
@@ -3533,6 +3540,109 @@ def _format_scene_name(
     return str(rule.get("name") or default_name)
 
 
+def _normalize_scene_num_copies(
+    rule: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> int:
+    raw_num_copies = rule.get("num_copies", 1)
+    resolved_num_copies = _resolve_inline_value(raw_num_copies, context)
+
+    if isinstance(resolved_num_copies, bool):
+        raise BuilderError("Scene rule num_copies must be a positive integer")
+    if isinstance(resolved_num_copies, int):
+        num_copies = resolved_num_copies
+    elif isinstance(resolved_num_copies, float) and resolved_num_copies.is_integer():
+        num_copies = int(resolved_num_copies)
+    elif isinstance(resolved_num_copies, str):
+        try:
+            num_copies = int(resolved_num_copies.strip())
+        except ValueError as exc:
+            raise BuilderError(
+                "Scene rule num_copies must be a positive integer"
+            ) from exc
+    else:
+        raise BuilderError("Scene rule num_copies must be a positive integer")
+
+    if num_copies < 1:
+        raise BuilderError("Scene rule num_copies must be at least 1")
+    return num_copies
+
+
+def _copy_scene_part_for_plate(
+    scene_part: Mapping[str, Any],
+    *,
+    copy_index: int,
+    copy_count: int,
+) -> Dict[str, Any]:
+    base_name = str(scene_part["name"])
+    copied = dict(scene_part)
+    copied["part"] = (
+        scene_part["part"] if copy_index == 1 else copy_part(scene_part["part"])
+    )
+    copied["copy_index"] = copy_index
+    copied["copy_count"] = copy_count
+    copied["copy_source_name"] = base_name
+    if copy_index > 1:
+        copied["name"] = f"{base_name}_copy_{copy_index}"
+        copied["allow_duplicate_source_path"] = True
+        copied["obj_metadata"] = deepcopy(scene_part.get("obj_metadata"))
+        if isinstance(copied["obj_metadata"], Mapping):
+            copied["obj_metadata"] = {
+                **dict(copied["obj_metadata"]),
+                "copy_index": copy_index,
+                "copy_count": copy_count,
+                "copy_source_name": base_name,
+            }
+    return copied
+
+
+def _expand_declared_plate_parts_for_copies(
+    plates: Any,
+    scene_parts: Sequence[Mapping[str, Any]],
+) -> Any:
+    if not plates:
+        return plates
+
+    copies_by_source_name: Dict[str, List[str]] = {}
+    for part in scene_parts:
+        source_name = part.get("copy_source_name")
+        part_name = part.get("name")
+        if source_name is None or part_name is None:
+            continue
+        copies_by_source_name.setdefault(str(source_name), []).append(str(part_name))
+
+    if not copies_by_source_name:
+        return plates
+
+    def expand_part_names(part_names: Any) -> List[str]:
+        expanded: List[str] = []
+        for raw_part_name in list(part_names or []):
+            part_name = str(raw_part_name)
+            if any(char in part_name for char in "*?["):
+                expanded.append(part_name)
+            else:
+                expanded.extend(copies_by_source_name.get(part_name, [part_name]))
+        return list(dict.fromkeys(expanded))
+
+    if isinstance(plates, Mapping):
+        return {
+            str(plate_name): expand_part_names(part_names)
+            for plate_name, part_names in plates.items()
+        }
+    if isinstance(plates, list):
+        expanded_plates = []
+        for plate in plates:
+            if not isinstance(plate, Mapping):
+                expanded_plates.append(plate)
+                continue
+            expanded_plate = dict(plate)
+            if "parts" in expanded_plate:
+                expanded_plate["parts"] = expand_part_names(expanded_plate["parts"])
+            expanded_plates.append(expanded_plate)
+        return expanded_plates
+    return plates
+
+
 def _assembly_group_label(assembly_name: str) -> str:
     if assembly_name.endswith("_assembly"):
         return assembly_name[: -len("_assembly")]
@@ -3694,45 +3804,52 @@ def _materialize_rule_parts(
                 )
                 if transform_record is not None:
                     transform_history.append(transform_record)
-                scene_parts.append(
-                    {
-                        "name": _format_scene_name(entry, rule),
-                        "part": part,
+                base_scene_part = {
+                    "name": _format_scene_name(entry, rule),
+                    "part": part,
+                    "assembly_name": entry["assembly_name"],
+                    "artifact": entry["artifact"],
+                    "obj_metadata": {
                         "assembly_name": entry["assembly_name"],
-                        "artifact": entry["artifact"],
-                        "obj_metadata": {
-                            "assembly_name": entry["assembly_name"],
-                            "assembly_label": _assembly_group_label(
-                                str(entry["assembly_name"])
-                            ),
-                            "builder_selector": _builder_selector_for_scene_entry(
-                                entry
-                            ),
-                            "hierarchy": [str(entry["assembly_name"])],
-                            "hierarchy_labels": [
-                                _assembly_group_label(str(entry["assembly_name"]))
-                            ],
-                        },
-                        "source_path": entry["path"],
-                        "source_parameter_hash": target.get("parameter_hash"),
-                        "source_version_inputs": deepcopy(
-                            dict(target.get("version_inputs", {}))
+                        "assembly_label": _assembly_group_label(
+                            str(entry["assembly_name"])
                         ),
-                        "transform_history": transform_history,
-                        "flip": bool(rule.get("flip", False)),
-                        "skip_in_production": bool(
-                            rule.get("skip_in_production", False)
-                        ),
-                        "prod_rotation_angle": rule.get("prod_rotation_angle"),
-                        "prod_rotation_axis": rule.get("prod_rotation_axis"),
-                        "color": rule.get("color"),
-                        "animation": (
-                            _resolve_inline_value(rule.get("animation"), part_context)
-                            if rule.get("animation") is not None
-                            else None
-                        ),
-                    }
+                        "builder_selector": _builder_selector_for_scene_entry(entry),
+                        "hierarchy": [str(entry["assembly_name"])],
+                        "hierarchy_labels": [
+                            _assembly_group_label(str(entry["assembly_name"]))
+                        ],
+                    },
+                    "source_path": entry["path"],
+                    "source_parameter_hash": target.get("parameter_hash"),
+                    "source_version_inputs": deepcopy(
+                        dict(target.get("version_inputs", {}))
+                    ),
+                    "transform_history": transform_history,
+                    "flip": bool(rule.get("flip", False)),
+                    "skip_in_production": bool(rule.get("skip_in_production", False)),
+                    "prod_rotation_angle": rule.get("prod_rotation_angle"),
+                    "prod_rotation_axis": rule.get("prod_rotation_axis"),
+                    "color": rule.get("color"),
+                    "animation": (
+                        _resolve_inline_value(rule.get("animation"), part_context)
+                        if rule.get("animation") is not None
+                        else None
+                    ),
+                }
+                num_copies = (
+                    _normalize_scene_num_copies(rule, part_context)
+                    if mode == "production"
+                    else 1
                 )
+                for copy_index in range(1, num_copies + 1):
+                    scene_parts.append(
+                        _copy_scene_part_for_plate(
+                            base_scene_part,
+                            copy_index=copy_index,
+                            copy_count=num_copies,
+                        )
+                    )
     return scene_parts
 
 
@@ -5962,9 +6079,16 @@ def _export_scene_for_assembly(
             config_data,
         ):
             source_path = str(part.get("source_path") or "")
-            if source_path and source_path in seen_source_paths:
+            allow_duplicate_source_path = bool(
+                part.get("allow_duplicate_source_path", False)
+            )
+            if (
+                source_path
+                and source_path in seen_source_paths
+                and not allow_duplicate_source_path
+            ):
                 continue
-            if source_path:
+            if source_path and not allow_duplicate_source_path:
                 seen_source_paths.add(source_path)
             scene_parts.append(part)
         _logger.info(
@@ -6152,7 +6276,10 @@ def _export_scene_for_assembly(
                 ),
                 export_stl=bool(export_options.get("export_stl", True)),
                 mesh_cache_dir=repository_dir / "__mesh_cache__" / "obj",
-                plates=export_options.get("plates"),
+                plates=_expand_declared_plate_parts_for_copies(
+                    export_options.get("plates"),
+                    exportable_scene_parts,
+                ),
                 plate_process_data_map=plate_process_data_map,
                 selected_plates=getattr(args, "plate", None),
                 auto_assign_plates=bool(
