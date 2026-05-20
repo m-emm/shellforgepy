@@ -86,6 +86,28 @@ def test_run_workflow_allows_obj_only_geometry_runs(monkeypatch, tmp_path):
     assert result == 0
 
 
+def test_viewer_model_upload_files_include_mtl_texture_dependencies(tmp_path):
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    obj_path = run_directory / "terrain.obj"
+    mtl_path = run_directory / "terrain.mtl"
+    texture_path = run_directory / "terrain_texture.png"
+    obj_path.write_text("mtllib terrain.mtl\n", encoding="utf-8")
+    texture_path.write_bytes(b"png")
+    mtl_path.write_text(
+        "newmtl terrain\n" "map_Kd terrain_texture.png\n",
+        encoding="utf-8",
+    )
+
+    files = workflow_module._viewer_model_upload_files(run_directory)
+
+    assert [path.name for path in files] == [
+        "terrain.obj",
+        "terrain.mtl",
+        "terrain_texture.png",
+    ]
+
+
 def test_run_workflow_still_requires_stl_for_slicing(monkeypatch, tmp_path):
     target = tmp_path / "design.py"
     target.write_text("print('hello')\n", encoding="utf-8")

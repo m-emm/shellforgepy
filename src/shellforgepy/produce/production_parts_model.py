@@ -1,3 +1,4 @@
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 
@@ -18,6 +19,10 @@ class PartInfo:
     prod_rotation_axis: Optional[Tuple[float, float, float]] = None
     color: Optional[Tuple[float, float, float]] = None  # RGB tuple (0.0-1.0)
     animation: Optional[dict[str, Any]] = None
+    obj_metadata: Optional[dict[str, Any]] = None
+    source_path: Optional[str] = None
+    source_parameter_hash: Optional[str] = None
+    source_version_inputs: Optional[dict[str, Any]] = None
 
 
 def _normalize_xyz_tuple(value, *, field_name: str) -> Tuple[float, float, float]:
@@ -148,6 +153,10 @@ class PartList:
         prod_rotation_axis=None,
         color=None,
         animation=None,
+        obj_metadata=None,
+        source_path=None,
+        source_parameter_hash=None,
+        source_version_inputs=None,
     ):
         if isinstance(part, LeaderFollowersCuttersPart):
             shape = part.get_leader_as_part()
@@ -171,6 +180,12 @@ class PartList:
                 raise ValueError("color RGB values must be in the range 0.0-1.0")
 
         normalized_animation = _normalize_animation(animation)
+        if obj_metadata is not None and not hasattr(obj_metadata, "items"):
+            raise ValueError("obj_metadata must be a mapping")
+        if source_version_inputs is not None and not hasattr(
+            source_version_inputs, "items"
+        ):
+            raise ValueError("source_version_inputs must be a mapping")
 
         self.parts.append(
             PartInfo(
@@ -182,6 +197,18 @@ class PartList:
                 prod_rotation_axis=axis_tuple,
                 color=color_tuple,
                 animation=normalized_animation,
+                obj_metadata=deepcopy(dict(obj_metadata)) if obj_metadata else None,
+                source_path=str(source_path) if source_path is not None else None,
+                source_parameter_hash=(
+                    str(source_parameter_hash)
+                    if source_parameter_hash is not None
+                    else None
+                ),
+                source_version_inputs=(
+                    deepcopy(dict(source_version_inputs))
+                    if source_version_inputs is not None
+                    else None
+                ),
             )
         )
 
@@ -207,6 +234,10 @@ class PartList:
                     if info.animation is not None
                     else None
                 ),
+                "obj_metadata": deepcopy(info.obj_metadata),
+                "source_path": info.source_path,
+                "source_parameter_hash": info.source_parameter_hash,
+                "source_version_inputs": deepcopy(info.source_version_inputs or {}),
             }
             for info in self.parts
         ]

@@ -31,6 +31,7 @@ from shellforgepy.metrics import (
     was_metrics_report_logged,
     write_metrics_report,
 )
+from shellforgepy.produce.mesh_scene import ObjMesh
 from shellforgepy.produce.obj_file_export import export_colored_meshes_to_obj
 from shellforgepy.produce.production_parts_model import PartList
 
@@ -115,6 +116,25 @@ def _copy_transform_history(entry):
 
 
 _PRODUCTION_ORIENTATION_APPLIED_KEY = "_production_orientation_applied"
+
+
+def _is_obj_mesh(part) -> bool:
+    return isinstance(part, ObjMesh)
+
+
+def _merge_obj_metadata(mesh_metadata, entry_metadata):
+    if not mesh_metadata and not entry_metadata:
+        return None
+    merged = {}
+    if mesh_metadata:
+        if not hasattr(mesh_metadata, "items"):
+            raise ValueError("ObjMesh.metadata must be a mapping")
+        merged.update(deepcopy(dict(mesh_metadata)))
+    if entry_metadata:
+        if not hasattr(entry_metadata, "items"):
+            raise ValueError("obj_metadata must be a mapping")
+        merged.update(deepcopy(dict(entry_metadata)))
+    return merged
 
 
 def _append_transform_record(entry, record):
@@ -342,6 +362,32 @@ def _build_colored_meshes(
         color = entry.get("color")
         animation = entry.get("animation")
         metadata = entry.get("obj_metadata")
+        part = entry["part"]
+        if _is_obj_mesh(part):
+            part.validate()
+            if color is None:
+                color = part.color
+            if color is None:
+                color = DEFAULT_PART_COLORS[(index - 1) % len(DEFAULT_PART_COLORS)]
+            metadata = _merge_obj_metadata(part.metadata, metadata)
+            material = {
+                "uvs": part.uvs,
+                "texture_path": part.texture_path,
+                "material_name": part.material_name,
+            }
+            meshes.append(
+                (
+                    part.vertices,
+                    part.faces,
+                    name,
+                    tuple(color),
+                    animation,
+                    metadata,
+                    material,
+                )
+            )
+            continue
+
         if color is None:
             color = DEFAULT_PART_COLORS[(index - 1) % len(DEFAULT_PART_COLORS)]
 
@@ -1246,6 +1292,18 @@ def arrange_and_export_parts(
             "process_data requires export_stl=True in production because slicer settings "
             "need a generated STL part_file"
         )
+
+    if prod:
+        obj_mesh_names = [
+            str(entry.get("name", "<unnamed>"))
+            for entry in parts_list
+            if _is_obj_mesh(entry.get("part"))
+        ]
+        if obj_mesh_names:
+            raise ValueError(
+                "ObjMesh passthrough parts are visualization-only and cannot be "
+                f"used with prod=True: {', '.join(obj_mesh_names)}"
+            )
 
     # Use production arrangement or simple positioning
     if prod:

@@ -151,6 +151,7 @@ from shellforgepy.produce.arrange_and_export import (
     export_solid_to_step,
     export_solid_to_stl,
 )
+from shellforgepy.produce.mesh_scene import ObjMesh
 from shellforgepy.produce.production_parts_model import PartInfo, PartList
 from shellforgepy.shells.connector_hint import ConnectorHint
 from shellforgepy.shells.materialized_connectors import (
@@ -263,6 +264,7 @@ __all__ = [
     "orient_for_flatness_riemannian",
     "orient_for_flatness",
     "orient_max_planar_area",
+    "ObjMesh",
     "PartCollector",
     "PartInfo",
     "PartitionableSpheroidTriangleMesh",

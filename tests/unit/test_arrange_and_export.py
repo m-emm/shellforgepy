@@ -14,6 +14,8 @@ from shellforgepy.produce.arrange_and_export import (
     arrange_and_export,
     arrange_and_export_parts,
 )
+from shellforgepy.produce.mesh_scene import ObjMesh
+from shellforgepy.produce.production_parts_model import PartList
 from shellforgepy.simple import create_box, get_bounding_box, translate
 
 
@@ -38,6 +40,90 @@ def test_split_parts_into_declared_plates_and_auto_assignment():
         ["frame"],
         ["left_bracket", "right_bracket"],
     ]
+
+
+def test_obj_mesh_validate_rejects_invalid_meshes():
+    with pytest.raises(ValueError, match="vertices must not be empty"):
+        ObjMesh(
+            vertices=np.empty((0, 3)),
+            faces=np.asarray([[0, 1, 2]], dtype=np.int64),
+        ).validate()
+
+    with pytest.raises(ValueError, match="vertices must have shape"):
+        ObjMesh(
+            vertices=np.asarray([0.0, 0.0, 0.0]),
+            faces=np.asarray([[0, 1, 2]], dtype=np.int64),
+        ).validate()
+
+    with pytest.raises(ValueError, match="out of range"):
+        ObjMesh(
+            vertices=np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            faces=np.asarray([[0, 1, 3]], dtype=np.int64),
+        ).validate()
+
+
+def test_part_list_preserves_obj_mesh_metadata_fields():
+    parts = PartList()
+    parts.add(
+        object(),
+        "terrain",
+        obj_metadata={"hierarchy": ["rw8", "terrain"]},
+        source_path="/tmp/terrain.npz",
+        source_parameter_hash="abc123",
+        source_version_inputs={"dtm_stride": 4},
+    )
+
+    entry = parts.as_list()[0]
+
+    assert entry["obj_metadata"] == {"hierarchy": ["rw8", "terrain"]}
+    assert entry["source_path"] == "/tmp/terrain.npz"
+    assert entry["source_parameter_hash"] == "abc123"
+    assert entry["source_version_inputs"] == {"dtm_stride": 4}
+
+
+def test_build_colored_meshes_passes_obj_mesh_through_without_tessellation(
+    monkeypatch,
+):
+    import shellforgepy.produce.arrange_and_export as arrange_and_export_module
+
+    monkeypatch.setattr(
+        arrange_and_export_module,
+        "adapter_tesellate",
+        lambda *args, **kwargs: pytest.fail("ObjMesh should not be tessellated"),
+    )
+
+    mesh = ObjMesh(
+        vertices=np.asarray(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            dtype=float,
+        ),
+        faces=np.asarray([[0, 1, 2]], dtype=np.int64),
+        color=(0.9, 0.8, 0.7),
+        uvs=np.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]], dtype=float),
+        texture_path="terrain.png",
+        material_name="terrain_orthophoto",
+        metadata={"hierarchy": ["rw8", "terrain"]},
+    )
+
+    meshes = _build_colored_meshes(
+        [{"name": "terrain", "part": mesh, "animation": None}]
+    )
+
+    assert len(meshes) == 1
+    vertices, faces, name, color, animation, metadata, material = meshes[0]
+    assert vertices is mesh.vertices
+    assert faces is mesh.faces
+    assert name == "terrain"
+    assert color == (0.9, 0.8, 0.7)
+    assert animation is None
+    assert metadata == {"hierarchy": ["rw8", "terrain"]}
+    assert np.asarray(material["uvs"]).shape == (3, 2)
+    assert material["texture_path"] == "terrain.png"
+    assert material["material_name"] == "terrain_orthophoto"
 
 
 def test_split_parts_into_declared_plates_accepts_wildcard_part_names():
@@ -309,6 +395,33 @@ def test_arrange_and_export_parts_can_add_plate_boundaries_to_obj_scene(
     assert min_y == pytest.approx(0.0)
     assert max_x == pytest.approx(100.0)
     assert max_y == pytest.approx(100.0)
+
+
+def test_arrange_and_export_rejects_obj_mesh_in_production(tmp_path):
+    mesh = ObjMesh(
+        vertices=np.asarray(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            dtype=float,
+        ),
+        faces=np.asarray([[0, 1, 2]], dtype=np.int64),
+    )
+
+    with pytest.raises(ValueError, match="visualization-only"):
+        arrange_and_export_parts(
+            [{"name": "terrain", "part": mesh}],
+            prod_gap=2.0,
+            bed_width=100.0,
+            script_file="terrain.py",
+            export_directory=tmp_path,
+            prod=True,
+            export_stl=False,
+            export_step=False,
+            export_obj=True,
+        )
 
 
 def test_arrange_and_export_exports_plate_obj_files_and_manifest_entries(

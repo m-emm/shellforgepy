@@ -1,4 +1,7 @@
 import json
+import os
+import shutil
+from pathlib import Path
 from typing import Dict, Mapping, Optional, Sequence, Tuple
 
 
@@ -24,6 +27,30 @@ def _triangle_to_indices(triangle) -> tuple[int, int, int]:
 def _color_to_rgb(color) -> tuple[float, float, float]:
     """Normalize material color inputs to RGB float triples."""
     return (float(color[0]), float(color[1]), float(color[2]))
+
+
+def _sanitize_obj_name(name) -> str:
+    return str(name).replace(" ", "_").replace("/", "_")
+
+
+def _texture_reference(texture_path, *, mtl_path: str) -> Optional[str]:
+    if texture_path is None:
+        return None
+
+    texture = Path(texture_path).expanduser()
+    mtl_directory = Path(mtl_path).parent
+    if texture.is_absolute():
+        portable_texture = mtl_directory / texture.name
+        try:
+            if texture.resolve() != portable_texture.resolve():
+                portable_texture.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(texture, portable_texture)
+        except OSError:
+            return str(texture).replace(os.sep, "/")
+        reference = portable_texture.name
+    else:
+        reference = str(texture)
+    return reference.replace(os.sep, "/")
 
 
 def _animation_to_xyz(vector) -> tuple[float, float, float]:
@@ -196,7 +223,7 @@ def _write_builder_selector_comment(file_obj, metadata) -> None:
 
 def _write_mtl_file(
     path: str,
-    materials: Dict[str, Tuple[float, float, float]],
+    materials: Dict[str, Tuple[float, float, float] | Mapping],
 ) -> None:
     """Write an MTL material library file.
 
@@ -207,8 +234,15 @@ def _write_mtl_file(
     with open(path, "w") as f:
         f.write("# MTL file exported by ShellForgePy\n\n")
 
-        for mat_name, color in materials.items():
-            r, g, b = color
+        for mat_name, material in materials.items():
+            if isinstance(material, Mapping):
+                color = material.get("color", (1.0, 1.0, 1.0))
+                texture_path = material.get("texture_path")
+            else:
+                color = material
+                texture_path = None
+
+            r, g, b = _color_to_rgb(color)
             f.write(f"newmtl {mat_name}\n")
             f.write(f"Ka {r*0.2:.6f} {g*0.2:.6f} {b*0.2:.6f}\n")  # Ambient
             f.write(f"Kd {r:.6f} {g:.6f} {b:.6f}\n")  # Diffuse
@@ -216,7 +250,11 @@ def _write_mtl_file(
             f.write(f"Ns 96.078431\n")  # Specular exponent
             f.write(f"Ni 1.000000\n")  # Optical density
             f.write(f"d 1.000000\n")  # Dissolve (opacity)
-            f.write(f"illum 2\n\n")  # Illumination model
+            f.write(f"illum 2\n")  # Illumination model
+            texture_reference = _texture_reference(texture_path, mtl_path=path)
+            if texture_reference:
+                f.write(f"map_Kd {texture_reference}\n")
+            f.write("\n")
 
 
 def export_mesh_to_obj(
@@ -282,8 +320,10 @@ def export_colored_meshes_to_obj(
 
     Args:
         meshes: List of tuples `(vertices, triangles, name, color)`,
-            `(vertices, triangles, name, color, animation)`, or
-            `(vertices, triangles, name, color, animation, metadata)` where:
+            `(vertices, triangles, name, color, animation)`,
+            `(vertices, triangles, name, color, animation, metadata)`, or
+            `(vertices, triangles, name, color, animation, metadata, material)`
+            where:
             - vertices: Vertex rows or vertex objects with coordinate access
             - triangles: Triangles as integer index triplets
             - name: Part/material name (used as material identifier)
@@ -291,10 +331,10 @@ def export_colored_meshes_to_obj(
             - animation: Optional dict mapping animation key to XYZ vector
             - metadata: Optional mapping with hierarchy information such as
               `assembly_name`, `assembly_label`, `hierarchy`, or `hierarchy_labels`
+            - material: Optional mapping with `uvs`, `texture_path`, and
+              `material_name` for textured mesh export
         destination: Path to write the OBJ file to.
     """
-    import os
-
     destination = str(destination)
     base, _ = os.path.splitext(destination)
     mtl_path = base + ".mtl"
@@ -302,6 +342,7 @@ def export_colored_meshes_to_obj(
 
     materials = {}
     vertex_offset = 0
+    texcoord_offset = 0
 
     with open(destination, "w") as f:
         f.write("# OBJ file exported by ShellForgePy\n")
@@ -312,44 +353,78 @@ def export_colored_meshes_to_obj(
                 vertices, triangles, name, color = mesh
                 animation = None
                 metadata = None
+                material = None
             elif len(mesh) == 5:
                 vertices, triangles, name, color, animation = mesh
                 metadata = None
+                material = None
             elif len(mesh) == 6:
                 vertices, triangles, name, color, animation, metadata = mesh
+                material = None
+            elif len(mesh) == 7:
+                vertices, triangles, name, color, animation, metadata, material = mesh
             else:
                 raise ValueError(
-                    "Each mesh entry must contain 4, 5, or 6 values: "
-                    "(vertices, triangles, name, color[, animation[, metadata]])"
+                    "Each mesh entry must contain 4, 5, 6, or 7 values: "
+                    "(vertices, triangles, name, color[, animation[, metadata[, material]]])"
                 )
 
-            # Sanitize material name (OBJ material names shouldn't have spaces)
-            mat_name = name.replace(" ", "_").replace("/", "_")
-            materials[mat_name] = _color_to_rgb(color)
+            material = material or {}
+            if not isinstance(material, Mapping):
+                raise ValueError("mesh material metadata must be a mapping")
+
+            object_name = _sanitize_obj_name(name)
+            mat_name = _sanitize_obj_name(material.get("material_name") or name)
+            materials[mat_name] = {
+                "color": _color_to_rgb(color),
+                "texture_path": material.get("texture_path"),
+            }
 
             f.write(f"# Object: {name}\n")
             _write_hierarchy_comments(f, metadata)
             _write_builder_selector_comment(f, metadata)
-            f.write(f"o {mat_name}\n")
+            f.write(f"o {object_name}\n")
             _write_animation_comments(f, animation)
 
             # Write vertices
             normalized_vertices = [_vertex_to_xyz(v) for v in vertices]
             normalized_triangles = [_triangle_to_indices(tri) for tri in triangles]
+            uvs = material.get("uvs")
+            normalized_uvs = None
+            if uvs is not None:
+                normalized_uvs = [(float(uv[0]), float(uv[1])) for uv in uvs]
+                if len(normalized_uvs) != len(normalized_vertices):
+                    raise ValueError(
+                        f"Mesh {name!r} has {len(normalized_uvs)} texture coordinates "
+                        f"for {len(normalized_vertices)} vertices"
+                    )
 
             for x, y, z in normalized_vertices:
                 f.write(f"v {x} {y} {z}\n")
+
+            if normalized_uvs is not None:
+                for u, v in normalized_uvs:
+                    f.write(f"vt {u} {v}\n")
 
             # Use material
             f.write(f"usemtl {mat_name}\n")
 
             # Write faces (OBJ uses 1-based indexing, offset by previous vertices)
             for i0, i1, i2 in normalized_triangles:
-                f.write(
-                    f"f {i0 + 1 + vertex_offset} {i1 + 1 + vertex_offset} {i2 + 1 + vertex_offset}\n"
-                )
+                v0 = i0 + 1 + vertex_offset
+                v1 = i1 + 1 + vertex_offset
+                v2 = i2 + 1 + vertex_offset
+                if normalized_uvs is None:
+                    f.write(f"f {v0} {v1} {v2}\n")
+                else:
+                    t0 = i0 + 1 + texcoord_offset
+                    t1 = i1 + 1 + texcoord_offset
+                    t2 = i2 + 1 + texcoord_offset
+                    f.write(f"f {v0}/{t0} {v1}/{t1} {v2}/{t2}\n")
 
             vertex_offset += len(normalized_vertices)
+            if normalized_uvs is not None:
+                texcoord_offset += len(normalized_uvs)
             f.write("\n")
 
     # Write MTL file

@@ -543,6 +543,58 @@ def _upload_file_to_viewer(file_path: Path, upload_url: str) -> None:
         return response_data
 
 
+def _mtl_texture_paths(mtl_file: Path) -> List[Path]:
+    texture_paths: List[Path] = []
+    try:
+        lines = mtl_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return texture_paths
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = stripped.split()
+        if not parts or parts[0] != "map_Kd" or len(parts) < 2:
+            continue
+
+        texture_reference = parts[-1]
+        parsed = urllib.parse.urlparse(texture_reference)
+        if parsed.scheme in {"data", "http", "https"}:
+            continue
+
+        texture_path = Path(texture_reference)
+        if not texture_path.is_absolute():
+            texture_path = (mtl_file.parent / texture_path).resolve()
+        if texture_path.exists() and texture_path.is_file():
+            texture_paths.append(texture_path)
+
+    return texture_paths
+
+
+def _viewer_model_upload_files(run_directory: Path) -> List[Path]:
+    files: List[Path] = []
+    seen: set[Path] = set()
+
+    def add(path: Path) -> None:
+        resolved = path.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            files.append(resolved)
+
+    obj_files = sorted(run_directory.glob("*.obj"))
+    mtl_files = sorted(run_directory.glob("*.mtl"))
+    for obj_file in obj_files:
+        add(obj_file)
+    for mtl_file in mtl_files:
+        add(mtl_file)
+    for mtl_file in mtl_files:
+        for texture_path in _mtl_texture_paths(mtl_file):
+            add(texture_path)
+
+    return files
+
+
 def _slugify_name(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value)
 
@@ -764,19 +816,10 @@ def complete_workflow_run(
     upload_url = _resolve_config_key_value(config, "model_viewer_upload_url")
     if upload_url:
         try:
-            obj_files = list(run_directory.glob("*.obj"))
-            mtl_files = list(run_directory.glob("*.mtl"))
-
             uploaded_files = []
-            for obj_file in obj_files:
-                _logger.info("Uploading OBJ file to viewer: %s", obj_file.name)
-                result = _upload_file_to_viewer(obj_file, upload_url)
-                uploaded_files.append(result)
-                _logger.info("Uploaded: %s", result.get("url"))
-
-            for mtl_file in mtl_files:
-                _logger.info("Uploading MTL file to viewer: %s", mtl_file.name)
-                result = _upload_file_to_viewer(mtl_file, upload_url)
+            for model_file in _viewer_model_upload_files(run_directory):
+                _logger.info("Uploading model file to viewer: %s", model_file.name)
+                result = _upload_file_to_viewer(model_file, upload_url)
                 uploaded_files.append(result)
                 _logger.info("Uploaded: %s", result.get("url"))
 

@@ -195,6 +195,69 @@ def test_export_colored_meshes_to_obj_accepts_numpy_mesh_data():
         assert "Kd 0.250000 0.500000 0.750000" in mtl_content
 
 
+def test_export_colored_meshes_to_obj_writes_textured_mesh_data():
+    """OBJ writer should emit vt coordinates and map_Kd for textured meshes."""
+    from shellforgepy.produce.obj_file_export import export_colored_meshes_to_obj
+
+    vertices = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ],
+        dtype=float,
+    )
+    triangles = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
+    uvs = np.array(
+        [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [1.0, 1.0],
+            [0.0, 1.0],
+        ],
+        dtype=float,
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        texture_path = os.path.join(tmpdir, "terrain_texture.png")
+        with open(texture_path, "wb") as f:
+            f.write(b"png")
+        obj_path = os.path.join(tmpdir, "terrain.obj")
+        mtl_path = os.path.join(tmpdir, "terrain.mtl")
+        meshes = [
+            (
+                vertices,
+                triangles,
+                "terrain",
+                (1.0, 1.0, 1.0),
+                None,
+                None,
+                {
+                    "uvs": uvs,
+                    "texture_path": texture_path,
+                    "material_name": "terrain_orthophoto",
+                },
+            )
+        ]
+
+        export_colored_meshes_to_obj(meshes, obj_path)
+
+        with open(obj_path) as f:
+            obj_content = f.read()
+        assert "o terrain" in obj_content
+        assert "usemtl terrain_orthophoto" in obj_content
+        assert obj_content.count("\nvt ") == 4
+        assert "f 1/1 2/2 3/3" in obj_content
+        assert "f 1/1 3/3 4/4" in obj_content
+
+        with open(mtl_path) as f:
+            mtl_content = f.read()
+        assert "newmtl terrain_orthophoto" in mtl_content
+        assert "Kd 1.000000 1.000000 1.000000" in mtl_content
+        assert "map_Kd terrain_texture.png" in mtl_content
+
+
 def test_export_colored_meshes_to_obj_writes_animation_comments():
     """OBJ writer should emit ShellForgePy animation comments per object."""
     from shellforgepy.produce.obj_file_export import export_colored_meshes_to_obj
