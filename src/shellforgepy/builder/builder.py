@@ -324,9 +324,7 @@ class _BuildArtifactPool:
                     built_results_by_name=built_results_by_name,
                     repository_dir=repository_dir,
                 )
-            imported_part = _import_dependency_part(
-                Path(entries[0]["path"]).expanduser().resolve()
-            )
+            imported_part = _import_artifact_entry(entries[0])
             if slot.runtime_transforms:
                 imported_part = _apply_translation_sequence(
                     imported_part,
@@ -1990,6 +1988,113 @@ def _export_part_to_step(part: Any, destination: Path) -> None:
     export_solid_to_step(part, destination)
 
 
+def _is_obj_mesh_artifact(part: Any) -> bool:
+    from shellforgepy.produce.mesh_scene import ObjMesh
+
+    return isinstance(part, ObjMesh)
+
+
+def _export_obj_mesh_artifact(part: Any, destination: Path) -> Dict[str, Any]:
+    import numpy as np
+
+    part.validate()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path = destination.with_suffix(".json")
+    has_uvs = part.uvs is not None
+    np.savez_compressed(
+        destination,
+        vertices=np.asarray(part.vertices, dtype=float),
+        faces=np.asarray(part.faces, dtype=np.int64),
+        uvs=(
+            np.asarray(part.uvs, dtype=float)
+            if has_uvs
+            else np.empty((0, 2), dtype=float)
+        ),
+    )
+    _write_metadata(
+        metadata_path,
+        {
+            "schema_version": 1,
+            "artifact_type": "obj_mesh",
+            "name": part.name,
+            "color": (
+                None
+                if part.color is None
+                else [float(component) for component in part.color]
+            ),
+            "has_uvs": has_uvs,
+            "texture_path": (
+                None if part.texture_path is None else str(part.texture_path)
+            ),
+            "material_name": part.material_name,
+            "metadata": deepcopy(part.metadata),
+        },
+    )
+    return {
+        "kind": "obj_mesh",
+        "path": str(destination),
+        "metadata_path": str(metadata_path),
+    }
+
+
+def _import_obj_mesh_artifact(
+    mesh_path: Path, metadata_path: Optional[Path] = None
+) -> Any:
+    import numpy as np
+    from shellforgepy.produce.mesh_scene import ObjMesh
+
+    mesh_path = Path(mesh_path).expanduser().resolve()
+    metadata_path = (
+        Path(metadata_path).expanduser().resolve()
+        if metadata_path is not None
+        else mesh_path.with_suffix(".json")
+    )
+    payload = _read_metadata(metadata_path)
+    if payload.get("artifact_type") != "obj_mesh":
+        raise BuilderError(f"Mesh artifact metadata is not an ObjMesh: {metadata_path}")
+    arrays = np.load(mesh_path, allow_pickle=False)
+    uvs = arrays["uvs"] if bool(payload.get("has_uvs", False)) else None
+    texture_path = payload.get("texture_path")
+    mesh = ObjMesh(
+        vertices=arrays["vertices"],
+        faces=arrays["faces"],
+        name=payload.get("name"),
+        color=(
+            None
+            if payload.get("color") is None
+            else tuple(float(value) for value in payload["color"])
+        ),
+        uvs=uvs,
+        texture_path=texture_path,
+        material_name=payload.get("material_name"),
+        metadata=payload.get("metadata"),
+    )
+    return mesh.validate()
+
+
+def _export_artifact_part(part: Any, destination_stem: Path) -> Dict[str, Any]:
+    if _is_obj_mesh_artifact(part):
+        return _export_obj_mesh_artifact(part, destination_stem.with_suffix(".npz"))
+
+    step_path = destination_stem.with_suffix(".step")
+    _export_part_to_step(part, step_path)
+    return {"kind": "step", "path": str(step_path)}
+
+
+def _import_artifact_entry(entry: Mapping[str, Any]) -> Any:
+    path = Path(entry["path"]).expanduser().resolve()
+    if entry.get("kind") == "obj_mesh":
+        return _import_obj_mesh_artifact(
+            path,
+            (
+                Path(entry["metadata_path"]).expanduser().resolve()
+                if entry.get("metadata_path")
+                else None
+            ),
+        )
+    return _import_dependency_part(path)
+
+
 def _artifact_filename(
     assembly_name: str,
     parameter_hash: str,
@@ -2002,7 +2107,7 @@ def _artifact_filename(
         parts.append(f"{index:04d}")
     if name:
         parts.append(_safe_name(name))
-    return "__".join(parts) + ".step"
+    return "__".join(parts)
 
 
 def _write_metadata(path: Path, payload: Mapping[str, Any]) -> None:
@@ -2151,6 +2256,22 @@ def _import_dependency_assembly(metadata: Mapping[str, Any]) -> Any:
 
     artifacts = metadata.get("artifacts", {})
     leader_path = artifacts.get("leader_step")
+    leader_mesh = artifacts.get("leader_mesh")
+    if (
+        not leader_path
+        and leader_mesh
+        and not any(
+            artifacts.get(group)
+            for group in ("followers", "cutters", "non_production_parts", "fused_step")
+        )
+    ):
+        return _import_artifact_entry(
+            _mesh_artifact_entry(
+                leader_mesh,
+                assembly_name=str(metadata.get("assembly_name")),
+                artifact="leader",
+            )[0]
+        )
     if not leader_path:
         raise BuilderError(
             f"Dependency assembly '{metadata.get('assembly_name')}' has no leader artifact"
@@ -2161,7 +2282,13 @@ def _import_dependency_assembly(metadata: Mapping[str, Any]) -> Any:
     )
 
     for item in artifacts.get("followers", []):
-        follower = _import_dependency_part(Path(item["path"]).expanduser().resolve())
+        follower = _import_artifact_entry(
+            _component_artifact_entry(
+                item,
+                assembly_name=str(metadata.get("assembly_name")),
+                artifact="followers",
+            )
+        )
         name = item.get("name")
         if name:
             assembly.add_named_follower(follower, str(name))
@@ -2169,7 +2296,13 @@ def _import_dependency_assembly(metadata: Mapping[str, Any]) -> Any:
             assembly.followers.append(follower)
 
     for item in artifacts.get("cutters", []):
-        cutter = _import_dependency_part(Path(item["path"]).expanduser().resolve())
+        cutter = _import_artifact_entry(
+            _component_artifact_entry(
+                item,
+                assembly_name=str(metadata.get("assembly_name")),
+                artifact="cutters",
+            )
+        )
         name = item.get("name")
         if name:
             assembly.add_named_cutter(cutter, str(name))
@@ -2177,8 +2310,12 @@ def _import_dependency_assembly(metadata: Mapping[str, Any]) -> Any:
             assembly.cutters.append(cutter)
 
     for item in artifacts.get("non_production_parts", []):
-        non_production_part = _import_dependency_part(
-            Path(item["path"]).expanduser().resolve()
+        non_production_part = _import_artifact_entry(
+            _component_artifact_entry(
+                item,
+                assembly_name=str(metadata.get("assembly_name")),
+                artifact="non_production_parts",
+            )
         )
         name = item.get("name")
         if name:
@@ -2380,28 +2517,19 @@ def _scene_metrics_assembly_names(
 
 
 def _dependency_step_path(metadata: Mapping[str, Any], artifact: str) -> Path:
-    artifacts = metadata.get("artifacts", {})
-    if artifact == "leader":
-        step_path = artifacts.get("leader_step")
-    elif artifact == "fused":
-        step_path = artifacts.get("fused_step")
-    elif "." in artifact:
-        artifact_group, target_name = artifact.split(".", 1)
-        if artifact_group not in {"followers", "cutters", "non_production_parts"}:
-            raise BuilderError(f"Unsupported dependency artifact selector '{artifact}'")
-        step_path = None
-        for item in artifacts.get(artifact_group, []):
-            if item.get("name") == target_name:
-                step_path = item.get("path")
-                break
-    else:
-        raise BuilderError(f"Unsupported dependency artifact selector '{artifact}'")
+    entry = _dependency_artifact_entry(metadata, artifact)
+    return Path(entry["path"]).expanduser().resolve()
 
-    if not step_path:
+
+def _dependency_artifact_entry(
+    metadata: Mapping[str, Any], artifact: str
+) -> Dict[str, Any]:
+    entries = _artifact_entries_for_selector(metadata, artifact)
+    if len(entries) != 1:
         raise BuilderError(
             f"Could not resolve dependency artifact '{artifact}' for assembly '{metadata.get('assembly_name')}'"
         )
-    return Path(step_path).expanduser().resolve()
+    return dict(entries[0])
 
 
 def _resolve_dependency_injections(
@@ -2431,13 +2559,13 @@ def _resolve_dependency_injections(
                 repository_dir,
             )
         if spec["artifact"] == "assembly":
-            step_path = (
-                Path(metadata["artifacts"]["leader_step"]).expanduser().resolve()
-            )
+            leader_entry = _dependency_artifact_entry(metadata, "leader")
+            step_path = Path(leader_entry["path"]).expanduser().resolve()
             imported_part = _import_dependency_assembly(metadata)
         else:
-            step_path = _dependency_step_path(metadata, spec["artifact"])
-            imported_part = _import_dependency_part(step_path)
+            artifact_entry = _dependency_artifact_entry(metadata, spec["artifact"])
+            step_path = Path(artifact_entry["path"]).expanduser().resolve()
+            imported_part = _import_artifact_entry(artifact_entry)
         if build_pool is not None:
             imported_part = _apply_translation_sequence(
                 imported_part,
@@ -2746,29 +2874,43 @@ def _export_artifacts(
 
     artifacts: Dict[str, Any] = {
         "leader_step": None,
+        "leader_mesh": None,
         "fused_step": None,
+        "fused_mesh": None,
         "followers": [],
         "cutters": [],
         "non_production_parts": [],
     }
 
-    leader_path = artifact_dir / _artifact_filename(
-        assembly_name,
-        parameter_hash,
-        "leader",
+    leader_artifact = _export_artifact_part(
+        normalized["leader"],
+        artifact_dir
+        / _artifact_filename(
+            assembly_name,
+            parameter_hash,
+            "leader",
+        ),
     )
-    _export_part_to_step(normalized["leader"], leader_path)
-    artifacts["leader_step"] = str(leader_path)
+    if leader_artifact["kind"] == "obj_mesh":
+        artifacts["leader_mesh"] = leader_artifact
+    else:
+        artifacts["leader_step"] = leader_artifact["path"]
 
     fused = normalized.get("fused")
     if fused is not None:
-        fused_path = artifact_dir / _artifact_filename(
-            assembly_name,
-            parameter_hash,
-            "fused",
+        fused_artifact = _export_artifact_part(
+            fused,
+            artifact_dir
+            / _artifact_filename(
+                assembly_name,
+                parameter_hash,
+                "fused",
+            ),
         )
-        _export_part_to_step(fused, fused_path)
-        artifacts["fused_step"] = str(fused_path)
+        if fused_artifact["kind"] == "obj_mesh":
+            artifacts["fused_mesh"] = fused_artifact
+        else:
+            artifacts["fused_step"] = fused_artifact["path"]
 
     for group_key, label in (
         ("followers", "follower"),
@@ -2776,23 +2918,127 @@ def _export_artifacts(
         ("non_production_parts", "non_production"),
     ):
         for item in normalized[group_key]:
-            component_path = artifact_dir / _artifact_filename(
-                assembly_name,
-                parameter_hash,
-                label,
-                index=item["index"],
-                name=item["name"],
+            component_artifact = _export_artifact_part(
+                item["part"],
+                artifact_dir
+                / _artifact_filename(
+                    assembly_name,
+                    parameter_hash,
+                    label,
+                    index=item["index"],
+                    name=item["name"],
+                ),
             )
-            _export_part_to_step(item["part"], component_path)
             artifacts[group_key].append(
                 {
                     "index": item["index"],
                     "name": item["name"],
-                    "path": str(component_path),
+                    **component_artifact,
                 }
             )
 
     return artifacts
+
+
+def _legacy_step_artifact_entry(
+    path: Optional[str],
+    *,
+    assembly_name: str,
+    artifact: str,
+    name: Optional[str] = None,
+    index: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    return (
+        [
+            {
+                "assembly_name": assembly_name,
+                "artifact": artifact,
+                "path": str(path),
+                "kind": "step",
+                "name": name,
+                "index": index,
+            }
+        ]
+        if path
+        else []
+    )
+
+
+def _mesh_artifact_entry(
+    artifact_payload: Optional[Mapping[str, Any]],
+    *,
+    assembly_name: str,
+    artifact: str,
+    name: Optional[str] = None,
+    index: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    if not artifact_payload:
+        return []
+    return [
+        {
+            "assembly_name": assembly_name,
+            "artifact": artifact,
+            "path": str(artifact_payload["path"]),
+            "kind": "obj_mesh",
+            "metadata_path": str(artifact_payload["metadata_path"]),
+            "name": name,
+            "index": index,
+        }
+    ]
+
+
+def _single_artifact_entries(
+    metadata: Mapping[str, Any],
+    artifact: str,
+) -> List[Dict[str, Any]]:
+    artifacts = metadata.get("artifacts", {})
+    assembly_name = str(metadata.get("assembly_name"))
+    if artifact == "leader":
+        return [
+            *_legacy_step_artifact_entry(
+                artifacts.get("leader_step"),
+                assembly_name=assembly_name,
+                artifact=artifact,
+            ),
+            *_mesh_artifact_entry(
+                artifacts.get("leader_mesh"),
+                assembly_name=assembly_name,
+                artifact=artifact,
+            ),
+        ]
+    if artifact == "fused":
+        return [
+            *_legacy_step_artifact_entry(
+                artifacts.get("fused_step"),
+                assembly_name=assembly_name,
+                artifact=artifact,
+            ),
+            *_mesh_artifact_entry(
+                artifacts.get("fused_mesh"),
+                assembly_name=assembly_name,
+                artifact=artifact,
+            ),
+        ]
+    raise BuilderError(f"Unsupported single artifact selector '{artifact}'")
+
+
+def _component_artifact_entry(
+    item: Mapping[str, Any],
+    *,
+    assembly_name: str,
+    artifact: str,
+) -> Dict[str, Any]:
+    entry = {
+        "assembly_name": assembly_name,
+        "artifact": artifact,
+        "path": str(item["path"]),
+        "kind": str(item.get("kind") or "step"),
+        "name": item.get("name"),
+        "index": item.get("index"),
+    }
+    if item.get("metadata_path"):
+        entry["metadata_path"] = str(item["metadata_path"])
+    return entry
 
 
 def _load_attribute(dotted_path: str) -> Any:
@@ -2969,51 +3215,23 @@ def _artifact_entries_for_selector(
 
     if artifact == "all":
         entries: List[Dict[str, Any]] = []
-        if artifacts.get("leader_step"):
+        if artifacts.get("leader_step") or artifacts.get("leader_mesh"):
             entries.extend(_artifact_entries_for_selector(metadata, "leader"))
         entries.extend(_artifact_entries_for_selector(metadata, "followers"))
         entries.extend(_artifact_entries_for_selector(metadata, "non_production_parts"))
         return entries
 
     if artifact == "leader":
-        path = artifacts.get("leader_step")
-        return (
-            [
-                {
-                    "assembly_name": assembly_name,
-                    "artifact": artifact,
-                    "path": str(path),
-                    "name": None,
-                    "index": None,
-                }
-            ]
-            if path
-            else []
-        )
+        return _single_artifact_entries(metadata, "leader")
     if artifact == "fused":
-        path = artifacts.get("fused_step")
-        return (
-            [
-                {
-                    "assembly_name": assembly_name,
-                    "artifact": artifact,
-                    "path": str(path),
-                    "name": None,
-                    "index": None,
-                }
-            ]
-            if path
-            else []
-        )
+        return _single_artifact_entries(metadata, "fused")
     if artifact in {"followers", "cutters", "non_production_parts"}:
         return [
-            {
-                "assembly_name": assembly_name,
-                "artifact": artifact,
-                "path": str(item["path"]),
-                "name": item.get("name"),
-                "index": item.get("index"),
-            }
+            _component_artifact_entry(
+                item,
+                assembly_name=assembly_name,
+                artifact=artifact,
+            )
             for item in artifacts.get(artifact, [])
         ]
     if "." in artifact:
@@ -3023,13 +3241,11 @@ def _artifact_entries_for_selector(
         for item in artifacts.get(artifact_group, []):
             if item.get("name") == target_name:
                 return [
-                    {
-                        "assembly_name": assembly_name,
-                        "artifact": artifact_group,
-                        "path": str(item["path"]),
-                        "name": item.get("name"),
-                        "index": item.get("index"),
-                    }
+                    _component_artifact_entry(
+                        item,
+                        assembly_name=assembly_name,
+                        artifact=artifact_group,
+                    )
                 ]
         return []
     raise BuilderError(f"Unsupported scene artifact selector '{artifact}'")
@@ -3041,14 +3257,15 @@ def _addressable_artifact_selectors(metadata: Mapping[str, Any]) -> List[str]:
 
     if (
         artifacts.get("leader_step")
+        or artifacts.get("leader_mesh")
         or artifacts.get("followers")
         or artifacts.get("non_production_parts")
     ):
         selectors.append("all")
 
-    if artifacts.get("leader_step"):
+    if artifacts.get("leader_step") or artifacts.get("leader_mesh"):
         selectors.append("leader")
-    if artifacts.get("fused_step"):
+    if artifacts.get("fused_step") or artifacts.get("fused_mesh"):
         selectors.append("fused")
 
     for artifact_group in ("followers", "cutters", "non_production_parts"):
@@ -3786,9 +4003,7 @@ def _materialize_rule_parts(
                 rule,
             )
             for entry in entries:
-                part = _import_dependency_part(
-                    Path(entry["path"]).expanduser().resolve()
-                )
+                part = _import_artifact_entry(entry)
                 transform_history: List[Dict[str, Any]] = []
                 part_context = dict(parameter_context)
                 part_context.update(
@@ -4238,7 +4453,7 @@ def _resolve_placement_anchor(
             built_results_by_name=built_results_by_name,
             repository_dir=repository_dir,
         )
-    anchor = _import_dependency_part(Path(entries[0]["path"]).expanduser().resolve())
+    anchor = _import_artifact_entry(entries[0])
     anchor = _apply_placement_state_to_part(anchor, assembly_name, placement_state)
     return assembly_name, selector, anchor
 
@@ -4710,9 +4925,7 @@ def _apply_placement_alignments(
                     built_results_by_name=built_results_by_name,
                     repository_dir=repository_dir,
                 )
-            imported_anchor = _import_dependency_part(
-                Path(entries[0]["path"]).expanduser().resolve()
-            )
+            imported_anchor = _import_artifact_entry(entries[0])
             for translation in translation_history.get(assembly_name, []):
                 imported_anchor = translation(imported_anchor)
             anchor_cache[cache_key] = imported_anchor
@@ -5412,7 +5625,7 @@ def _resolve_prototype_anchor_part(
             selected_assembly=selected_assembly,
             use_self_for_selected=True,
         )
-    anchor = _import_dependency_part(Path(entries[0]["path"]).expanduser().resolve())
+    anchor = _import_artifact_entry(entries[0])
     return anchor
 
 

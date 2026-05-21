@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Mapping
 
+import numpy as np
 import pytest
 import shellforgepy.builder.builder as builder
 import shellforgepy.builder.graph_model as builder_graph_model
@@ -18,12 +19,93 @@ from shellforgepy.metrics import (
     snapshot_metrics,
     using_metrics_snapshot,
 )
+from shellforgepy.produce.mesh_scene import ObjMesh
 from shellforgepy.simple import create_box, get_bounding_box, translate
 
 
 def _write_file(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _write_obj_mesh_builder_project(tmp_path: Path) -> tuple[Path, Path, Path]:
+    project_root = tmp_path / "mesh_project"
+    src_dir = project_root / "src" / "mesh_demo_pkg"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "mesh_generator.py",
+        "\n".join(
+            [
+                "from pathlib import Path",
+                "import numpy as np",
+                "from shellforgepy.produce.mesh_scene import ObjMesh",
+                "def make_terrain(*, texture_path):",
+                "    return ObjMesh(",
+                "        vertices=np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=float),",
+                "        faces=np.asarray([[0, 1, 2]], dtype=np.int64),",
+                "        name='terrain_mesh',",
+                "        color=(0.1, 0.2, 0.3),",
+                "        uvs=np.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]], dtype=float),",
+                "        texture_path=Path(texture_path),",
+                "        material_name='terrain_material',",
+                "        metadata={'kind': 'unit-test-terrain'},",
+                "    )",
+            ]
+        ),
+    )
+
+    texture_path = project_root / "terrain_texture.png"
+    texture_path.write_bytes(b"not-a-real-png-but-good-enough-for-copy")
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(
+        assemblies_dir / "terrain_assembly.yaml",
+        "\n".join(
+            [
+                'ShellforgepyBuilderVersion: "2026-03-27"',
+                "Builder:",
+                "  Visualization:",
+                "    preview:",
+                "      enabled: false",
+                "    arrange:",
+                "      export_obj: true",
+                "      export_step: false",
+                "      export_stl: false",
+                "      export_individual_parts: false",
+                "  Production:",
+                "    process_data:",
+                "      filament: petg",
+                "Parameters:",
+                "  texture_path:",
+                "    Type: String",
+                "Parts:",
+                "  Terrain:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: mesh_demo_pkg.mesh_generator.make_terrain",
+                "      Properties:",
+                "        texture_path:",
+                "          $ref: texture_path",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "globals:",
+                f"  texture_path: {texture_path}",
+                "assemblies:",
+                "  - name: terrain_assembly",
+                "    resource_file: terrain_assembly.yaml",
+                "    parameters:",
+                "      texture_path: !Ref texture_path",
+            ]
+        ),
+    )
+    return config_path, project_root / "repository", texture_path
 
 
 def test_resolve_globals_supports_refs_subs_and_exprs():
@@ -886,6 +968,138 @@ def test_build_from_file_writes_hashed_metadata_and_reuses_cache(monkeypatch, tm
     cached_results = builder.build_from_file(config_path)
     assert cached_results[0]["cache_hit"] is True
     assert cached_results[0]["parameter_hash"] == expected_hash
+
+
+def test_build_from_file_caches_obj_mesh_artifacts(tmp_path):
+    config_path, repository_path, texture_path = _write_obj_mesh_builder_project(
+        tmp_path
+    )
+
+    results = builder.build_from_file(
+        config_path,
+        assembly_names=["terrain_assembly"],
+        repository_dir=str(repository_path),
+        force=True,
+    )
+
+    result = results[0]
+    artifacts = result["artifacts"]
+    assert artifacts["leader_step"] is None
+    assert artifacts["leader_mesh"]["kind"] == "obj_mesh"
+    assert Path(artifacts["leader_mesh"]["path"]).suffix == ".npz"
+    assert Path(artifacts["leader_mesh"]["path"]).exists()
+    assert Path(artifacts["leader_mesh"]["metadata_path"]).exists()
+
+    entry = builder._artifact_entries_for_selector(result, "leader")[0]
+    imported = builder._import_artifact_entry(entry)
+    assert isinstance(imported, ObjMesh)
+    assert np.allclose(
+        imported.vertices,
+        np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+    )
+    assert np.array_equal(imported.faces, np.asarray([[0, 1, 2]], dtype=np.int64))
+    assert np.allclose(
+        imported.uvs,
+        np.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
+    )
+    assert imported.texture_path == str(texture_path)
+    assert imported.material_name == "terrain_material"
+    assert imported.color == (0.1, 0.2, 0.3)
+    assert imported.metadata == {"kind": "unit-test-terrain"}
+
+    cached_results = builder.build_from_file(
+        config_path,
+        assembly_names=["terrain_assembly"],
+        repository_dir=str(repository_path),
+    )
+    assert cached_results[0]["cache_hit"] is True
+    assert (
+        cached_results[0]["artifacts"]["leader_mesh"]["path"]
+        == artifacts["leader_mesh"]["path"]
+    )
+
+
+def test_run_builder_visualizes_obj_mesh_artifact_with_texture(tmp_path):
+    config_path, repository_path, _texture_path = _write_obj_mesh_builder_project(
+        tmp_path
+    )
+    workflow_config_path = tmp_path / "workflow_config.json"
+    workflow_config_path.write_text("{}", encoding="utf-8")
+    runs_dir = tmp_path / "runs"
+
+    result = builder.run_builder(
+        argparse.Namespace(
+            config_file=str(config_path),
+            assembly=["terrain_assembly"],
+            repository_dir=str(repository_path),
+            force=True,
+            visualize=True,
+            with_dependents=False,
+            production=False,
+            prototype=False,
+            slice=False,
+            upload=False,
+            open=False,
+            run_id="mesh_visual",
+            runs_dir=str(runs_dir),
+            master_settings_dir=None,
+            orca_executable=None,
+            orca_debug=None,
+            printer=None,
+            part_file=None,
+            process_file=None,
+            plate=None,
+            config=str(workflow_config_path),
+            verbose=False,
+        )
+    )
+
+    assert result == 0
+    run_dir = runs_dir / "terrain_assembly_run_mesh_visual"
+    obj_path = run_dir / "terrain_assembly.obj"
+    mtl_path = run_dir / "terrain_assembly.mtl"
+    copied_texture_path = run_dir / "terrain_texture.png"
+    assert obj_path.exists()
+    assert mtl_path.exists()
+    assert copied_texture_path.exists()
+    assert "usemtl terrain_material" in obj_path.read_text(encoding="utf-8")
+    assert "map_Kd terrain_texture.png" in mtl_path.read_text(encoding="utf-8")
+
+
+def test_run_builder_rejects_obj_mesh_in_production(tmp_path):
+    config_path, repository_path, _texture_path = _write_obj_mesh_builder_project(
+        tmp_path
+    )
+    workflow_config_path = tmp_path / "workflow_config.json"
+    workflow_config_path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="ObjMesh passthrough parts"):
+        builder.run_builder(
+            argparse.Namespace(
+                config_file=str(config_path),
+                assembly=["terrain_assembly"],
+                repository_dir=str(repository_path),
+                force=True,
+                visualize=False,
+                with_dependents=False,
+                production=True,
+                prototype=False,
+                slice=False,
+                upload=False,
+                open=False,
+                run_id="mesh_production",
+                runs_dir=str(tmp_path / "runs"),
+                master_settings_dir=None,
+                orca_executable=None,
+                orca_debug=None,
+                printer=None,
+                part_file=None,
+                process_file=None,
+                plate=None,
+                config=str(workflow_config_path),
+                verbose=False,
+            )
+        )
 
 
 def test_build_from_file_captures_metrics_snapshot_and_report(monkeypatch, tmp_path):
