@@ -4521,6 +4521,52 @@ def test_materialize_rule_parts_resolves_animation_from_metadata_context(
     assert parts[0]["animation"] == {"bed_y": [0, 325, 0]}
 
 
+def test_materialize_rule_parts_resolves_color_from_metadata_context(
+    monkeypatch, tmp_path
+):
+    leader_step = tmp_path / "house.step"
+    leader_step.write_text("house", encoding="utf-8")
+
+    metadata = {
+        "assembly_name": "rw8_local_scene",
+        "public_parameters": {
+            "scene_colors": {
+                "existing_house": [0.74, 0.88, 1.0],
+            }
+        },
+        "generator_kwargs": {},
+        "artifacts": {"leader_step": str(leader_step)},
+    }
+    resource_data = {
+        "Builder": {
+            "Visualization": {
+                "parts": [
+                    {
+                        "source": "self",
+                        "artifact": "leader",
+                        "name": "existing_house",
+                        "color": {"$ref": "scene_colors.existing_house"},
+                    }
+                ]
+            }
+        }
+    }
+
+    monkeypatch.setattr(builder, "_import_dependency_part", lambda path: f"part:{path}")
+
+    parts = builder._materialize_rule_parts(
+        metadata,
+        resource_data,
+        "visualization",
+        {"rw8_local_scene": metadata},
+        tmp_path,
+        None,
+    )
+
+    assert len(parts) == 1
+    assert parts[0]["color"] == [0.74, 0.88, 1.0]
+
+
 def test_materialize_rule_parts_resolves_rotation_animation_from_metadata_context(
     monkeypatch, tmp_path
 ):

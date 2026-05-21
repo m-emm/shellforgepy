@@ -720,6 +720,16 @@ def _resolve_inline_value(value: Any, context: Mapping[str, Any]) -> Any:
     def resolver(name: str) -> Any:
         if name in local:
             return local[name]
+        path_parts = name.split(".")
+        if path_parts[0] in local:
+            current = local[path_parts[0]]
+            for path_part in path_parts[1:]:
+                if isinstance(current, Mapping) and path_part in current:
+                    current = current[path_part]
+                else:
+                    break
+            else:
+                return current
         raise BuilderError(f"Unknown reference '{name}'")
 
     return _resolve_value(value, resolver)
@@ -4045,7 +4055,11 @@ def _materialize_rule_parts(
                     "skip_in_production": bool(rule.get("skip_in_production", False)),
                     "prod_rotation_angle": rule.get("prod_rotation_angle"),
                     "prod_rotation_axis": rule.get("prod_rotation_axis"),
-                    "color": rule.get("color"),
+                    "color": (
+                        _resolve_inline_value(rule.get("color"), part_context)
+                        if rule.get("color") is not None
+                        else None
+                    ),
                     "animation": (
                         _resolve_inline_value(rule.get("animation"), part_context)
                         if rule.get("animation") is not None
