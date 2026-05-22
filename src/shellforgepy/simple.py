@@ -124,8 +124,12 @@ from shellforgepy.geometry.modifications import (
     orient_for_flatness,
     orient_for_flatness_riemannian,
     orient_max_planar_area,
+    projected_footprint_area,
+    projected_footprint_paths_area,
+    projected_footprint_paths_from,
     slice_part,
     transform_with_function_tesselating,
+    union_projected_footprint_paths,
 )
 from shellforgepy.geometry.sheet_metal import (
     create_sheet_metal_bend,
@@ -265,6 +269,9 @@ __all__ = [
     "orient_for_flatness_riemannian",
     "orient_for_flatness",
     "orient_max_planar_area",
+    "projected_footprint_area",
+    "projected_footprint_paths_area",
+    "projected_footprint_paths_from",
     "ObjMesh",
     "PartCollector",
     "PartInfo",
@@ -288,6 +295,7 @@ __all__ = [
     "write_stl_binary",
     "transform_with_function_tesselating",
     "tessellate",
+    "union_projected_footprint_paths",
 ]
 
 

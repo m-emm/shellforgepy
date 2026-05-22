@@ -85,7 +85,21 @@ class LivingSpaceMetric:
     part_id: str | None = None
 
 
-METRICS_SNAPSHOT_SCHEMA_VERSION = 2
+@dataclass(frozen=True)
+class GroundCoverageFootprintMetric:
+    phase: str
+    part_id: str
+    square_meters: float
+
+
+@dataclass(frozen=True)
+class GroundCoveragePhaseMetric:
+    phase: str
+    property_square_meters: float
+    covered_square_meters: float
+
+
+METRICS_SNAPSHOT_SCHEMA_VERSION = 3
 
 _length_metrics: list[LengthMetric] = []
 _mark_metrics: list[MarkMetric] = []
@@ -93,6 +107,8 @@ _weight_metrics: list[WeightMetric] = []
 _building_cost_per_m3_map: dict[BuildingKind, float] = {}
 _building_cost_metrics: list[BuildingCostMetric] = []
 _living_space_metrics: list[LivingSpaceMetric] = []
+_ground_coverage_footprint_metrics: list[GroundCoverageFootprintMetric] = []
+_ground_coverage_phase_metrics: list[GroundCoveragePhaseMetric] = []
 _metrics_report_logged = False
 
 
@@ -108,6 +124,8 @@ def has_metrics() -> bool:
         or _weight_metrics
         or _building_cost_metrics
         or _living_space_metrics
+        or _ground_coverage_footprint_metrics
+        or _ground_coverage_phase_metrics
     )
 
 
@@ -122,6 +140,8 @@ def reset_metrics() -> None:
     _building_cost_per_m3_map.clear()
     _building_cost_metrics.clear()
     _living_space_metrics.clear()
+    _ground_coverage_footprint_metrics.clear()
+    _ground_coverage_phase_metrics.clear()
     _set_report_logged(False)
 
 
@@ -310,6 +330,59 @@ def record_living_space_metric(
     )
 
 
+def record_ground_coverage_footprint_metric(
+    phase: str,
+    part_id: str,
+    square_meters: float,
+) -> None:
+    phase = str(phase).strip()
+    if not phase:
+        raise ValueError("phase must be a non-empty string")
+    part_id = str(part_id).strip()
+    if not part_id:
+        raise ValueError("part_id must be a non-empty string")
+
+    normalized_square_meters = round(float(square_meters), 6)
+    if normalized_square_meters < 0:
+        raise ValueError("square_meters must be non-negative")
+
+    _set_report_logged(False)
+    _ground_coverage_footprint_metrics.append(
+        GroundCoverageFootprintMetric(
+            phase=phase,
+            part_id=part_id,
+            square_meters=normalized_square_meters,
+        )
+    )
+
+
+def record_ground_coverage_phase_metric(
+    phase: str,
+    property_square_meters: float,
+    covered_square_meters: float,
+) -> None:
+    phase = str(phase).strip()
+    if not phase:
+        raise ValueError("phase must be a non-empty string")
+
+    normalized_property_square_meters = round(float(property_square_meters), 6)
+    if normalized_property_square_meters <= 0:
+        raise ValueError("property_square_meters must be greater than zero")
+
+    normalized_covered_square_meters = round(float(covered_square_meters), 6)
+    if normalized_covered_square_meters < 0:
+        raise ValueError("covered_square_meters must be non-negative")
+
+    _set_report_logged(False)
+    _ground_coverage_phase_metrics.append(
+        GroundCoveragePhaseMetric(
+            phase=phase,
+            property_square_meters=normalized_property_square_meters,
+            covered_square_meters=normalized_covered_square_meters,
+        )
+    )
+
+
 def get_metric_mass_kg(metric: WeightMetric) -> float:
     if metric.mass_kg is not None:
         return metric.mass_kg
@@ -373,6 +446,10 @@ def _format_cubic_meters(cubic_meters: float) -> str:
 
 def _format_square_meters(square_meters: float) -> str:
     return f"{float(square_meters):.3f} m2"
+
+
+def _format_percentage(ratio: float) -> str:
+    return f"{float(ratio) * 100.0:.2f}%"
 
 
 def _format_building_cost(cost: float) -> str:
@@ -537,6 +614,64 @@ def build_living_space_report_lines() -> list[str]:
     return lines
 
 
+def _ground_coverage_phase_order() -> list[str]:
+    phases: list[str] = []
+    for metric in [
+        *_ground_coverage_phase_metrics,
+        *_ground_coverage_footprint_metrics,
+    ]:
+        if metric.phase not in phases:
+            phases.append(metric.phase)
+    return phases
+
+
+def build_ground_coverage_report_lines() -> list[str]:
+    if not _ground_coverage_phase_metrics and not _ground_coverage_footprint_metrics:
+        return ["Ground coverage metrics: no metrics recorded."]
+
+    lines = ["Ground coverage metrics:"]
+    if _ground_coverage_phase_metrics:
+        property_square_meters = _ground_coverage_phase_metrics[
+            0
+        ].property_square_meters
+        lines.append(f"Property area: {_format_square_meters(property_square_meters)}")
+
+    footprint_totals_by_phase_and_part: dict[tuple[str, str], float] = defaultdict(
+        float
+    )
+    footprint_part_order_by_phase: dict[str, list[str]] = defaultdict(list)
+    for metric in _ground_coverage_footprint_metrics:
+        key = (metric.phase, metric.part_id)
+        footprint_totals_by_phase_and_part[key] += metric.square_meters
+        if metric.part_id not in footprint_part_order_by_phase[metric.phase]:
+            footprint_part_order_by_phase[metric.phase].append(metric.part_id)
+
+    phase_metrics_by_phase: dict[str, GroundCoveragePhaseMetric] = {}
+    for metric in _ground_coverage_phase_metrics:
+        phase_metrics_by_phase[metric.phase] = metric
+
+    for phase in _ground_coverage_phase_order():
+        phase_metric = phase_metrics_by_phase.get(phase)
+        if phase_metric is not None:
+            coverage_ratio = (
+                phase_metric.covered_square_meters / phase_metric.property_square_meters
+            )
+            lines.append(
+                f"{phase}: {_format_square_meters(phase_metric.covered_square_meters)} "
+                f"/ {_format_square_meters(phase_metric.property_square_meters)} "
+                f"= {_format_percentage(coverage_ratio)}"
+            )
+        else:
+            lines.append(f"{phase}:")
+
+        for part_id in footprint_part_order_by_phase.get(phase, []):
+            lines.append(
+                f"  {part_id}: {_format_square_meters(round(footprint_totals_by_phase_and_part[(phase, part_id)], 3))}"
+            )
+
+    return lines
+
+
 def build_weight_report_lines() -> list[str]:
     if not _weight_metrics:
         return ["Weight metrics: no metrics recorded."]
@@ -590,6 +725,8 @@ def build_metrics_report_lines() -> list[str]:
         report_sections.append(build_building_cost_report_lines())
     if _living_space_metrics:
         report_sections.append(build_living_space_report_lines())
+    if _ground_coverage_phase_metrics or _ground_coverage_footprint_metrics:
+        report_sections.append(build_ground_coverage_report_lines())
 
     for section in report_sections:
         if lines:
@@ -634,6 +771,12 @@ def snapshot_metrics() -> dict[str, Any]:
             for metric in _building_cost_metrics
         ],
         "living_space_metrics": [asdict(metric) for metric in _living_space_metrics],
+        "ground_coverage_footprint_metrics": [
+            asdict(metric) for metric in _ground_coverage_footprint_metrics
+        ],
+        "ground_coverage_phase_metrics": [
+            asdict(metric) for metric in _ground_coverage_phase_metrics
+        ],
     }
 
 
@@ -647,6 +790,8 @@ def _normalize_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
             "building_cost_per_m3_map": {},
             "building_cost_metrics": [],
             "living_space_metrics": [],
+            "ground_coverage_footprint_metrics": [],
+            "ground_coverage_phase_metrics": [],
         }
 
     return {
@@ -661,6 +806,12 @@ def _normalize_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         ),
         "building_cost_metrics": list(snapshot.get("building_cost_metrics") or []),
         "living_space_metrics": list(snapshot.get("living_space_metrics") or []),
+        "ground_coverage_footprint_metrics": list(
+            snapshot.get("ground_coverage_footprint_metrics") or []
+        ),
+        "ground_coverage_phase_metrics": list(
+            snapshot.get("ground_coverage_phase_metrics") or []
+        ),
     }
 
 
@@ -672,6 +823,8 @@ def snapshot_has_metrics(snapshot: Mapping[str, Any] | None) -> bool:
         or normalized["weight_metrics"]
         or normalized["building_cost_metrics"]
         or normalized["living_space_metrics"]
+        or normalized["ground_coverage_footprint_metrics"]
+        or normalized["ground_coverage_phase_metrics"]
     )
 
 
@@ -761,6 +914,24 @@ def restore_metrics(
             )
         )
 
+    for item in normalized["ground_coverage_footprint_metrics"]:
+        _ground_coverage_footprint_metrics.append(
+            GroundCoverageFootprintMetric(
+                phase=str(item["phase"]),
+                part_id=str(item["part_id"]),
+                square_meters=round(float(item["square_meters"]), 6),
+            )
+        )
+
+    for item in normalized["ground_coverage_phase_metrics"]:
+        _ground_coverage_phase_metrics.append(
+            GroundCoveragePhaseMetric(
+                phase=str(item["phase"]),
+                property_square_meters=round(float(item["property_square_meters"]), 6),
+                covered_square_meters=round(float(item["covered_square_meters"]), 6),
+            )
+        )
+
     _set_report_logged(False)
 
 
@@ -802,6 +973,8 @@ def write_metrics_report(
 __all__ = [
     "BuildingCostMetric",
     "BuildingKind",
+    "GroundCoverageFootprintMetric",
+    "GroundCoveragePhaseMetric",
     "LengthMetric",
     "LivingSpaceMetric",
     "MarkMetric",
@@ -811,6 +984,7 @@ __all__ = [
     "build_building_cost_report_lines",
     "build_building_cost_totals_by_assembly_id",
     "build_cut_stock_report_lines",
+    "build_ground_coverage_report_lines",
     "build_living_space_report_lines",
     "build_living_space_totals_by_assembly_id",
     "build_metrics_report_lines",
@@ -826,6 +1000,8 @@ __all__ = [
     "log_metrics_report",
     "merge_metrics_snapshot",
     "record_building_cost_metric",
+    "record_ground_coverage_footprint_metric",
+    "record_ground_coverage_phase_metric",
     "record_length_metric",
     "record_living_space_metric",
     "record_mark_metric",

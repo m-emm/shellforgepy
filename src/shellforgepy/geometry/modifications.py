@@ -37,6 +37,10 @@ _FILLED_PART_FALLBACK_WARNING = (
     "pyclipr is not installed; using approximate slow raster fallback for "
     "filled_part_from. Install shellforgepy[clipper] for exact polygon clipping."
 )
+_PROJECTED_FOOTPRINT_FALLBACK_WARNING = (
+    "pyclipr is not installed; using approximate slow raster fallback for "
+    "projected footprint metrics. Install shellforgepy[clipper] for exact polygon clipping."
+)
 
 
 def _vertex_to_array(vertex):
@@ -1465,6 +1469,35 @@ def _filled_part_unscaled_path(path):
     return [(p[0] / _FILLED_PART_SCALE, p[1] / _FILLED_PART_SCALE) for p in path]
 
 
+def projected_footprint_paths_area(footprint_paths):
+    """Return the area enclosed by projected XY footprint paths."""
+
+    area = 0.0
+    for path in footprint_paths:
+        if len(path) < 3:
+            continue
+        signed_area2 = sum(
+            path[index][0] * path[(index + 1) % len(path)][1]
+            - path[(index + 1) % len(path)][0] * path[index][1]
+            for index in range(len(path))
+        )
+        if signed_area2 > 0:
+            area += signed_area2 * 0.5
+    return area
+
+
+def _scaled_projected_footprint_paths_from(part):
+    vertices, triangles = tessellate(part)
+    paths = []
+
+    for triangle in triangles:
+        path = _projected_triangle_path_for_filled_part(vertices, triangle)
+        if path is not None:
+            paths.append(path)
+
+    return paths
+
+
 def _union_projected_paths_with_pyclipr(paths):
     import pyclipr
 
@@ -1476,6 +1509,75 @@ def _union_projected_paths_with_pyclipr(paths):
     return pc.execute(
         pyclipr.Union,
         pyclipr.FillRule.NonZero,
+    )
+
+
+def _union_scaled_projected_footprint_paths(
+    paths, *, fallback_cell_size=1.0, fallback_max_cells=50_000
+):
+    try:
+        return _union_projected_paths_with_pyclipr(paths)
+    except ImportError:
+        _logger.warning(_PROJECTED_FOOTPRINT_FALLBACK_WARNING)
+        return _filled_part_raster_fallback_paths(
+            paths,
+            fallback_cell_size,
+            fallback_max_cells,
+        )
+
+
+def projected_footprint_paths_from(
+    part, *, fallback_cell_size=1.0, fallback_max_cells=50_000
+):
+    """
+    Return unioned XY footprint paths for a part.
+
+    The returned paths use normal model coordinates, not the integer-scaled
+    coordinates used internally for polygon clipping.
+    """
+
+    return union_projected_footprint_paths(
+        [part],
+        fallback_cell_size=fallback_cell_size,
+        fallback_max_cells=fallback_max_cells,
+    )
+
+
+def union_projected_footprint_paths(
+    parts, *, fallback_cell_size=1.0, fallback_max_cells=50_000
+):
+    """
+    Return unioned XY footprint paths for multiple parts.
+
+    This projects every tessellated triangle to XY, unions the projected paths,
+    and returns the resulting outline paths in model units.
+    """
+
+    paths = []
+    for part in parts:
+        if part is None:
+            continue
+        paths.extend(_scaled_projected_footprint_paths_from(part))
+
+    footprint_paths = _union_scaled_projected_footprint_paths(
+        paths,
+        fallback_cell_size=fallback_cell_size,
+        fallback_max_cells=fallback_max_cells,
+    )
+    return [_filled_part_unscaled_path(path) for path in footprint_paths]
+
+
+def projected_footprint_area(
+    part, *, fallback_cell_size=1.0, fallback_max_cells=50_000
+):
+    """Return the unioned XY footprint area of a part."""
+
+    return projected_footprint_paths_area(
+        projected_footprint_paths_from(
+            part,
+            fallback_cell_size=fallback_cell_size,
+            fallback_max_cells=fallback_max_cells,
+        )
     )
 
 
@@ -1658,23 +1760,19 @@ def _grid_rectangles(filled):
         yield run[0], run[1], start_row, filled.shape[0]
 
 
-def _filled_part_raster_fallback(paths, min_z, max_z, cell_size, max_cells):
+def _filled_part_raster_fallback_paths(paths, cell_size, max_cells):
     if not paths:
-        return None
+        return []
 
     cell_size = float(cell_size)
     if cell_size <= 0:
         raise ValueError("fallback_cell_size must be greater than zero")
 
-    height = max_z - min_z
-    if height <= 0:
-        return None
-
     triangles = [
         _filled_part_unscaled_path(path) for path in paths if len(set(path)) >= 3
     ]
     if not triangles:
-        return None
+        return []
 
     xs = [point[0] for triangle in triangles for point in triangle]
     ys = [point[1] for triangle in triangles for point in triangle]
@@ -1686,7 +1784,7 @@ def _filled_part_raster_fallback(paths, min_z, max_z, cell_size, max_cells):
     column_count = int(math.ceil((max_x - min_x) / cell_size))
     row_count = int(math.ceil((max_y - min_y) / cell_size))
     if column_count <= 0 or row_count <= 0:
-        return None
+        return []
 
     cell_count = column_count * row_count
     if max_cells is not None and cell_count > max_cells:
@@ -1733,9 +1831,9 @@ def _filled_part_raster_fallback(paths, min_z, max_z, cell_size, max_cells):
 
     filled = occupied | ~_exterior_empty_cells(occupied)
     if not np.any(filled):
-        return None
+        return []
 
-    retval = None
+    footprint_paths = []
     for start_column, end_column, start_row, end_row in _grid_rectangles(filled):
         rect_min_x = min_x + start_column * cell_size
         rect_max_x = min(max_x, min_x + end_column * cell_size)
@@ -1745,19 +1843,28 @@ def _filled_part_raster_fallback(paths, min_z, max_z, cell_size, max_cells):
         if rect_max_x <= rect_min_x or rect_max_y <= rect_min_y:
             continue
 
-        rect_part = create_box(
-            rect_max_x - rect_min_x,
-            rect_max_y - rect_min_y,
-            height,
-            origin=(rect_min_x, rect_min_y, min_z),
+        footprint_paths.append(
+            [
+                _scale_filled_part_point((rect_min_x, rect_min_y)),
+                _scale_filled_part_point((rect_max_x, rect_min_y)),
+                _scale_filled_part_point((rect_max_x, rect_max_y)),
+                _scale_filled_part_point((rect_min_x, rect_max_y)),
+            ]
         )
 
-        if retval is None:
-            retval = rect_part
-        else:
-            retval = retval.fuse(rect_part)
+    return footprint_paths
 
-    return retval
+
+def _filled_part_raster_fallback(paths, min_z, max_z, cell_size, max_cells):
+    height = max_z - min_z
+    if height <= 0:
+        return None
+
+    return _extrude_filled_footprint_paths(
+        _filled_part_raster_fallback_paths(paths, cell_size, max_cells),
+        min_z,
+        max_z,
+    )
 
 
 def filled_part_from(part, *, fallback_cell_size=1.0, fallback_max_cells=50_000):
@@ -1768,14 +1875,7 @@ def filled_part_from(part, *, fallback_cell_size=1.0, fallback_max_cells=50_000)
     the function falls back to a deliberately slow raster approximation.
     """
 
-    vertices, triangles = tessellate(part)
-    paths = []
-
-    for triangle in triangles:
-        path = _projected_triangle_path_for_filled_part(vertices, triangle)
-        if path is not None:
-            paths.append(path)
-
+    paths = _scaled_projected_footprint_paths_from(part)
     bounding_box = get_bounding_box(part)
     min_z = bounding_box[0][2]
     max_z = bounding_box[1][2]

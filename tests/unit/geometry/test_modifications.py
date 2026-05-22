@@ -19,8 +19,11 @@ from shellforgepy.geometry.modifications import (
     orient_for_flatness,
     orient_for_flatness_riemannian,
     orient_max_planar_area,
+    projected_footprint_area,
+    projected_footprint_paths_area,
     slice_part,
     transform_with_function_tesselating,
+    union_projected_footprint_paths,
 )
 from shellforgepy.simple import (
     Alignment,
@@ -133,6 +136,31 @@ def test_filled_part_from_raster_fallback_preserves_concave_footprint(monkeypatc
 
     assert np.isclose(get_volume(filled), 14, rtol=0.01)
     assert get_volume(filled) < 25
+
+
+def test_projected_footprint_area_matches_box_xy_area():
+    part = create_box(3, 4, 5, origin=(10, -2, 7))
+
+    assert np.isclose(projected_footprint_area(part), 12)
+
+
+def test_union_projected_footprint_paths_counts_overlap_once():
+    left = create_box(2, 2, 1)
+    right = create_box(2, 2, 1, origin=(1, 0, 0))
+
+    paths = union_projected_footprint_paths([left, right])
+
+    assert np.isclose(projected_footprint_paths_area(paths), 6)
+
+
+def test_projected_footprint_area_counts_vertical_hole_as_covered():
+    part = _create_holed_box_for_filled_part()
+
+    assert np.isclose(
+        projected_footprint_area(part, fallback_cell_size=0.5),
+        100,
+        rtol=0.03,
+    )
 
 
 def _create_centered_fit_between_fixture():
