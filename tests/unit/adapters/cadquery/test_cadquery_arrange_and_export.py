@@ -396,7 +396,9 @@ def test_arrange_and_export_obj_mesh_cache_reuses_cached_meshes(monkeypatch):
         destination_path.write_text("obj", encoding="utf-8")
         destination_path.with_suffix(".mtl").write_text("mtl", encoding="utf-8")
 
-    monkeypatch.setattr(arrange_and_export_module, "adapter_tesellate", fake_tessellate)
+    monkeypatch.setattr(
+        arrange_and_export_module, "adapter_tessellate", fake_tessellate
+    )
     monkeypatch.setattr(
         arrange_and_export_module, "adapter_get_adapter_id", lambda: "test-adapter"
     )
@@ -435,7 +437,7 @@ def test_arrange_and_export_obj_mesh_cache_reuses_cached_meshes(monkeypatch):
 
         monkeypatch.setattr(
             arrange_and_export_module,
-            "adapter_tesellate",
+            "adapter_tessellate",
             lambda *args, **kwargs: pytest.fail(
                 "cached mesh should avoid tessellation"
             ),
@@ -475,7 +477,9 @@ def test_arrange_and_export_obj_preserves_metadata_for_export(monkeypatch):
         destination_path.write_text("obj", encoding="utf-8")
         destination_path.with_suffix(".mtl").write_text("mtl", encoding="utf-8")
 
-    monkeypatch.setattr(arrange_and_export_module, "adapter_tesellate", fake_tessellate)
+    monkeypatch.setattr(
+        arrange_and_export_module, "adapter_tessellate", fake_tessellate
+    )
     monkeypatch.setattr(
         arrange_and_export_module, "export_colored_meshes_to_obj", fake_export
     )

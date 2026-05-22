@@ -88,7 +88,7 @@ def test_build_colored_meshes_passes_obj_mesh_through_without_tessellation(
 
     monkeypatch.setattr(
         arrange_and_export_module,
-        "adapter_tesellate",
+        "adapter_tessellate",
         lambda *args, **kwargs: pytest.fail("ObjMesh should not be tessellated"),
     )
 
@@ -691,7 +691,7 @@ def test_build_colored_meshes_migrates_legacy_mesh_cache(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         arrange_and_export_module,
-        "adapter_tesellate",
+        "adapter_tessellate",
         lambda *args, **kwargs: pytest.fail("legacy cache should be reused"),
     )
     monkeypatch.setattr(
@@ -757,7 +757,9 @@ def test_build_colored_meshes_recovers_from_truncated_cache(
             np.asarray([[0, 1, 2]], dtype=np.int64),
         )
 
-    monkeypatch.setattr(arrange_and_export_module, "adapter_tesellate", fake_tessellate)
+    monkeypatch.setattr(
+        arrange_and_export_module, "adapter_tessellate", fake_tessellate
+    )
     monkeypatch.setattr(
         arrange_and_export_module, "adapter_get_adapter_id", lambda: "test-adapter"
     )

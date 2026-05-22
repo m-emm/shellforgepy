@@ -419,7 +419,7 @@ def get_vertex_points(obj) -> list:
     return points
 
 
-def tesellate(obj, tolerance=0.1, angular_tolerance=0.1):
+def tessellate(obj, tolerance=0.1, angular_tolerance=0.1):
     """Tessellate a FreeCAD shape into vertices and triangle indices.
 
     Args:
@@ -619,7 +619,7 @@ def export_solid_to_obj(
     material_name: str = "material_0",
 ) -> None:
     """Export a FreeCAD solid to an OBJ file with optional color via MTL."""
-    vertices, triangles = tesellate(
+    vertices, triangles = tessellate(
         solid, tolerance=tolerance, angular_tolerance=angular_tolerance
     )
     export_mesh_to_obj(
@@ -663,7 +663,7 @@ def export_colored_parts_to_obj(
                 name,
             )
 
-        vertices, triangles = tesellate(
+        vertices, triangles = tessellate(
             solid, tolerance=tolerance, angular_tolerance=angular_tolerance
         )
         meshes.append((vertices, triangles, name, color, animation))

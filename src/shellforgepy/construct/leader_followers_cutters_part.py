@@ -17,10 +17,12 @@ as new CAD backends are added to the framework.
 
 import copy
 import logging
+import math
 from types import SimpleNamespace
 
 from shellforgepy.adapters._adapter import (
     copy_part,
+    get_adapter_id,
     get_bounding_box,
     mirror_part_native,
     rotate_part_native,
@@ -49,6 +51,57 @@ def _ensure_list(items):
     if not isinstance(items, (list, tuple)):
         return [items]
     return list(items)
+
+
+def _to_xyz_tuple(vector):
+    if hasattr(vector, "toTuple"):
+        vector = vector.toTuple()
+    elif all(hasattr(vector, attr) for attr in ("x", "y", "z")):
+        vector = (vector.x, vector.y, vector.z)
+    elif all(hasattr(vector, attr) for attr in ("X", "Y", "Z")):
+        vector = (vector.X, vector.Y, vector.Z)
+    return (float(vector[0]), float(vector[1]), float(vector[2]))
+
+
+def _axis_from_native_rotation_args(args):
+    if len(args) < 3:
+        raise ValueError("Rotation arguments must include center, axis/end, and angle")
+
+    base = _to_xyz_tuple(args[0])
+    axis_or_end = _to_xyz_tuple(args[1])
+    angle = float(args[2])
+    adapter_id = get_adapter_id()
+
+    if adapter_id == "cadquery":
+        axis = tuple(axis_or_end[index] - base[index] for index in range(3))
+    else:
+        axis = axis_or_end
+    return axis, angle
+
+
+def _rotate_direction_vector(vector, axis, angle_degrees):
+    x, y, z = _to_xyz_tuple(vector)
+    axis_x, axis_y, axis_z = _to_xyz_tuple(axis)
+    axis_length = math.sqrt(axis_x * axis_x + axis_y * axis_y + axis_z * axis_z)
+    if axis_length <= 0:
+        raise ValueError("Cannot rotate direction vector around a zero-length axis")
+
+    axis_x /= axis_length
+    axis_y /= axis_length
+    axis_z /= axis_length
+    angle = math.radians(float(angle_degrees))
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    dot = x * axis_x + y * axis_y + z * axis_z
+    cross_x = axis_y * z - axis_z * y
+    cross_y = axis_z * x - axis_x * z
+    cross_z = axis_x * y - axis_y * x
+
+    return (
+        x * cos_a + cross_x * sin_a + axis_x * dot * (1.0 - cos_a),
+        y * cos_a + cross_y * sin_a + axis_y * dot * (1.0 - cos_a),
+        z * cos_a + cross_z * sin_a + axis_z * dot * (1.0 - cos_a),
+    )
 
 
 class LeaderFollowersCuttersPart:
@@ -143,6 +196,8 @@ class LeaderFollowersCuttersPart:
         follower_names=None,
         cutter_names=None,
         non_production_names=None,
+        direction_vectors=None,
+        direction_vector_names=None,
     ):
         """Initialize a composite part with leader and associated components.
 
@@ -151,10 +206,12 @@ class LeaderFollowersCuttersPart:
             followers: Single part or list of parts that move with the leader
             cutters: Single part or list of shapes for cutting other parts
             non_production_parts: Single part or list of reference/visualization parts
+            direction_vectors: Single vector or list of vectors that rotate with the part
             additional_data: Dictionary of arbitrary metadata for this composite
             follower_names: List of names for followers (must match count)
             cutter_names: List of names for cutters (must match count)
             non_production_names: List of names for non-production parts (must match count)
+            direction_vector_names: List of names for direction vectors (must match count)
 
         Raises:
             AssertionError: If name list lengths don't match corresponding part counts
@@ -173,6 +230,9 @@ class LeaderFollowersCuttersPart:
         self.followers = _ensure_list(followers)
         self.cutters = _ensure_list(cutters)
         self.non_production_parts = _ensure_list(non_production_parts)
+        self.direction_vectors = [
+            _to_xyz_tuple(vector) for vector in _ensure_list(direction_vectors)
+        ]
         self.additional_data = additional_data if additional_data is not None else {}
         assert isinstance(self.additional_data, dict)
 
@@ -193,6 +253,12 @@ class LeaderFollowersCuttersPart:
             assert len(non_production_names) == len(self.non_production_parts)
             for idx, name in enumerate(non_production_names):
                 self.non_production_indices_by_name[name] = idx
+
+        self.direction_vector_indices_by_name = {}
+        if direction_vector_names is not None:
+            assert len(direction_vector_names) == len(self.direction_vectors)
+            for idx, name in enumerate(direction_vector_names):
+                self.direction_vector_indices_by_name[name] = idx
 
     def use_as_cutter_on(self, part):
         """Apply all cutters from this composite to a target part.
@@ -322,6 +388,21 @@ class LeaderFollowersCuttersPart:
             f"Non-production part with name '{name}' not found. Available names: {sorted(self.non_production_indices_by_name.keys())}"
         )
 
+    def get_direction_vector_index_by_name(self, name):
+        """Get the index of a named direction vector."""
+
+        return self.direction_vector_indices_by_name.get(name, None)
+
+    def get_named_direction_vector(self, name):
+        """Return a named direction vector."""
+
+        index = self.get_direction_vector_index_by_name(name)
+        if index is not None:
+            return self.direction_vectors[index]
+        raise KeyError(
+            f"Direction vector with name '{name}' not found. Available names: {sorted(self.direction_vector_indices_by_name.keys())}"
+        )
+
     def align_translation_from_follower(
         self, name, to, alignment, axes=None, stack_gap=0
     ):
@@ -401,10 +482,40 @@ class LeaderFollowersCuttersPart:
             raise ValueError(f"Non-production part name '{name}' already exists.")
         if name in self.follower_indices_by_name:
             raise ValueError(
-                f"Name '{name}' already exists as a follower. Names must be unique across followers, cutters, and non-production parts."
+                f"Name '{name}' already exists as a follower. Names must be unique across followers, cutters, non-production parts, and direction vectors."
+            )
+        if name in self.cutter_indices_by_name:
+            raise ValueError(
+                f"Name '{name}' already exists as a cutter. Names must be unique across followers, cutters, non-production parts, and direction vectors."
+            )
+        if name in self.direction_vector_indices_by_name:
+            raise ValueError(
+                f"Name '{name}' already exists as a direction vector. Names must be unique across followers, cutters, non-production parts, and direction vectors."
             )
         self.non_production_parts.append(part)
         self.non_production_indices_by_name[name] = len(self.non_production_parts) - 1
+
+    def add_named_direction_vector(self, vector, name):
+        """Add a direction vector with a specified name."""
+
+        if not isinstance(name, str):
+            raise TypeError("Direction vector name must be a string.")
+        if name in self.direction_vector_indices_by_name:
+            raise ValueError(f"Direction vector name '{name}' already exists.")
+        if name in self.follower_indices_by_name:
+            raise ValueError(
+                f"Name '{name}' already exists as a follower. Names must be unique across followers, cutters, non-production parts, and direction vectors."
+            )
+        if name in self.cutter_indices_by_name:
+            raise ValueError(
+                f"Name '{name}' already exists as a cutter. Names must be unique across followers, cutters, non-production parts, and direction vectors."
+            )
+        if name in self.non_production_indices_by_name:
+            raise ValueError(
+                f"Name '{name}' already exists as a non-production part. Names must be unique across followers, cutters, non-production parts, and direction vectors."
+            )
+        self.direction_vectors.append(_to_xyz_tuple(vector))
+        self.direction_vector_indices_by_name[name] = len(self.direction_vectors) - 1
 
     def add_named_follower(self, follower, name):
         """Add a follower part with a specified name.
@@ -439,6 +550,10 @@ class LeaderFollowersCuttersPart:
         if name in self.non_production_indices_by_name:
             raise ValueError(
                 f"Name '{name}' already exists as a non-production part. Names must be unique across followers, cutters, and non-production parts."
+            )
+        if name in self.direction_vector_indices_by_name:
+            raise ValueError(
+                f"Name '{name}' already exists as a direction vector. Names must be unique across followers, cutters, non-production parts, and direction vectors."
             )
 
         self.followers.append(follower)
@@ -486,6 +601,14 @@ class LeaderFollowersCuttersPart:
         return [
             (name, self.cutters[idx])
             for name, idx in self.cutter_indices_by_name.items()
+        ]
+
+    def get_named_direction_vector_items(self):
+        """Get a list of (name, vector) tuples for all named direction vectors."""
+
+        return [
+            (name, self.direction_vectors[idx])
+            for name, idx in self.direction_vector_indices_by_name.items()
         ]
 
     def get_named_follower(self, name):
@@ -543,6 +666,14 @@ class LeaderFollowersCuttersPart:
             if idx not in non_production_indices_with_name:
                 retval.non_production_parts.append(_clone_part(non_production_part))
 
+        direction_vector_indices_with_name = set()
+        for name, idx in self.direction_vector_indices_by_name.items():
+            retval.add_named_direction_vector(self.direction_vectors[idx], name)
+            direction_vector_indices_with_name.add(idx)
+        for idx, direction_vector in enumerate(self.direction_vectors):
+            if idx not in direction_vector_indices_with_name:
+                retval.direction_vectors.append(tuple(direction_vector))
+
         # now add the named parts from other
         other_follower_indices_with_name = set()
         for name, idx in other.follower_indices_by_name.items():
@@ -571,6 +702,14 @@ class LeaderFollowersCuttersPart:
             if idx not in other_non_production_indices_with_name:
                 retval.non_production_parts.append(_clone_part(non_production_part))
 
+        other_direction_vector_indices_with_name = set()
+        for name, idx in other.direction_vector_indices_by_name.items():
+            retval.add_named_direction_vector(other.direction_vectors[idx], name)
+            other_direction_vector_indices_with_name.add(idx)
+        for idx, direction_vector in enumerate(other.direction_vectors):
+            if idx not in other_direction_vector_indices_with_name:
+                retval.direction_vectors.append(tuple(direction_vector))
+
         return retval
 
     def prefixed_copy(self, name_prefix):
@@ -597,6 +736,10 @@ class LeaderFollowersCuttersPart:
             f"{name_prefix}_{name}": idx
             for name, idx in self.non_production_indices_by_name.items()
         }
+        result.direction_vector_indices_by_name = {
+            f"{name_prefix}_{name}": idx
+            for name, idx in self.direction_vector_indices_by_name.items()
+        }
         return result
 
     def add_named_cutter(self, cutter, name):
@@ -615,6 +758,18 @@ class LeaderFollowersCuttersPart:
             raise ValueError("Cutter must be a single part, not a list or tuple.")
         if name in self.cutter_indices_by_name:
             raise ValueError(f"Cutter name '{name}' already exists.")
+        if name in self.follower_indices_by_name:
+            raise ValueError(
+                f"Name '{name}' already exists as a follower. Names must be unique across followers, cutters, non-production parts, and direction vectors."
+            )
+        if name in self.non_production_indices_by_name:
+            raise ValueError(
+                f"Name '{name}' already exists as a non-production part. Names must be unique across followers, cutters, non-production parts, and direction vectors."
+            )
+        if name in self.direction_vector_indices_by_name:
+            raise ValueError(
+                f"Name '{name}' already exists as a direction vector. Names must be unique across followers, cutters, non-production parts, and direction vectors."
+            )
 
         if isinstance(cutter, LeaderFollowersCuttersPart):
             raise ValueError(
@@ -695,11 +850,15 @@ class LeaderFollowersCuttersPart:
             [_clone_part(cutter) for cutter in self.cutters],
             [_clone_part(non_prod) for non_prod in self.non_production_parts],
             additional_data=copy.deepcopy(self.additional_data),
+            direction_vectors=[tuple(vector) for vector in self.direction_vectors],
         )
         result.follower_indices_by_name = self.follower_indices_by_name.copy()
         result.cutter_indices_by_name = self.cutter_indices_by_name.copy()
         result.non_production_indices_by_name = (
             self.non_production_indices_by_name.copy()
+        )
+        result.direction_vector_indices_by_name = (
+            self.direction_vector_indices_by_name.copy()
         )
         return result
 
@@ -839,12 +998,37 @@ class LeaderFollowersCuttersPart:
                     self.non_production_parts
                 )
 
+            new_direction_vectors = [
+                tuple(vector)
+                for vector in (self.direction_vectors + other.direction_vectors)
+            ]
+
+            # Merge direction vector names, checking for collisions
+            new_direction_vector_indices_by_name = (
+                self.direction_vector_indices_by_name.copy()
+            )
+            for other_name, other_idx in other.direction_vector_indices_by_name.items():
+                if other_name in new_direction_vector_indices_by_name:
+                    raise ValueError(
+                        f"Direction vector name collision: '{other_name}' already exists"
+                    )
+                new_direction_vector_indices_by_name[other_name] = other_idx + len(
+                    self.direction_vectors
+                )
+
             result = LeaderFollowersCuttersPart(
-                new_leader, new_followers, new_cutters, new_non_prod
+                new_leader,
+                new_followers,
+                new_cutters,
+                new_non_prod,
+                direction_vectors=new_direction_vectors,
             )
             result.follower_indices_by_name = new_follower_indices_by_name
             result.cutter_indices_by_name = new_cutter_indices_by_name
             result.non_production_indices_by_name = new_non_production_indices_by_name
+            result.direction_vector_indices_by_name = (
+                new_direction_vector_indices_by_name
+            )
             return result
 
         other_shape = _unwrap_named_part(other)
@@ -860,11 +1044,15 @@ class LeaderFollowersCuttersPart:
             [_clone_part(c) for c in self.cutters],
             [_clone_part(n) for n in self.non_production_parts],
             additional_data=new_additinoal_data,
+            direction_vectors=[tuple(vector) for vector in self.direction_vectors],
         )
         result.follower_indices_by_name = self.follower_indices_by_name.copy()
         result.cutter_indices_by_name = self.cutter_indices_by_name.copy()
         result.non_production_indices_by_name = (
             self.non_production_indices_by_name.copy()
+        )
+        result.direction_vector_indices_by_name = (
+            self.direction_vector_indices_by_name.copy()
         )
         return result
 
@@ -906,11 +1094,15 @@ class LeaderFollowersCuttersPart:
                 [_clone_part(cutter) for cutter in self.cutters],
                 [_clone_part(non_prod) for non_prod in self.non_production_parts],
                 additional_data=copy.deepcopy(self.additional_data),
+                direction_vectors=[tuple(vector) for vector in self.direction_vectors],
             )
             result.follower_indices_by_name = self.follower_indices_by_name.copy()
             result.cutter_indices_by_name = self.cutter_indices_by_name.copy()
             result.non_production_indices_by_name = (
                 self.non_production_indices_by_name.copy()
+            )
+            result.direction_vector_indices_by_name = (
+                self.direction_vector_indices_by_name.copy()
             )
             return result
 
@@ -928,11 +1120,15 @@ class LeaderFollowersCuttersPart:
             [_clone_part(cutter) for cutter in self.cutters],
             [_clone_part(non_prod) for non_prod in self.non_production_parts],
             additional_data=copy.deepcopy(self.additional_data),
+            direction_vectors=[tuple(vector) for vector in self.direction_vectors],
         )
         result.follower_indices_by_name = self.follower_indices_by_name.copy()
         result.cutter_indices_by_name = self.cutter_indices_by_name.copy()
         result.non_production_indices_by_name = (
             self.non_production_indices_by_name.copy()
+        )
+        result.direction_vector_indices_by_name = (
+            self.direction_vector_indices_by_name.copy()
         )
         return result
 
@@ -986,6 +1182,11 @@ class LeaderFollowersCuttersPart:
         self.cutters = [cutter.rotate(*args) for cutter in self.cutters]
         self.non_production_parts = [
             part.rotate(*args) for part in self.non_production_parts
+        ]
+        axis, angle = _axis_from_native_rotation_args(args)
+        self.direction_vectors = [
+            _rotate_direction_vector(vector, axis, angle)
+            for vector in self.direction_vectors
         ]
         return self
 
@@ -1073,11 +1274,17 @@ class LeaderFollowersCuttersPart:
                 [cutter for cutter in transformed_result.cutters],
                 [part for part in transformed_result.non_production_parts],
                 additional_data=copy.deepcopy(self.additional_data),
+                direction_vectors=[
+                    tuple(vector) for vector in transformed_result.direction_vectors
+                ],
             )
             result.follower_indices_by_name = self.follower_indices_by_name.copy()
             result.cutter_indices_by_name = self.cutter_indices_by_name.copy()
             result.non_production_indices_by_name = (
                 self.non_production_indices_by_name.copy()
+            )
+            result.direction_vector_indices_by_name = (
+                self.direction_vector_indices_by_name.copy()
             )
             return result
 
@@ -1088,11 +1295,15 @@ class LeaderFollowersCuttersPart:
                 [_clone_part(cutter) for cutter in self.cutters],
                 [_clone_part(part) for part in self.non_production_parts],
                 additional_data=copy.deepcopy(self.additional_data),
+                direction_vectors=[tuple(vector) for vector in self.direction_vectors],
             )
             result.follower_indices_by_name = self.follower_indices_by_name.copy()
             result.cutter_indices_by_name = self.cutter_indices_by_name.copy()
             result.non_production_indices_by_name = (
                 self.non_production_indices_by_name.copy()
+            )
+            result.direction_vector_indices_by_name = (
+                self.direction_vector_indices_by_name.copy()
             )
             return result
 

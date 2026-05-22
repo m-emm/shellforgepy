@@ -9,6 +9,7 @@ import importlib
 import inspect
 import json
 import logging
+import math
 import os
 import re
 import sys
@@ -1956,6 +1957,89 @@ def _group_named_parts(
     return grouped
 
 
+def _to_xyz_tuple(value: Any, *, label: str = "vector") -> tuple[float, float, float]:
+    if hasattr(value, "toTuple"):
+        value = value.toTuple()
+    elif all(hasattr(value, attr) for attr in ("x", "y", "z")):
+        value = (value.x, value.y, value.z)
+    elif all(hasattr(value, attr) for attr in ("X", "Y", "Z")):
+        value = (value.X, value.Y, value.Z)
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        raise BuilderError(f"{label} must be a 3-item vector")
+    return tuple(float(component) for component in value)
+
+
+def _vector_length(vector: Sequence[float]) -> float:
+    x, y, z = _to_xyz_tuple(vector)
+    return math.sqrt(x * x + y * y + z * z)
+
+
+def _normalized_xyz_vector(
+    vector: Sequence[float], *, label: str = "vector"
+) -> tuple[float, float, float]:
+    xyz = _to_xyz_tuple(vector, label=label)
+    length = _vector_length(xyz)
+    if length <= 0:
+        raise BuilderError(f"{label} must not be a zero-length vector")
+    return tuple(component / length for component in xyz)
+
+
+def _scale_xyz_vector(
+    vector: Sequence[float], distance: float
+) -> tuple[float, float, float]:
+    return tuple(component * float(distance) for component in _to_xyz_tuple(vector))
+
+
+def _rotate_xyz_vector(
+    vector: Sequence[float],
+    axis: Sequence[float],
+    angle_degrees: float,
+) -> tuple[float, float, float]:
+    x, y, z = _to_xyz_tuple(vector)
+    axis_x, axis_y, axis_z = _normalized_xyz_vector(axis, label="rotation axis")
+    angle = math.radians(float(angle_degrees))
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    dot = x * axis_x + y * axis_y + z * axis_z
+    cross_x = axis_y * z - axis_z * y
+    cross_y = axis_z * x - axis_x * z
+    cross_z = axis_x * y - axis_y * x
+    return (
+        x * cos_a + cross_x * sin_a + axis_x * dot * (1.0 - cos_a),
+        y * cos_a + cross_y * sin_a + axis_y * dot * (1.0 - cos_a),
+        z * cos_a + cross_z * sin_a + axis_z * dot * (1.0 - cos_a),
+    )
+
+
+def _group_named_direction_vectors(
+    vectors: Sequence[Any], name_map: Mapping[str, int]
+) -> List[Dict[str, Any]]:
+    names_by_index = {index: name for name, index in name_map.items()}
+    grouped = []
+    for index, vector in enumerate(vectors):
+        grouped.append(
+            {
+                "index": index,
+                "name": names_by_index.get(index),
+                "vector": list(_to_xyz_tuple(vector, label="direction vector")),
+            }
+        )
+    return grouped
+
+
+def _direction_vector_map(metadata: Mapping[str, Any]) -> Dict[str, List[float]]:
+    vectors: Dict[str, List[float]] = {}
+    artifacts = metadata.get("artifacts") or {}
+    for item in artifacts.get("direction_vectors") or []:
+        name = item.get("name")
+        if not name:
+            continue
+        vectors[str(name)] = list(
+            _to_xyz_tuple(item.get("vector"), label=f"direction_vectors.{name}")
+        )
+    return vectors
+
+
 def _normalize_generated_part(generated_part: Any) -> Dict[str, Any]:
     if all(
         hasattr(generated_part, attribute)
@@ -1975,6 +2059,10 @@ def _normalize_generated_part(generated_part: Any) -> Dict[str, Any]:
                 list(getattr(generated_part, "non_production_parts", [])),
                 getattr(generated_part, "non_production_indices_by_name", {}),
             ),
+            "direction_vectors": _group_named_direction_vectors(
+                list(getattr(generated_part, "direction_vectors", [])),
+                getattr(generated_part, "direction_vector_indices_by_name", {}),
+            ),
             "fused": (
                 generated_part.leaders_followers_fused()
                 if hasattr(generated_part, "leaders_followers_fused")
@@ -1987,6 +2075,7 @@ def _normalize_generated_part(generated_part: Any) -> Dict[str, Any]:
         "followers": [],
         "cutters": [],
         "non_production_parts": [],
+        "direction_vectors": [],
         "fused": None,
     }
 
@@ -2657,6 +2746,7 @@ def _metadata_resolution_context(metadata: Mapping[str, Any]) -> Dict[str, Any]:
     context = dict(metadata.get("public_parameters") or {})
     context.update(metadata.get("generator_kwargs") or {})
     context.update(metadata.get("generator_context") or {})
+    context["direction_vectors"] = _direction_vector_map(metadata)
     return context
 
 
@@ -2946,6 +3036,15 @@ def _export_artifacts(
                     **component_artifact,
                 }
             )
+
+    artifacts["direction_vectors"] = [
+        {
+            "index": item["index"],
+            "name": item["name"],
+            "vector": list(_to_xyz_tuple(item["vector"], label="direction vector")),
+        }
+        for item in normalized.get("direction_vectors", [])
+    ]
 
     return artifacts
 
@@ -3806,6 +3905,11 @@ def _copy_scene_part_for_plate(
     copied["part"] = (
         scene_part["part"] if copy_index == 1 else copy_part(scene_part["part"])
     )
+    copied["animation"] = deepcopy(scene_part.get("animation"))
+    if "_direction_vector_animation_keys" in scene_part:
+        copied["_direction_vector_animation_keys"] = set(
+            scene_part.get("_direction_vector_animation_keys") or set()
+        )
     copied["copy_index"] = copy_index
     copied["copy_count"] = copy_count
     copied["copy_source_name"] = base_name
@@ -3928,6 +4032,78 @@ def _apply_scene_transform(
     )
 
 
+def _resolve_scene_animation(
+    raw_animation: Any,
+    context: Mapping[str, Any],
+) -> tuple[Optional[Dict[str, Any]], set[str]]:
+    if raw_animation is None:
+        return None, set()
+    resolved_animation = _resolve_inline_value(raw_animation, context)
+    if not isinstance(resolved_animation, Mapping):
+        raise BuilderError("Scene animation must resolve to a mapping")
+
+    direction_vectors = context.get("direction_vectors") or {}
+    if not isinstance(direction_vectors, Mapping):
+        raise BuilderError("direction_vectors context must be a mapping")
+
+    animation: Dict[str, Any] = {}
+    direction_vector_animation_keys: set[str] = set()
+    for raw_key, raw_entry in resolved_animation.items():
+        animation_key = str(raw_key)
+        if isinstance(raw_entry, Mapping) and "direction_vector" in raw_entry:
+            direction_reference = raw_entry.get("direction_vector")
+            if isinstance(direction_reference, str):
+                direction_name = direction_reference
+                if direction_name.startswith("direction_vectors."):
+                    direction_name = direction_name[len("direction_vectors.") :]
+                if direction_name not in direction_vectors:
+                    raise BuilderError(
+                        f"Unknown direction vector '{direction_reference}' for animation '{animation_key}'"
+                    )
+                direction_vector = direction_vectors[direction_name]
+            else:
+                direction_vector = direction_reference
+            distance = float(raw_entry.get("distance", 1.0))
+            normalized_direction = _normalized_xyz_vector(
+                direction_vector,
+                label=f"direction vector for animation '{animation_key}'",
+            )
+            animation[animation_key] = list(
+                _scale_xyz_vector(normalized_direction, distance)
+            )
+            direction_vector_animation_keys.add(animation_key)
+        else:
+            animation[animation_key] = raw_entry
+    return animation, direction_vector_animation_keys
+
+
+def _apply_direction_vector_animation_transform(
+    item: Dict[str, Any],
+    transform_record: Mapping[str, Any],
+) -> None:
+    if transform_record.get("kind") != "rotate":
+        return
+    direction_keys = set(item.get("_direction_vector_animation_keys") or set())
+    if not direction_keys:
+        return
+    animation = item.get("animation")
+    if not isinstance(animation, Mapping):
+        return
+
+    axis = transform_record.get("axis")
+    angle = transform_record.get("angle")
+    if axis is None or angle is None:
+        return
+
+    updated_animation = dict(animation)
+    for animation_key in direction_keys:
+        entry = updated_animation.get(animation_key)
+        if entry is None:
+            continue
+        updated_animation[animation_key] = list(_rotate_xyz_vector(entry, axis, angle))
+    item["animation"] = updated_animation
+
+
 def _materialize_rule_parts(
     metadata: Mapping[str, Any],
     resource_data: Mapping[str, Any],
@@ -4022,6 +4198,7 @@ def _materialize_rule_parts(
                         "artifact": entry["artifact"],
                         "part_name": entry.get("name"),
                         "part_index": entry.get("index"),
+                        "direction_vectors": _direction_vector_map(target),
                     }
                 )
                 part, transform_record = _apply_scene_transform(
@@ -4029,6 +4206,10 @@ def _materialize_rule_parts(
                 )
                 if transform_record is not None:
                     transform_history.append(transform_record)
+                animation, direction_vector_animation_keys = _resolve_scene_animation(
+                    rule.get("animation"),
+                    part_context,
+                )
                 base_scene_part = {
                     "name": _format_scene_name(entry, rule),
                     "part": part,
@@ -4060,12 +4241,14 @@ def _materialize_rule_parts(
                         if rule.get("color") is not None
                         else None
                     ),
-                    "animation": (
-                        _resolve_inline_value(rule.get("animation"), part_context)
-                        if rule.get("animation") is not None
-                        else None
-                    ),
+                    "animation": animation,
+                    "_direction_vector_animation_keys": direction_vector_animation_keys,
                 }
+                if transform_record is not None:
+                    _apply_direction_vector_animation_transform(
+                        base_scene_part,
+                        transform_record,
+                    )
                 num_copies = (
                     _normalize_scene_num_copies(rule, part_context)
                     if mode == "production"
@@ -4093,6 +4276,7 @@ def _apply_transform_to_scene_parts(
             continue
         item["part"] = transform(item["part"])
         if transform_record is not None:
+            _apply_direction_vector_animation_transform(item, transform_record)
             history = list(item.get("transform_history") or [])
             history.append(deepcopy(dict(transform_record)))
             item["transform_history"] = history

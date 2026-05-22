@@ -23,7 +23,7 @@ from shellforgepy.adapters._adapter import (
 )
 from shellforgepy.adapters._adapter import get_adapter_id as adapter_get_adapter_id
 from shellforgepy.adapters._adapter import get_bounding_box
-from shellforgepy.adapters._adapter import tesellate as adapter_tesellate
+from shellforgepy.adapters._adapter import tessellate as adapter_tessellate
 from shellforgepy.construct.alignment_operations import rotate_part, translate
 from shellforgepy.construct.part_collector import PartCollector
 from shellforgepy.metrics import (
@@ -437,7 +437,7 @@ def _build_colored_meshes(
                     total_parts,
                     name,
                 )
-            vertices, triangles = adapter_tesellate(
+            vertices, triangles = adapter_tessellate(
                 entry["part"],
                 tolerance=tolerance,
                 angular_tolerance=angular_tolerance,

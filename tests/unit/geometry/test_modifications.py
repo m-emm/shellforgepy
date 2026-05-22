@@ -1,15 +1,19 @@
+import logging
+
 import numpy as np
 import pytest
+import shellforgepy.geometry.modifications as modifications
 from shellforgepy.adapters._adapter import (
     create_box,
     create_cone,
     create_cylinder,
     fuse_parts,
     get_volume,
-    tesellate,
+    tessellate,
 )
 from shellforgepy.geometry.modifications import (
     create_convex_hull,
+    filled_part_from,
     find_planar_surface_features,
     fit_part_between,
     orient_for_flatness,
@@ -64,6 +68,71 @@ def test_slice_part_basic_functionality():
         center_y = (min_point[1] + max_point[1]) / 2
         assert abs(center_x) < 0.1, f"Slice {i} should be X-centered, got {center_x}"
         assert abs(center_y) < 0.1, f"Slice {i} should be Y-centered, got {center_y}"
+
+
+def _create_holed_box_for_filled_part():
+    part = create_box(10, 10, 4)
+    hole = create_cylinder(2, 6)
+    hole = align(hole, part, Alignment.CENTER)
+    hole = translate(0, 0, -1)(hole)
+    return part.cut(hole)
+
+
+def _force_filled_part_raster_fallback(monkeypatch):
+    def missing_pyclipr(paths):
+        raise ImportError("No module named pyclipr")
+
+    monkeypatch.setattr(
+        modifications,
+        "_union_projected_paths_with_pyclipr",
+        missing_pyclipr,
+    )
+
+
+def test_filled_part_from_pyclipr_fills_vertical_hole():
+    pytest.importorskip("pyclipr")
+
+    part = _create_holed_box_for_filled_part()
+    filled = filled_part_from(part)
+
+    assert get_volume(filled) > get_volume(part)
+    assert np.isclose(get_volume(filled), 10 * 10 * 4, rtol=0.03)
+
+
+def test_filled_part_from_raster_fallback_warns_and_fills_hole(monkeypatch, caplog):
+    _force_filled_part_raster_fallback(monkeypatch)
+    part = _create_holed_box_for_filled_part()
+
+    with caplog.at_level(logging.WARNING):
+        filled = filled_part_from(part, fallback_cell_size=0.5)
+
+    assert "using approximate slow raster fallback" in caplog.text
+    assert get_volume(filled) > get_volume(part)
+    assert np.isclose(get_volume(filled), 10 * 10 * 4, rtol=0.08)
+
+
+def test_filled_part_from_raster_fallback_keeps_disjoint_components(monkeypatch):
+    _force_filled_part_raster_fallback(monkeypatch)
+    left = create_box(2, 2, 2)
+    right = create_box(2, 2, 2, origin=(5, 0, 0))
+    part = fuse_parts(left, right)
+
+    filled = filled_part_from(part, fallback_cell_size=1.0)
+
+    assert np.isclose(get_volume(filled), 16, rtol=0.01)
+    assert get_volume(filled) < 25
+
+
+def test_filled_part_from_raster_fallback_preserves_concave_footprint(monkeypatch):
+    _force_filled_part_raster_fallback(monkeypatch)
+    horizontal = create_box(4, 1, 2)
+    vertical = create_box(1, 4, 2)
+    part = fuse_parts(horizontal, vertical)
+
+    filled = filled_part_from(part, fallback_cell_size=1.0)
+
+    assert np.isclose(get_volume(filled), 14, rtol=0.01)
+    assert get_volume(filled) < 25
 
 
 def _create_centered_fit_between_fixture():
@@ -523,7 +592,7 @@ def test_find_planar_surface_features_limits_feature_count(monkeypatch):
 
     rng = np.random.default_rng(123)
 
-    def exploding_tesellate(obj, tolerance=0.1, angular_tolerance=0.1):
+    def exploding_tessellate(obj, tolerance=0.1, angular_tolerance=0.1):
         vertices = []
         triangles = []
         for i in range(150):
@@ -536,7 +605,7 @@ def test_find_planar_surface_features_limits_feature_count(monkeypatch):
             triangles.append((start, start + 1, start + 2))
         return vertices, triangles
 
-    monkeypatch.setattr(modifications, "tesellate", exploding_tesellate)
+    monkeypatch.setattr(modifications, "tessellate", exploding_tessellate)
 
     with pytest.raises(ValueError, match="Too many planar surface features"):
         find_planar_surface_features(create_box(1, 1, 1))
@@ -607,7 +676,7 @@ def test_orient_max_planar_area_optimize_bed_adhesion():
     """Ensure bed-adhesion optimization chooses the best contact orientation."""
 
     def bed_contact_area(part, kwargs):
-        vertices, triangles = tesellate(
+        vertices, triangles = tessellate(
             part,
             tolerance=kwargs["tessellation_tolerance"],
             angular_tolerance=kwargs["tessellation_angular_tolerance"],
@@ -674,7 +743,7 @@ def test_orient_max_planar_area_optimize_bed_extent():
     """Ensure bed-adhesion extent optimization prefers longest footprint."""
 
     def bed_contact_extent(part, kwargs):
-        vertices, triangles = tesellate(
+        vertices, triangles = tessellate(
             part,
             tolerance=kwargs["tessellation_tolerance"],
             angular_tolerance=kwargs["tessellation_angular_tolerance"],
@@ -748,10 +817,10 @@ def test_find_planar_surface_features_convex_hull_noise(monkeypatch):
 
     base = create_box(20, 20, 10)
     rng = np.random.default_rng(0)
-    original_tesellate = modifications.tesellate
+    original_tessellate = modifications.tessellate
 
-    def noisy_tesellate(obj, tolerance=0.1, angular_tolerance=0.1):
-        verts, tris = original_tesellate(
+    def noisy_tessellate(obj, tolerance=0.1, angular_tolerance=0.1):
+        verts, tris = original_tessellate(
             obj, tolerance=tolerance, angular_tolerance=angular_tolerance
         )
         extra_vertices = []
@@ -762,7 +831,7 @@ def test_find_planar_surface_features_convex_hull_noise(monkeypatch):
             extra_vertices.append((20 + jitter_x, y, z))
         return list(verts) + extra_vertices, tris
 
-    monkeypatch.setattr(modifications, "tesellate", noisy_tesellate)
+    monkeypatch.setattr(modifications, "tessellate", noisy_tessellate)
 
     planes = find_planar_surface_features(base, on_convex_hull=True)
 

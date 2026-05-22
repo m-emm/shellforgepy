@@ -1,17 +1,19 @@
 import logging
 import math
+from collections import deque
 from itertools import product
 
 import numpy as np
 from scipy.spatial import ConvexHull
 from shellforgepy.adapters._adapter import (
     create_box,
+    create_extruded_polygon,
     create_solid_from_traditional_face_vertex_maps,
     get_bounding_box,
     get_bounding_box_center,
     get_bounding_box_size,
     get_volume,
-    tesellate,
+    tessellate,
 )
 from shellforgepy.construct.alignment_operations import rotate, translate
 from shellforgepy.construct.bounding_box_helpers import bottom_bounding_box_point
@@ -29,6 +31,12 @@ from shellforgepy.geometry.spherical_tools import (
 )
 
 _logger = logging.getLogger(__name__)
+
+_FILLED_PART_SCALE = 1000
+_FILLED_PART_FALLBACK_WARNING = (
+    "pyclipr is not installed; using approximate slow raster fallback for "
+    "filled_part_from. Install shellforgepy[clipper] for exact polygon clipping."
+)
 
 
 def _vertex_to_array(vertex):
@@ -438,7 +446,7 @@ def find_planar_surface_features(
         - 'triangles': list of triangle vertex arrays (shape (3, 3))
     """
 
-    vertices, triangles = tesellate(
+    vertices, triangles = tessellate(
         part,
         tolerance=tessellation_tolerance,
         angular_tolerance=tessellation_angular_tolerance,
@@ -536,7 +544,7 @@ def _compute_bed_contact_area(
     tessellation_tolerance,
     tessellation_angular_tolerance,
 ):
-    vertices, triangles = tesellate(
+    vertices, triangles = tessellate(
         part,
         tolerance=tessellation_tolerance,
         angular_tolerance=tessellation_angular_tolerance,
@@ -582,7 +590,7 @@ def _compute_bed_contact_extent(
     tessellation_tolerance,
     tessellation_angular_tolerance,
 ):
-    vertices, triangles = tesellate(
+    vertices, triangles = tessellate(
         part,
         tolerance=tessellation_tolerance,
         angular_tolerance=tessellation_angular_tolerance,
@@ -766,7 +774,7 @@ def transform_with_function_tesselating(part, transform_function):
 
     uses create_solid_from_traditional_face_vertex_maps to reconstruct the part
     """
-    vertices, triangles = tesellate(part)
+    vertices, triangles = tessellate(part)
     if not triangles:
         return part
 
@@ -830,7 +838,7 @@ def create_convex_hull(*parts, dedupe_decimals=12):
 
     unique_vertices = {}
     for part in parts:
-        vertices, triangles = tesellate(part)
+        vertices, triangles = tessellate(part)
         if not triangles:
             continue
         for vertex in vertices:
@@ -1417,3 +1425,371 @@ def fit_part_between(
     )
 
     return trimmed_part
+
+
+def _scale_filled_part_point(point):
+    return (
+        round(float(point[0]) * _FILLED_PART_SCALE),
+        round(float(point[1]) * _FILLED_PART_SCALE),
+    )
+
+
+def _filled_part_signed_area2(path):
+    return sum(
+        path[index][0] * path[(index + 1) % len(path)][1]
+        - path[(index + 1) % len(path)][0] * path[index][1]
+        for index in range(len(path))
+    )
+
+
+def _projected_triangle_path_for_filled_part(vertices, triangle):
+    path = [
+        _scale_filled_part_point((vertices[index][0], vertices[index][1]))
+        for index in triangle
+    ]
+
+    if len(set(path)) < 3:
+        return None
+
+    area2 = _filled_part_signed_area2(path)
+    if area2 == 0:
+        return None
+
+    if area2 < 0:
+        path = list(reversed(path))
+
+    return path
+
+
+def _filled_part_unscaled_path(path):
+    return [(p[0] / _FILLED_PART_SCALE, p[1] / _FILLED_PART_SCALE) for p in path]
+
+
+def _union_projected_paths_with_pyclipr(paths):
+    import pyclipr
+
+    if not paths:
+        return []
+
+    pc = pyclipr.Clipper()
+    pc.addPaths(paths, pyclipr.Subject, False)
+    return pc.execute(
+        pyclipr.Union,
+        pyclipr.FillRule.NonZero,
+    )
+
+
+def _extrude_filled_footprint_paths(footprint_paths, min_z, max_z):
+    height = max_z - min_z
+    if height <= 0:
+        return None
+
+    retval = None
+    for path in footprint_paths:
+        if _filled_part_signed_area2(path) <= 0:
+            continue
+
+        path_part = create_extruded_polygon(
+            _filled_part_unscaled_path(path),
+            thickness=height,
+        )
+        path_part = translate(0, 0, min_z)(path_part)
+
+        if retval is None:
+            retval = path_part
+        else:
+            retval = retval.fuse(path_part)
+
+    return retval
+
+
+def _point_in_rect_2d(
+    point, min_x, min_y, max_x, max_y, epsilon=1e-9, include_boundary=True
+):
+    if include_boundary:
+        return (
+            min_x - epsilon <= point[0] <= max_x + epsilon
+            and min_y - epsilon <= point[1] <= max_y + epsilon
+        )
+    return (
+        min_x + epsilon < point[0] < max_x - epsilon
+        and min_y + epsilon < point[1] < max_y - epsilon
+    )
+
+
+def _point_in_triangle_2d(point, triangle, epsilon=1e-9, include_boundary=True):
+    def edge_sign(a, b, c):
+        return (a[0] - c[0]) * (b[1] - c[1]) - (b[0] - c[0]) * (a[1] - c[1])
+
+    d1 = edge_sign(point, triangle[0], triangle[1])
+    d2 = edge_sign(point, triangle[1], triangle[2])
+    d3 = edge_sign(point, triangle[2], triangle[0])
+
+    if not include_boundary and (
+        abs(d1) <= epsilon or abs(d2) <= epsilon or abs(d3) <= epsilon
+    ):
+        return False
+
+    has_negative = d1 < -epsilon or d2 < -epsilon or d3 < -epsilon
+    has_positive = d1 > epsilon or d2 > epsilon or d3 > epsilon
+    return not (has_negative and has_positive)
+
+
+def _segment_orientation_2d(a, b, c):
+    return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+
+def _segments_cross_2d(a, b, c, d, epsilon=1e-9):
+    o1 = _segment_orientation_2d(a, b, c)
+    o2 = _segment_orientation_2d(a, b, d)
+    o3 = _segment_orientation_2d(c, d, a)
+    o4 = _segment_orientation_2d(c, d, b)
+    return o1 * o2 < -epsilon and o3 * o4 < -epsilon
+
+
+def _triangle_intersects_rect_2d(triangle, min_x, min_y, max_x, max_y):
+    rect_center = ((min_x + max_x) / 2, (min_y + max_y) / 2)
+    if _point_in_triangle_2d(rect_center, triangle):
+        return True
+
+    rect_corners = [
+        (min_x, min_y),
+        (max_x, min_y),
+        (max_x, max_y),
+        (min_x, max_y),
+    ]
+
+    if any(
+        _point_in_triangle_2d(corner, triangle, include_boundary=False)
+        for corner in rect_corners
+    ):
+        return True
+
+    if any(
+        _point_in_rect_2d(point, min_x, min_y, max_x, max_y, include_boundary=False)
+        for point in triangle
+    ):
+        return True
+
+    triangle_edges = [
+        (triangle[0], triangle[1]),
+        (triangle[1], triangle[2]),
+        (triangle[2], triangle[0]),
+    ]
+    rect_edges = [
+        (rect_corners[0], rect_corners[1]),
+        (rect_corners[1], rect_corners[2]),
+        (rect_corners[2], rect_corners[3]),
+        (rect_corners[3], rect_corners[0]),
+    ]
+
+    return any(
+        _segments_cross_2d(tri_start, tri_end, rect_start, rect_end)
+        for tri_start, tri_end in triangle_edges
+        for rect_start, rect_end in rect_edges
+    )
+
+
+def _exterior_empty_cells(occupied):
+    outside = np.zeros_like(occupied, dtype=bool)
+    height, width = occupied.shape
+    queue = deque()
+
+    def enqueue(row, column):
+        if (
+            0 <= row < height
+            and 0 <= column < width
+            and not occupied[row, column]
+            and not outside[row, column]
+        ):
+            outside[row, column] = True
+            queue.append((row, column))
+
+    for column in range(width):
+        enqueue(0, column)
+        enqueue(height - 1, column)
+
+    for row in range(height):
+        enqueue(row, 0)
+        enqueue(row, width - 1)
+
+    while queue:
+        row, column = queue.popleft()
+        enqueue(row - 1, column)
+        enqueue(row + 1, column)
+        enqueue(row, column - 1)
+        enqueue(row, column + 1)
+
+    return outside
+
+
+def _row_runs(row):
+    runs = []
+    start = None
+    for index, value in enumerate(row):
+        if value and start is None:
+            start = index
+        elif not value and start is not None:
+            runs.append((start, index))
+            start = None
+
+    if start is not None:
+        runs.append((start, len(row)))
+
+    return runs
+
+
+def _grid_rectangles(filled):
+    active = {}
+
+    for row_index, row in enumerate(filled):
+        runs = _row_runs(row)
+        next_active = {}
+
+        for run in runs:
+            next_active[run] = active.pop(run, row_index)
+
+        for run, start_row in active.items():
+            yield run[0], run[1], start_row, row_index
+
+        active = next_active
+
+    for run, start_row in active.items():
+        yield run[0], run[1], start_row, filled.shape[0]
+
+
+def _filled_part_raster_fallback(paths, min_z, max_z, cell_size, max_cells):
+    if not paths:
+        return None
+
+    cell_size = float(cell_size)
+    if cell_size <= 0:
+        raise ValueError("fallback_cell_size must be greater than zero")
+
+    height = max_z - min_z
+    if height <= 0:
+        return None
+
+    triangles = [
+        _filled_part_unscaled_path(path) for path in paths if len(set(path)) >= 3
+    ]
+    if not triangles:
+        return None
+
+    xs = [point[0] for triangle in triangles for point in triangle]
+    ys = [point[1] for triangle in triangles for point in triangle]
+    min_x = min(xs)
+    max_x = max(xs)
+    min_y = min(ys)
+    max_y = max(ys)
+
+    column_count = int(math.ceil((max_x - min_x) / cell_size))
+    row_count = int(math.ceil((max_y - min_y) / cell_size))
+    if column_count <= 0 or row_count <= 0:
+        return None
+
+    cell_count = column_count * row_count
+    if max_cells is not None and cell_count > max_cells:
+        raise ValueError(
+            "filled_part_from raster fallback would require "
+            f"{cell_count} cells, exceeding fallback_max_cells={max_cells}. "
+            "Install shellforgepy[clipper], increase fallback_cell_size, or "
+            "increase fallback_max_cells."
+        )
+
+    occupied = np.zeros((row_count, column_count), dtype=bool)
+
+    for triangle in triangles:
+        triangle_min_x = min(point[0] for point in triangle)
+        triangle_max_x = max(point[0] for point in triangle)
+        triangle_min_y = min(point[1] for point in triangle)
+        triangle_max_y = max(point[1] for point in triangle)
+
+        start_column = max(0, int(math.floor((triangle_min_x - min_x) / cell_size)))
+        end_column = min(
+            column_count,
+            int(math.ceil((triangle_max_x - min_x) / cell_size)),
+        )
+        start_row = max(0, int(math.floor((triangle_min_y - min_y) / cell_size)))
+        end_row = min(
+            row_count,
+            int(math.ceil((triangle_max_y - min_y) / cell_size)),
+        )
+
+        for row in range(start_row, end_row):
+            cell_min_y = min_y + row * cell_size
+            cell_max_y = min(max_y, cell_min_y + cell_size)
+            for column in range(start_column, end_column):
+                cell_min_x = min_x + column * cell_size
+                cell_max_x = min(max_x, cell_min_x + cell_size)
+                if _triangle_intersects_rect_2d(
+                    triangle,
+                    cell_min_x,
+                    cell_min_y,
+                    cell_max_x,
+                    cell_max_y,
+                ):
+                    occupied[row, column] = True
+
+    filled = occupied | ~_exterior_empty_cells(occupied)
+    if not np.any(filled):
+        return None
+
+    retval = None
+    for start_column, end_column, start_row, end_row in _grid_rectangles(filled):
+        rect_min_x = min_x + start_column * cell_size
+        rect_max_x = min(max_x, min_x + end_column * cell_size)
+        rect_min_y = min_y + start_row * cell_size
+        rect_max_y = min(max_y, min_y + end_row * cell_size)
+
+        if rect_max_x <= rect_min_x or rect_max_y <= rect_min_y:
+            continue
+
+        rect_part = create_box(
+            rect_max_x - rect_min_x,
+            rect_max_y - rect_min_y,
+            height,
+            origin=(rect_min_x, rect_min_y, min_z),
+        )
+
+        if retval is None:
+            retval = rect_part
+        else:
+            retval = retval.fuse(rect_part)
+
+    return retval
+
+
+def filled_part_from(part, *, fallback_cell_size=1.0, fallback_max_cells=50_000):
+    """
+    Return a version of the part with all internal cavities filled in.
+
+    ``pyclipr`` is used for exact polygon clipping when installed. Without it,
+    the function falls back to a deliberately slow raster approximation.
+    """
+
+    vertices, triangles = tessellate(part)
+    paths = []
+
+    for triangle in triangles:
+        path = _projected_triangle_path_for_filled_part(vertices, triangle)
+        if path is not None:
+            paths.append(path)
+
+    bounding_box = get_bounding_box(part)
+    min_z = bounding_box[0][2]
+    max_z = bounding_box[1][2]
+
+    try:
+        footprint_paths = _union_projected_paths_with_pyclipr(paths)
+    except ImportError:
+        _logger.warning(_FILLED_PART_FALLBACK_WARNING)
+        return _filled_part_raster_fallback(
+            paths,
+            min_z,
+            max_z,
+            fallback_cell_size,
+            fallback_max_cells,
+        )
+
+    return _extrude_filled_footprint_paths(footprint_paths, min_z, max_z)

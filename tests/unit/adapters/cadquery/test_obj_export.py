@@ -143,9 +143,9 @@ def test_obj_vertex_indices_are_correct():
 
 def test_cadquery_tessellate_returns_normalized_numpy_arrays():
     """CadQuery tessellation should expose backend-agnostic NumPy arrays."""
-    from shellforgepy.adapters.cadquery.cadquery_adapter import create_box, tesellate
+    from shellforgepy.adapters.cadquery.cadquery_adapter import create_box, tessellate
 
-    vertices, triangles = tesellate(create_box(10, 10, 10))
+    vertices, triangles = tessellate(create_box(10, 10, 10))
 
     assert isinstance(vertices, np.ndarray)
     assert vertices.ndim == 2

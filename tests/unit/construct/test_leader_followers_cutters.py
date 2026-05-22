@@ -126,6 +126,50 @@ def test_leader_followers_translate_and_rotate():
     assert rotated_leader_center[1] == pytest.approx(expected_y, abs=1e-6)
 
 
+def test_direction_vectors_copy_prefix_merge_translate_and_rotate():
+    group = LeaderFollowersCuttersPart(
+        create_box(1, 1, 1),
+        direction_vectors=[(1, 0, 0)],
+        direction_vector_names=["drive"],
+    )
+    group.add_named_direction_vector((0, -1, 0), "exit")
+
+    copied = group.copy()
+    assert copied.get_named_direction_vector("drive") == pytest.approx((1, 0, 0))
+    assert copied.get_named_direction_vector("exit") == pytest.approx((0, -1, 0))
+
+    translated = translate(10, 0, 0)(group)
+    assert translated.get_named_direction_vector("drive") == pytest.approx((1, 0, 0))
+    assert translated.get_named_direction_vector("exit") == pytest.approx((0, -1, 0))
+
+    rotated = rotate(90, center=(0, 5, 0), axis=(0, 0, 1))(group)
+    assert rotated.get_named_direction_vector("drive") == pytest.approx(
+        (0, 1, 0), abs=1e-6
+    )
+    assert rotated.get_named_direction_vector("exit") == pytest.approx(
+        (1, 0, 0), abs=1e-6
+    )
+
+    prefixed = group.prefixed_copy("bay_1")
+    assert prefixed.get_named_direction_vector("bay_1_drive") == pytest.approx(
+        (1, 0, 0)
+    )
+    assert prefixed.get_named_direction_vector("bay_1_exit") == pytest.approx(
+        (0, -1, 0)
+    )
+
+    other = LeaderFollowersCuttersPart(
+        translate(2, 0, 0)(create_box(1, 1, 1)),
+        direction_vectors=[(0, 0, 1)],
+        direction_vector_names=["up"],
+    )
+    merged = group.fuse(other)
+
+    assert merged.get_named_direction_vector("drive") == pytest.approx((1, 0, 0))
+    assert merged.get_named_direction_vector("exit") == pytest.approx((0, -1, 0))
+    assert merged.get_named_direction_vector("up") == pytest.approx((0, 0, 1))
+
+
 def test_leader_followers_fuse_and_non_production():
     leader = create_box(2, 2, 2)
     follower = NamedPart(

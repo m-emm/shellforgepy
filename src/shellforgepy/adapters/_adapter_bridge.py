@@ -46,7 +46,7 @@ create_extruded_polygon = selected_adapter.create_extruded_polygon
 copy_part = selected_adapter.copy_part
 get_vertex_coordinates = selected_adapter.get_vertex_coordinates
 get_vertex_coordinates_np = selected_adapter.get_vertex_coordinates_np
-tesellate = selected_adapter.tesellate
+tessellate = selected_adapter.tessellate
 __all__ = [
     "apply_fillet_by_alignment",
     "apply_fillet_to_edges",
@@ -83,7 +83,7 @@ __all__ = [
     "rotate_part",
     "scale_part_native",
     "scale_part",
-    "tesellate",
+    "tessellate",
     "translate_part_native",
     "translate_part",
 ]

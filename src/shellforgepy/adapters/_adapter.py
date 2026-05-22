@@ -83,7 +83,7 @@ from shellforgepy.adapters._adapter_bridge import scale_part as adapter_scale_pa
 from shellforgepy.adapters._adapter_bridge import (
     scale_part_native as adapter_scale_part_native,
 )
-from shellforgepy.adapters._adapter_bridge import tesellate as adapter_tesellate
+from shellforgepy.adapters._adapter_bridge import tessellate as adapter_tessellate
 from shellforgepy.adapters._adapter_bridge import (
     tessellate_part_native as adapter_tessellate_part_native,
 )
@@ -207,7 +207,7 @@ def _vertex_to_tuple(vertex):
     return (float(vx[0]), float(vx[1]), float(vx[2]))
 
 
-def tesellate(obj, tolerance=0.1, angular_tolerance=0.1):
+def tessellate(obj, tolerance=0.1, angular_tolerance=0.1):
     """Tessellate a geometry object into vertices and triangles.
 
     Args:
@@ -219,7 +219,7 @@ def tesellate(obj, tolerance=0.1, angular_tolerance=0.1):
         Tuple of (vertices, triangles) with vertices as float tuples and
         triangles as index tuples.
     """
-    vertices, triangles = adapter_tesellate(
+    vertices, triangles = adapter_tessellate(
         obj, tolerance=tolerance, angular_tolerance=angular_tolerance
     )
     vertices = [_vertex_to_tuple(v) for v in vertices]

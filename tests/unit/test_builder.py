@@ -11,6 +11,9 @@ import shellforgepy.builder.builder as builder
 import shellforgepy.builder.graph_model as builder_graph_model
 import shellforgepy.produce.arrange_and_export as arrange_and_export_module
 import shellforgepy.workflow.workflow as workflow_module
+from shellforgepy.construct.leader_followers_cutters_part import (
+    LeaderFollowersCuttersPart,
+)
 from shellforgepy.metrics import (
     Material,
     build_metrics_report_lines,
@@ -4519,6 +4522,139 @@ def test_materialize_rule_parts_resolves_animation_from_metadata_context(
 
     assert len(parts) == 1
     assert parts[0]["animation"] == {"bed_y": [0, 325, 0]}
+
+
+def test_normalize_generated_part_includes_direction_vectors():
+    generated = LeaderFollowersCuttersPart(
+        create_box(1, 1, 1),
+        direction_vectors=[(0, -2, 0)],
+        direction_vector_names=["drive_out"],
+    )
+
+    normalized = builder._normalize_generated_part(generated)
+
+    assert normalized["direction_vectors"] == [
+        {"index": 0, "name": "drive_out", "vector": [0.0, -2.0, 0.0]}
+    ]
+
+
+def test_export_artifacts_includes_direction_vectors(monkeypatch, tmp_path):
+    generated = LeaderFollowersCuttersPart(
+        create_box(1, 1, 1),
+        direction_vectors=[(0, -2, 0)],
+        direction_vector_names=["drive_out"],
+    )
+
+    monkeypatch.setattr(
+        builder,
+        "_export_artifact_part",
+        lambda part, destination: {"kind": "step", "path": str(destination)},
+    )
+
+    artifacts = builder._export_artifacts("fan_garage", "abc123", generated, tmp_path)
+
+    assert artifacts["direction_vectors"] == [
+        {"index": 0, "name": "drive_out", "vector": [0.0, -2.0, 0.0]}
+    ]
+
+
+def test_materialize_rule_parts_resolves_direction_vector_animation(
+    monkeypatch, tmp_path
+):
+    car_step = tmp_path / "car.step"
+    car_step.write_text("car", encoding="utf-8")
+
+    metadata = {
+        "assembly_name": "fan_garage",
+        "public_parameters": {},
+        "generator_kwargs": {},
+        "generator_context": {},
+        "artifacts": {
+            "followers": [
+                {
+                    "index": 0,
+                    "name": "bay_1_car",
+                    "path": str(car_step),
+                    "kind": "step",
+                }
+            ],
+            "direction_vectors": [
+                {"index": 0, "name": "bay_1_drive_out", "vector": [0, -2, 0]}
+            ],
+        },
+    }
+    resource_data = {
+        "Builder": {
+            "Visualization": {
+                "parts": [
+                    {
+                        "source": "self",
+                        "artifact": "followers",
+                        "names": ["bay_1_car"],
+                        "animation": {
+                            "fan_bay_1_drive_out": {
+                                "direction_vector": "bay_1_drive_out",
+                                "distance": 16.0,
+                            }
+                        },
+                    }
+                ]
+            }
+        }
+    }
+
+    monkeypatch.setattr(builder, "_import_dependency_part", lambda path: f"part:{path}")
+
+    parts = builder._materialize_rule_parts(
+        metadata,
+        resource_data,
+        "visualization",
+        {"fan_garage": metadata},
+        tmp_path,
+        None,
+    )
+
+    assert len(parts) == 1
+    assert parts[0]["animation"] == {"fan_bay_1_drive_out": [0.0, -16.0, 0.0]}
+    assert parts[0]["_direction_vector_animation_keys"] == {"fan_bay_1_drive_out"}
+
+
+def test_apply_transform_to_scene_parts_rotates_only_direction_vector_animations():
+    scene_parts = [
+        {
+            "assembly_name": "fan_garage",
+            "part": "part",
+            "animation": {
+                "drive": [10.0, 0.0, 0.0],
+                "literal": [0.0, 5.0, 0.0],
+            },
+            "_direction_vector_animation_keys": {"drive"},
+        }
+    ]
+
+    builder._apply_transform_to_scene_parts(
+        scene_parts,
+        "fan_garage",
+        lambda part: part,
+        transform_record={"kind": "rotate", "angle": 90.0, "axis": [0, 0, 1]},
+    )
+
+    assert scene_parts[0]["animation"]["drive"] == pytest.approx(
+        [0.0, 10.0, 0.0], abs=1e-6
+    )
+    assert scene_parts[0]["animation"]["literal"] == [0.0, 5.0, 0.0]
+
+    builder._apply_transform_to_scene_parts(
+        scene_parts,
+        "fan_garage",
+        lambda part: part,
+        transform_record={"kind": "translate", "vector": [1.0, 2.0, 3.0]},
+    )
+
+    assert scene_parts[0]["animation"]["drive"] == pytest.approx(
+        [0.0, 10.0, 0.0], abs=1e-6
+    )
+    assert scene_parts[0]["animation"]["literal"] == [0.0, 5.0, 0.0]
 
 
 def test_materialize_rule_parts_resolves_color_from_metadata_context(

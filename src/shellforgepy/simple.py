@@ -35,6 +35,7 @@ from shellforgepy.adapters._adapter import (
     get_vertex_coordinates,
     get_volume,
     import_solid_from_step,
+    tessellate,
 )
 
 # Core alignment functionality
@@ -286,6 +287,7 @@ __all__ = [
     "write_shell_maps_to_stl",
     "write_stl_binary",
     "transform_with_function_tesselating",
+    "tessellate",
 ]
 
 
