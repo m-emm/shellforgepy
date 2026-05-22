@@ -37,6 +37,12 @@ class Material(Enum):
         return self.density_kg_per_m3 / 1000.0
 
 
+class BuildingKind(Enum):
+    GARAGE = "garage"
+    APPARTMENT = "appartment"
+    REFURBISHMENT = "refurbishment"
+
+
 @dataclass(frozen=True)
 class LengthMetric:
     category: str
@@ -63,11 +69,30 @@ class WeightMetric:
     part_id: str | None = None
 
 
-METRICS_SNAPSHOT_SCHEMA_VERSION = 1
+@dataclass(frozen=True)
+class BuildingCostMetric:
+    assembly_id: str
+    building_kind: BuildingKind
+    cubic_meters: float
+    cost_per_m3: float
+    part_id: str | None = None
+
+
+@dataclass(frozen=True)
+class LivingSpaceMetric:
+    assembly_id: str
+    square_meters: float
+    part_id: str | None = None
+
+
+METRICS_SNAPSHOT_SCHEMA_VERSION = 2
 
 _length_metrics: list[LengthMetric] = []
 _mark_metrics: list[MarkMetric] = []
 _weight_metrics: list[WeightMetric] = []
+_building_cost_per_m3_map: dict[BuildingKind, float] = {}
+_building_cost_metrics: list[BuildingCostMetric] = []
+_living_space_metrics: list[LivingSpaceMetric] = []
 _metrics_report_logged = False
 
 
@@ -77,7 +102,13 @@ def _set_report_logged(value: bool) -> None:
 
 
 def has_metrics() -> bool:
-    return bool(_length_metrics or _mark_metrics or _weight_metrics)
+    return bool(
+        _length_metrics
+        or _mark_metrics
+        or _weight_metrics
+        or _building_cost_metrics
+        or _living_space_metrics
+    )
 
 
 def was_metrics_report_logged() -> bool:
@@ -88,6 +119,49 @@ def reset_metrics() -> None:
     _length_metrics.clear()
     _mark_metrics.clear()
     _weight_metrics.clear()
+    _building_cost_per_m3_map.clear()
+    _building_cost_metrics.clear()
+    _living_space_metrics.clear()
+    _set_report_logged(False)
+
+
+def _coerce_building_kind(building_kind: BuildingKind | str) -> BuildingKind:
+    if isinstance(building_kind, BuildingKind):
+        return building_kind
+    if not isinstance(building_kind, str):
+        raise TypeError("building_kind must be an instance of BuildingKind or a string")
+
+    normalized = building_kind.strip()
+    if not normalized:
+        raise ValueError("building_kind must be a non-empty string")
+
+    try:
+        return BuildingKind[normalized.upper()]
+    except KeyError:
+        pass
+
+    try:
+        return BuildingKind(normalized.lower())
+    except ValueError as exc:
+        valid_values = ", ".join(kind.value for kind in BuildingKind)
+        raise ValueError(
+            f"unsupported building_kind {building_kind!r}; expected one of {valid_values}"
+        ) from exc
+
+
+def configure_building_cost_per_m3_map(
+    building_cost_per_m3_map: Mapping[BuildingKind | str, float],
+) -> None:
+    normalized_map: dict[BuildingKind, float] = {}
+    for building_kind, cost_per_m3 in building_cost_per_m3_map.items():
+        kind = _coerce_building_kind(building_kind)
+        normalized_cost_per_m3 = round(float(cost_per_m3), 6)
+        if normalized_cost_per_m3 < 0:
+            raise ValueError("building cost per m3 values must be non-negative")
+        normalized_map[kind] = normalized_cost_per_m3
+
+    _building_cost_per_m3_map.clear()
+    _building_cost_per_m3_map.update(normalized_map)
     _set_report_logged(False)
 
 
@@ -186,6 +260,56 @@ def record_measured_mass_metric(
     )
 
 
+def record_building_cost_metric(
+    assembly_id: str,
+    building_kind: BuildingKind | str,
+    cubic_meters: float,
+    part_id: str | None = None,
+) -> None:
+    if not assembly_id:
+        raise ValueError("assembly_id must be a non-empty string")
+    kind = _coerce_building_kind(building_kind)
+    if kind not in _building_cost_per_m3_map:
+        raise ValueError(f"building cost per m3 is not configured for {kind.value!r}")
+
+    normalized_cubic_meters = round(float(cubic_meters), 6)
+    if normalized_cubic_meters < 0:
+        raise ValueError("cubic_meters must be non-negative")
+
+    _set_report_logged(False)
+    _building_cost_metrics.append(
+        BuildingCostMetric(
+            assembly_id=assembly_id,
+            building_kind=kind,
+            cubic_meters=normalized_cubic_meters,
+            cost_per_m3=_building_cost_per_m3_map[kind],
+            part_id=part_id,
+        )
+    )
+
+
+def record_living_space_metric(
+    assembly_id: str,
+    square_meters: float,
+    part_id: str | None = None,
+) -> None:
+    if not assembly_id:
+        raise ValueError("assembly_id must be a non-empty string")
+
+    normalized_square_meters = round(float(square_meters), 6)
+    if normalized_square_meters < 0:
+        raise ValueError("square_meters must be non-negative")
+
+    _set_report_logged(False)
+    _living_space_metrics.append(
+        LivingSpaceMetric(
+            assembly_id=assembly_id,
+            square_meters=normalized_square_meters,
+            part_id=part_id,
+        )
+    )
+
+
 def get_metric_mass_kg(metric: WeightMetric) -> float:
     if metric.mass_kg is not None:
         return metric.mass_kg
@@ -205,6 +329,32 @@ def build_weight_totals_by_assembly_id() -> dict[str, float]:
     }
 
 
+def get_building_metric_cost(metric: BuildingCostMetric) -> float:
+    return round(metric.cubic_meters * metric.cost_per_m3, 2)
+
+
+def build_building_cost_totals_by_assembly_id() -> dict[str, float]:
+    totals_by_assembly_id = defaultdict(float)
+    for metric in _building_cost_metrics:
+        totals_by_assembly_id[metric.assembly_id] += get_building_metric_cost(metric)
+
+    return {
+        assembly_id: round(total_cost, 2)
+        for assembly_id, total_cost in sorted(totals_by_assembly_id.items())
+    }
+
+
+def build_living_space_totals_by_assembly_id() -> dict[str, float]:
+    totals_by_assembly_id = defaultdict(float)
+    for metric in _living_space_metrics:
+        totals_by_assembly_id[metric.assembly_id] += metric.square_meters
+
+    return {
+        assembly_id: round(total_square_meters, 3)
+        for assembly_id, total_square_meters in sorted(totals_by_assembly_id.items())
+    }
+
+
 def _round_length_mm(length_mm: float) -> int:
     return int(float(length_mm) + 0.5)
 
@@ -215,6 +365,22 @@ def _format_length(length_mm: float) -> str:
 
 def _format_mass_kg(mass_kg: float) -> str:
     return f"{float(mass_kg):.6f} kg"
+
+
+def _format_cubic_meters(cubic_meters: float) -> str:
+    return f"{float(cubic_meters):.3f} m3"
+
+
+def _format_square_meters(square_meters: float) -> str:
+    return f"{float(square_meters):.3f} m2"
+
+
+def _format_building_cost(cost: float) -> str:
+    return f"{round(float(cost) / 1000.0):.0f}k"
+
+
+def _format_cost_per_m3(cost_per_m3: float) -> str:
+    return f"{float(cost_per_m3):.0f}"
 
 
 def build_cut_stock_report_lines() -> list[str]:
@@ -269,6 +435,108 @@ def build_cut_stock_report_lines() -> list[str]:
     return lines
 
 
+def build_building_cost_report_lines() -> list[str]:
+    if not _building_cost_metrics:
+        return ["Building cost metrics: no metrics recorded."]
+
+    total_cubic_meters = round(
+        sum(metric.cubic_meters for metric in _building_cost_metrics), 3
+    )
+    total_cost = round(
+        sum(get_building_metric_cost(metric) for metric in _building_cost_metrics), 2
+    )
+    lines = [
+        "Building cost metrics:",
+        f"Overview: {_format_cubic_meters(total_cubic_meters)}, {_format_building_cost(total_cost)}",
+    ]
+
+    assembly_metrics = defaultdict(list)
+    for metric in _building_cost_metrics:
+        assembly_metrics[metric.assembly_id].append(metric)
+
+    for assembly_id in sorted(assembly_metrics):
+        metrics = assembly_metrics[assembly_id]
+        assembly_cubic_meters = round(sum(metric.cubic_meters for metric in metrics), 3)
+        assembly_cost = round(
+            sum(get_building_metric_cost(metric) for metric in metrics), 2
+        )
+        lines.append(
+            f"{assembly_id}: {_format_cubic_meters(assembly_cubic_meters)}, {_format_building_cost(assembly_cost)}"
+        )
+
+        kind_totals: dict[BuildingKind, dict[str, float]] = defaultdict(
+            lambda: {"cubic_meters": 0.0, "cost": 0.0}
+        )
+        part_totals: dict[tuple[str, BuildingKind, float], dict[str, float]] = (
+            defaultdict(lambda: {"cubic_meters": 0.0, "cost": 0.0})
+        )
+        for metric in metrics:
+            metric_cost = get_building_metric_cost(metric)
+            kind_totals[metric.building_kind]["cubic_meters"] += metric.cubic_meters
+            kind_totals[metric.building_kind]["cost"] += metric_cost
+            if metric.part_id:
+                part_key = (metric.part_id, metric.building_kind, metric.cost_per_m3)
+                part_totals[part_key]["cubic_meters"] += metric.cubic_meters
+                part_totals[part_key]["cost"] += metric_cost
+
+        for building_kind in sorted(kind_totals, key=lambda kind: kind.name):
+            totals = kind_totals[building_kind]
+            lines.append(
+                f"  {building_kind.name}: {_format_cubic_meters(round(totals['cubic_meters'], 3))}, {_format_building_cost(round(totals['cost'], 2))}"
+            )
+
+        for part_id, building_kind, cost_per_m3 in sorted(
+            part_totals,
+            key=lambda current_part: (
+                current_part[0],
+                current_part[1].name,
+                current_part[2],
+            ),
+        ):
+            totals = part_totals[(part_id, building_kind, cost_per_m3)]
+            lines.append(
+                f"  {part_id} ({building_kind.name}): {_format_cubic_meters(round(totals['cubic_meters'], 3))} @ {_format_cost_per_m3(cost_per_m3)}/m3 = {_format_building_cost(round(totals['cost'], 2))}"
+            )
+
+    return lines
+
+
+def build_living_space_report_lines() -> list[str]:
+    if not _living_space_metrics:
+        return ["Living space metrics: no metrics recorded."]
+
+    total_square_meters = round(
+        sum(metric.square_meters for metric in _living_space_metrics), 3
+    )
+    lines = [
+        "Living space metrics:",
+        f"Overview: {_format_square_meters(total_square_meters)}",
+    ]
+
+    assembly_metrics = defaultdict(list)
+    for metric in _living_space_metrics:
+        assembly_metrics[metric.assembly_id].append(metric)
+
+    for assembly_id in sorted(assembly_metrics):
+        metrics = assembly_metrics[assembly_id]
+        assembly_square_meters = round(
+            sum(metric.square_meters for metric in metrics), 3
+        )
+        lines.append(f"{assembly_id}: {_format_square_meters(assembly_square_meters)}")
+
+        part_totals = defaultdict(float)
+        for metric in metrics:
+            if metric.part_id:
+                part_totals[metric.part_id] += metric.square_meters
+
+        for part_id in sorted(part_totals):
+            lines.append(
+                f"  {part_id}: {_format_square_meters(round(part_totals[part_id], 3))}"
+            )
+
+    return lines
+
+
 def build_weight_report_lines() -> list[str]:
     if not _weight_metrics:
         return ["Weight metrics: no metrics recorded."]
@@ -313,12 +581,20 @@ def build_metrics_report_lines() -> list[str]:
         return ["Cut stock metrics: no metrics recorded."]
 
     lines: list[str] = []
+    report_sections = []
     if _length_metrics or _mark_metrics:
-        lines.extend(build_cut_stock_report_lines())
+        report_sections.append(build_cut_stock_report_lines())
     if _weight_metrics:
+        report_sections.append(build_weight_report_lines())
+    if _building_cost_metrics:
+        report_sections.append(build_building_cost_report_lines())
+    if _living_space_metrics:
+        report_sections.append(build_living_space_report_lines())
+
+    for section in report_sections:
         if lines:
             lines.append("")
-        lines.extend(build_weight_report_lines())
+        lines.extend(section)
     return lines
 
 
@@ -344,6 +620,20 @@ def snapshot_metrics() -> dict[str, Any]:
             }
             for metric in _weight_metrics
         ],
+        "building_cost_per_m3_map": {
+            building_kind.value: cost_per_m3
+            for building_kind, cost_per_m3 in sorted(
+                _building_cost_per_m3_map.items(), key=lambda item: item[0].name
+            )
+        },
+        "building_cost_metrics": [
+            {
+                **asdict(metric),
+                "building_kind": metric.building_kind.name,
+            }
+            for metric in _building_cost_metrics
+        ],
+        "living_space_metrics": [asdict(metric) for metric in _living_space_metrics],
     }
 
 
@@ -354,6 +644,9 @@ def _normalize_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
             "length_metrics": [],
             "mark_metrics": [],
             "weight_metrics": [],
+            "building_cost_per_m3_map": {},
+            "building_cost_metrics": [],
+            "living_space_metrics": [],
         }
 
     return {
@@ -363,6 +656,11 @@ def _normalize_snapshot(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         "length_metrics": list(snapshot.get("length_metrics") or []),
         "mark_metrics": list(snapshot.get("mark_metrics") or []),
         "weight_metrics": list(snapshot.get("weight_metrics") or []),
+        "building_cost_per_m3_map": dict(
+            snapshot.get("building_cost_per_m3_map") or {}
+        ),
+        "building_cost_metrics": list(snapshot.get("building_cost_metrics") or []),
+        "living_space_metrics": list(snapshot.get("living_space_metrics") or []),
     }
 
 
@@ -372,6 +670,8 @@ def snapshot_has_metrics(snapshot: Mapping[str, Any] | None) -> bool:
         normalized["length_metrics"]
         or normalized["mark_metrics"]
         or normalized["weight_metrics"]
+        or normalized["building_cost_metrics"]
+        or normalized["living_space_metrics"]
     )
 
 
@@ -429,6 +729,38 @@ def restore_metrics(
             )
         )
 
+    for building_kind_value, cost_per_m3 in normalized[
+        "building_cost_per_m3_map"
+    ].items():
+        _building_cost_per_m3_map[_coerce_building_kind(building_kind_value)] = round(
+            float(cost_per_m3), 6
+        )
+
+    for item in normalized["building_cost_metrics"]:
+        building_kind = _coerce_building_kind(item["building_kind"])
+        _building_cost_metrics.append(
+            BuildingCostMetric(
+                assembly_id=str(item["assembly_id"]),
+                building_kind=building_kind,
+                cubic_meters=round(float(item["cubic_meters"]), 6),
+                cost_per_m3=round(float(item["cost_per_m3"]), 6),
+                part_id=(
+                    None if item.get("part_id") is None else str(item.get("part_id"))
+                ),
+            )
+        )
+
+    for item in normalized["living_space_metrics"]:
+        _living_space_metrics.append(
+            LivingSpaceMetric(
+                assembly_id=str(item["assembly_id"]),
+                square_meters=round(float(item["square_meters"]), 6),
+                part_id=(
+                    None if item.get("part_id") is None else str(item.get("part_id"))
+                ),
+            )
+        )
+
     _set_report_logged(False)
 
 
@@ -468,23 +800,34 @@ def write_metrics_report(
 
 
 __all__ = [
+    "BuildingCostMetric",
+    "BuildingKind",
     "LengthMetric",
+    "LivingSpaceMetric",
     "MarkMetric",
     "Material",
     "METRICS_SNAPSHOT_SCHEMA_VERSION",
     "WeightMetric",
+    "build_building_cost_report_lines",
+    "build_building_cost_totals_by_assembly_id",
     "build_cut_stock_report_lines",
+    "build_living_space_report_lines",
+    "build_living_space_totals_by_assembly_id",
     "build_metrics_report_lines",
     "build_metrics_report_text",
     "build_weight_report_lines",
     "build_weight_totals_by_assembly_id",
     "calculate_mass_kg",
     "calculate_weight_g",
+    "configure_building_cost_per_m3_map",
+    "get_building_metric_cost",
     "get_metric_mass_kg",
     "has_metrics",
     "log_metrics_report",
     "merge_metrics_snapshot",
+    "record_building_cost_metric",
     "record_length_metric",
+    "record_living_space_metric",
     "record_mark_metric",
     "record_measured_mass_metric",
     "record_weight_metric",
