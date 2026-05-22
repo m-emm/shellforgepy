@@ -211,6 +211,33 @@ def test_ground_coverage_metrics_report_phase_ratios_and_footprints():
     ]
 
 
+def test_ground_coverage_metrics_report_legal_limit_remaining_and_overage():
+    record_ground_coverage_footprint_metric("before", "existing_house", 100.0)
+    record_ground_coverage_footprint_metric("after", "existing_house", 100.0)
+    record_ground_coverage_phase_metric(
+        "before",
+        property_square_meters=500.0,
+        covered_square_meters=120.0,
+        max_coverage_ratio=0.25,
+    )
+    record_ground_coverage_phase_metric(
+        "after",
+        property_square_meters=500.0,
+        covered_square_meters=135.0,
+        max_coverage_ratio=0.25,
+    )
+
+    assert build_ground_coverage_report_lines() == [
+        "Ground coverage metrics:",
+        "Property area: 500.000 m2",
+        "Legal coverage limit: 25.00% = 125.000 m2",
+        "before: 120.000 m2 / 500.000 m2 = 24.00% (5.000 m2 remaining)",
+        "  existing_house: 100.000 m2",
+        "after: 135.000 m2 / 500.000 m2 = 27.00% (10.000 m2 over limit)",
+        "  existing_house: 100.000 m2",
+    ]
+
+
 def test_building_and_living_space_metrics_round_trip_through_snapshots():
     configure_building_cost_per_m3_map({"appartment": 1100})
     record_building_cost_metric(
@@ -249,6 +276,7 @@ def test_ground_coverage_metrics_round_trip_through_snapshots():
         "before",
         property_square_meters=500.0,
         covered_square_meters=100.0,
+        max_coverage_ratio=0.25,
     )
 
     snapshot = snapshot_metrics()
@@ -258,8 +286,52 @@ def test_ground_coverage_metrics_round_trip_through_snapshots():
     assert build_metrics_report_lines() == [
         "Ground coverage metrics:",
         "Property area: 500.000 m2",
+        "Legal coverage limit: 25.00% = 125.000 m2",
+        "before: 100.000 m2 / 500.000 m2 = 20.00% (25.000 m2 remaining)",
+        "  existing_house: 100.000 m2",
+    ]
+
+
+def test_legacy_ground_coverage_snapshot_without_legal_limit_is_supported():
+    legacy_snapshot = {
+        "schema_version": 3,
+        "length_metrics": [],
+        "mark_metrics": [],
+        "weight_metrics": [],
+        "building_cost_per_m3_map": {},
+        "building_cost_metrics": [],
+        "living_space_metrics": [],
+        "ground_coverage_footprint_metrics": [
+            {
+                "phase": "before",
+                "part_id": "existing_house",
+                "square_meters": 100.0,
+            }
+        ],
+        "ground_coverage_phase_metrics": [
+            {
+                "phase": "before",
+                "property_square_meters": 500.0,
+                "covered_square_meters": 100.0,
+            }
+        ],
+    }
+
+    merge_metrics_snapshot(legacy_snapshot)
+
+    assert build_metrics_report_lines() == [
+        "Ground coverage metrics:",
+        "Property area: 500.000 m2",
         "before: 100.000 m2 / 500.000 m2 = 20.00%",
         "  existing_house: 100.000 m2",
+    ]
+    assert snapshot_metrics()["ground_coverage_phase_metrics"] == [
+        {
+            "phase": "before",
+            "property_square_meters": 500.0,
+            "covered_square_meters": 100.0,
+            "max_coverage_ratio": None,
+        }
     ]
 
 

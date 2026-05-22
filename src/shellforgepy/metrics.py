@@ -97,9 +97,10 @@ class GroundCoveragePhaseMetric:
     phase: str
     property_square_meters: float
     covered_square_meters: float
+    max_coverage_ratio: float | None = None
 
 
-METRICS_SNAPSHOT_SCHEMA_VERSION = 3
+METRICS_SNAPSHOT_SCHEMA_VERSION = 4
 
 _length_metrics: list[LengthMetric] = []
 _mark_metrics: list[MarkMetric] = []
@@ -360,6 +361,7 @@ def record_ground_coverage_phase_metric(
     phase: str,
     property_square_meters: float,
     covered_square_meters: float,
+    max_coverage_ratio: float | None = None,
 ) -> None:
     phase = str(phase).strip()
     if not phase:
@@ -373,12 +375,19 @@ def record_ground_coverage_phase_metric(
     if normalized_covered_square_meters < 0:
         raise ValueError("covered_square_meters must be non-negative")
 
+    normalized_max_coverage_ratio = None
+    if max_coverage_ratio is not None:
+        normalized_max_coverage_ratio = round(float(max_coverage_ratio), 6)
+        if normalized_max_coverage_ratio <= 0:
+            raise ValueError("max_coverage_ratio must be greater than zero")
+
     _set_report_logged(False)
     _ground_coverage_phase_metrics.append(
         GroundCoveragePhaseMetric(
             phase=phase,
             property_square_meters=normalized_property_square_meters,
             covered_square_meters=normalized_covered_square_meters,
+            max_coverage_ratio=normalized_max_coverage_ratio,
         )
     )
 
@@ -630,11 +639,25 @@ def build_ground_coverage_report_lines() -> list[str]:
         return ["Ground coverage metrics: no metrics recorded."]
 
     lines = ["Ground coverage metrics:"]
+    property_square_meters = None
     if _ground_coverage_phase_metrics:
         property_square_meters = _ground_coverage_phase_metrics[
             0
         ].property_square_meters
         lines.append(f"Property area: {_format_square_meters(property_square_meters)}")
+        legal_limit_ratio = next(
+            (
+                metric.max_coverage_ratio
+                for metric in _ground_coverage_phase_metrics
+                if metric.max_coverage_ratio is not None
+            ),
+            None,
+        )
+        if legal_limit_ratio is not None:
+            lines.append(
+                f"Legal coverage limit: {_format_percentage(legal_limit_ratio)} "
+                f"= {_format_square_meters(property_square_meters * legal_limit_ratio)}"
+            )
 
     footprint_totals_by_phase_and_part: dict[tuple[str, str], float] = defaultdict(
         float
@@ -656,10 +679,28 @@ def build_ground_coverage_report_lines() -> list[str]:
             coverage_ratio = (
                 phase_metric.covered_square_meters / phase_metric.property_square_meters
             )
+            legal_limit_status = ""
+            if phase_metric.max_coverage_ratio is not None:
+                legal_limit_square_meters = (
+                    phase_metric.property_square_meters
+                    * phase_metric.max_coverage_ratio
+                )
+                remaining_square_meters = (
+                    legal_limit_square_meters - phase_metric.covered_square_meters
+                )
+                if remaining_square_meters >= 0:
+                    legal_limit_status = (
+                        f" ({_format_square_meters(remaining_square_meters)} remaining)"
+                    )
+                else:
+                    legal_limit_status = (
+                        f" ({_format_square_meters(abs(remaining_square_meters))} "
+                        "over limit)"
+                    )
             lines.append(
                 f"{phase}: {_format_square_meters(phase_metric.covered_square_meters)} "
                 f"/ {_format_square_meters(phase_metric.property_square_meters)} "
-                f"= {_format_percentage(coverage_ratio)}"
+                f"= {_format_percentage(coverage_ratio)}{legal_limit_status}"
             )
         else:
             lines.append(f"{phase}:")
@@ -929,6 +970,11 @@ def restore_metrics(
                 phase=str(item["phase"]),
                 property_square_meters=round(float(item["property_square_meters"]), 6),
                 covered_square_meters=round(float(item["covered_square_meters"]), 6),
+                max_coverage_ratio=(
+                    None
+                    if item.get("max_coverage_ratio") is None
+                    else round(float(item["max_coverage_ratio"]), 6)
+                ),
             )
         )
 
