@@ -153,6 +153,15 @@ def test_union_projected_footprint_paths_counts_overlap_once():
     assert np.isclose(projected_footprint_paths_area(paths), 6)
 
 
+def test_union_projected_footprint_paths_counts_vertical_overlap_once():
+    roof = create_box(6, 6, 0.3, origin=(0, 0, 5))
+    connection_under_roof = create_box(4, 4, 2, origin=(4, 1, 0))
+
+    paths = union_projected_footprint_paths([roof, connection_under_roof])
+
+    assert np.isclose(projected_footprint_paths_area(paths), 44)
+
+
 def test_projected_footprint_area_counts_vertical_hole_as_covered():
     part = _create_holed_box_for_filled_part()
 
