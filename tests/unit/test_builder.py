@@ -973,6 +973,151 @@ def test_build_from_file_writes_hashed_metadata_and_reuses_cache(monkeypatch, tm
     assert cached_results[0]["parameter_hash"] == expected_hash
 
 
+def test_build_from_file_hashes_declared_file_dependencies(monkeypatch, tmp_path):
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / "demo_pkg"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "widget_generator.py",
+        "\n".join(
+            [
+                "def make_widget():",
+                "    return 'widget-from-file-dependencies'",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    dependency_a = assemblies_dir / "data" / "alpha.json"
+    dependency_z = assemblies_dir / "data" / "zeta.json"
+    _write_file(dependency_a, '{"value": 1}\n')
+    _write_file(dependency_z, '{"value": 2}\n')
+    _write_file(
+        assemblies_dir / "sample_assembly.yaml",
+        "\n".join(
+            [
+                'ShellforgepyBuilderVersion: "2026-03-27"',
+                "Parts:",
+                "  Sample:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.widget_generator.make_widget",
+                "      FileDependencies:",
+                "        - path: data/zeta.json",
+                "        - data/alpha.json",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(config_path, "assemblies:\n  - name: sample_assembly\n")
+
+    exported = []
+
+    def fake_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+        exported.append(destination)
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+    monkeypatch.delitem(sys.modules, "demo_pkg", raising=False)
+    monkeypatch.delitem(sys.modules, "demo_pkg.widget_generator", raising=False)
+
+    first_results = builder.build_from_file(config_path)
+    first_result = first_results[0]
+    first_hash = first_result["parameter_hash"]
+    expected_dependencies = [
+        {
+            "path": str(dependency_a.resolve()),
+            "sha256": builder._file_sha256(dependency_a.resolve()),
+        },
+        {
+            "path": str(dependency_z.resolve()),
+            "sha256": builder._file_sha256(dependency_z.resolve()),
+        },
+    ]
+    assert first_result["file_dependencies"] == expected_dependencies
+    assert first_result["version_inputs"]["file_dependency_0000_path"] == str(
+        dependency_a.resolve()
+    )
+    assert first_result["version_inputs"]["file_dependency_0000_sha256"] == (
+        expected_dependencies[0]["sha256"]
+    )
+    assert first_result["cache_hit"] is False
+    assert exported
+
+    monkeypatch.setattr(
+        builder,
+        "_export_part_to_step",
+        lambda part, destination: pytest.fail(
+            f"cache hit should not export artifacts again: {destination}"
+        ),
+    )
+    cached_results = builder.build_from_file(config_path)
+    assert cached_results[0]["cache_hit"] is True
+    assert cached_results[0]["parameter_hash"] == first_hash
+
+    _write_file(dependency_a, '{"value": 3}\n')
+    rebuilt_exports = []
+
+    def fake_rebuild_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+        rebuilt_exports.append(destination)
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_rebuild_export)
+    rebuilt_results = builder.build_from_file(config_path)
+    rebuilt_result = rebuilt_results[0]
+
+    assert rebuilt_result["cache_hit"] is False
+    assert rebuilt_result["parameter_hash"] != first_hash
+    assert rebuilt_result["file_dependencies"][0]["sha256"] == builder._file_sha256(
+        dependency_a.resolve()
+    )
+    assert rebuilt_exports
+
+
+def test_build_from_file_reports_missing_file_dependency(tmp_path):
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / "demo_pkg"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "widget_generator.py",
+        "\n".join(
+            [
+                "def make_widget():",
+                "    return 'widget'",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(
+        assemblies_dir / "sample_assembly.yaml",
+        "\n".join(
+            [
+                'ShellforgepyBuilderVersion: "2026-03-27"',
+                "Parts:",
+                "  Sample:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.widget_generator.make_widget",
+                "      FileDependencies:",
+                "        - data/missing.json",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(config_path, "assemblies:\n  - name: sample_assembly\n")
+
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder.build_from_file(config_path)
+
+    assert "File dependency" in str(excinfo.value)
+    assert "does not exist" in str(excinfo.value)
+
+
 def test_build_from_file_caches_obj_mesh_artifacts(tmp_path):
     config_path, repository_path, texture_path = _write_obj_mesh_builder_project(
         tmp_path

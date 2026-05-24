@@ -102,6 +102,7 @@ class _ResolvedAssembly:
     parameter_hash: str
     is_collection: bool = False
     is_composite: bool = False
+    file_dependencies: List[Dict[str, str]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -1260,6 +1261,62 @@ def _stable_json_dumps(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
+def _normalize_file_dependencies(
+    raw_dependencies: Any,
+    *,
+    logical_part_name: str,
+    resource_path: Path,
+) -> List[Dict[str, str]]:
+    if raw_dependencies is None:
+        return []
+    if not isinstance(raw_dependencies, list):
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} has FileDependencies "
+            "that must be a list"
+        )
+
+    dependencies_by_path: Dict[str, Dict[str, str]] = {}
+    for index, raw_entry in enumerate(raw_dependencies):
+        if isinstance(raw_entry, str):
+            raw_path = raw_entry
+        elif isinstance(raw_entry, Mapping):
+            raw_path = raw_entry.get("path")
+        else:
+            raise BuilderError(
+                f"FileDependencies[{index}] for part '{logical_part_name}' in "
+                f"{resource_path} must be a string path or mapping with a path"
+            )
+
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise BuilderError(
+                f"FileDependencies[{index}] for part '{logical_part_name}' in "
+                f"{resource_path} must define a non-empty path"
+            )
+
+        dependency_path = Path(raw_path).expanduser()
+        if not dependency_path.is_absolute():
+            dependency_path = (resource_path.parent / dependency_path).resolve()
+        else:
+            dependency_path = dependency_path.resolve()
+        if not dependency_path.exists():
+            raise BuilderError(
+                f"File dependency for part '{logical_part_name}' in {resource_path} "
+                f"does not exist: {dependency_path}"
+            )
+        if not dependency_path.is_file():
+            raise BuilderError(
+                f"File dependency for part '{logical_part_name}' in {resource_path} "
+                f"is not a file: {dependency_path}"
+            )
+
+        dependencies_by_path[str(dependency_path)] = {
+            "path": str(dependency_path),
+            "sha256": _file_sha256(dependency_path),
+        }
+
+    return [dependencies_by_path[path] for path in sorted(dependencies_by_path)]
+
+
 def _resolve_assembly(
     config_path: Path,
     entry: Mapping[str, Any],
@@ -1324,6 +1381,11 @@ def _resolve_assembly(
             raise BuilderError(
                 f"Part '{logical_part_name}' in {resource_path} has invalid Properties"
             )
+        file_dependencies = _normalize_file_dependencies(
+            properties.get("FileDependencies"),
+            logical_part_name=logical_part_name,
+            resource_path=resource_path,
+        )
         composite_path = properties.get("Composite")
         if composite_path is not None:
             if "Generator" in properties:
@@ -1369,6 +1431,7 @@ def _resolve_assembly(
         parameter_hash="",
         is_collection=is_collection,
         is_composite=is_composite,
+        file_dependencies=file_dependencies if not is_collection else [],
     )
 
 
@@ -1922,6 +1985,7 @@ def _version_inputs(
     generator_path: str,
     resource_path: Path,
     composite_spec: Optional[Mapping[str, Any]] = None,
+    file_dependencies: Optional[Sequence[Mapping[str, str]]] = None,
 ) -> Dict[str, Any]:
     inputs: Dict[str, Any] = {
         "generator_path": generator_path,
@@ -1938,6 +2002,9 @@ def _version_inputs(
     if generator_source_path is not None:
         inputs["generator_source_path"] = str(generator_source_path)
         inputs["generator_source_sha256"] = _file_sha256(generator_source_path)
+    for index, dependency in enumerate(file_dependencies or []):
+        inputs[f"file_dependency_{index:04d}_path"] = str(dependency["path"])
+        inputs[f"file_dependency_{index:04d}_sha256"] = str(dependency["sha256"])
     return inputs
 
 
@@ -6182,6 +6249,7 @@ def build_from_file(
                     if resolved.is_composite
                     else None
                 ),
+                file_dependencies=resolved.file_dependencies,
             )
             parameter_hash = _hash_with_dependencies(
                 {
@@ -6293,6 +6361,7 @@ def build_from_file(
                 "parameter_hash": parameter_hash,
                 "public_parameters": resolved.public_parameters,
                 "generator_kwargs": resolved.generator_kwargs,
+                "file_dependencies": deepcopy(resolved.file_dependencies),
                 "generator_context": (
                     {
                         **(generator_context or {}),

@@ -153,6 +153,9 @@ Parts:
     Type: Shellforgepy::Assembly
     Properties:
       Generator: shellforgepy.simple.create_box
+      # Optional: cache-only files that should invalidate this assembly when changed.
+      FileDependencies:
+        - data/profile.json
       Properties:
         length:
           $ref: length
@@ -161,6 +164,11 @@ Parts:
         height:
           $ref: height
 ```
+
+`FileDependencies` entries are resolved relative to the assembly resource file
+unless they are absolute paths. They are not passed to the generator; their
+paths and SHA256 hashes are included in the build fingerprint so external data
+files participate in cache invalidation.
 
 ## Running the builder
 
