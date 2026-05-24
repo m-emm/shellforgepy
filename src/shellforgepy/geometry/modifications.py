@@ -34,11 +34,11 @@ _logger = logging.getLogger(__name__)
 
 _FILLED_PART_SCALE = 1000
 _FILLED_PART_FALLBACK_WARNING = (
-    "pyclipr is not installed; using approximate slow raster fallback for "
+    "pyclipper is not installed; using approximate slow raster fallback for "
     "filled_part_from. Install shellforgepy[clipper] for exact polygon clipping."
 )
 _PROJECTED_FOOTPRINT_FALLBACK_WARNING = (
-    "pyclipr is not installed; using approximate slow raster fallback for "
+    "pyclipper is not installed; using approximate slow raster fallback for "
     "projected footprint metrics. Install shellforgepy[clipper] for exact polygon clipping."
 )
 
@@ -1498,17 +1498,18 @@ def _scaled_projected_footprint_paths_from(part):
     return paths
 
 
-def _union_projected_paths_with_pyclipr(paths):
-    import pyclipr
+def _union_projected_paths_with_pyclipper(paths):
+    import pyclipper
 
     if not paths:
         return []
 
-    pc = pyclipr.Clipper()
-    pc.addPaths(paths, pyclipr.Subject, False)
-    return pc.execute(
-        pyclipr.Union,
-        pyclipr.FillRule.NonZero,
+    pc = pyclipper.Pyclipper()
+    pc.AddPaths(paths, pyclipper.PT_SUBJECT, True)
+    return pc.Execute(
+        pyclipper.CT_UNION,
+        pyclipper.PFT_NONZERO,
+        pyclipper.PFT_NONZERO,
     )
 
 
@@ -1516,7 +1517,7 @@ def _union_scaled_projected_footprint_paths(
     paths, *, fallback_cell_size=1.0, fallback_max_cells=50_000
 ):
     try:
-        return _union_projected_paths_with_pyclipr(paths)
+        return _union_projected_paths_with_pyclipper(paths)
     except ImportError:
         _logger.warning(_PROJECTED_FOOTPRINT_FALLBACK_WARNING)
         return _filled_part_raster_fallback_paths(
@@ -1871,7 +1872,7 @@ def filled_part_from(part, *, fallback_cell_size=1.0, fallback_max_cells=50_000)
     """
     Return a version of the part with all internal cavities filled in.
 
-    ``pyclipr`` is used for exact polygon clipping when installed. Without it,
+    ``pyclipper`` is used for exact polygon clipping. Without it,
     the function falls back to a deliberately slow raster approximation.
     """
 
@@ -1881,7 +1882,7 @@ def filled_part_from(part, *, fallback_cell_size=1.0, fallback_max_cells=50_000)
     max_z = bounding_box[1][2]
 
     try:
-        footprint_paths = _union_projected_paths_with_pyclipr(paths)
+        footprint_paths = _union_projected_paths_with_pyclipper(paths)
     except ImportError:
         _logger.warning(_FILLED_PART_FALLBACK_WARNING)
         return _filled_part_raster_fallback(

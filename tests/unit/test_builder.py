@@ -1077,6 +1077,176 @@ def test_build_from_file_hashes_declared_file_dependencies(monkeypatch, tmp_path
     assert rebuilt_exports
 
 
+def test_build_from_file_hashes_architecture_storey_specification(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / "architecture_demo_pkg"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "storey_generator.py",
+        "\n".join(
+            [
+                "from shellforgepy.construct.leader_followers_cutters_part import LeaderFollowersCuttersPart",
+                "from shellforgepy.simple import create_box",
+                "def make_storey(*, architecture):",
+                "    spec = architecture['storey_specification']",
+                "    return LeaderFollowersCuttersPart(",
+                "        create_box(1, 1, 1),",
+                "        additional_data={'architecture': {'storey': {'id': spec['id']}}},",
+                "    )",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    semantic_file = assemblies_dir / "data" / "storey.yaml"
+    _write_file(semantic_file, "schema_version: 2\n")
+    _write_file(
+        assemblies_dir / "sample_assembly.yaml",
+        "\n".join(
+            [
+                'ShellforgepyBuilderVersion: "2026-03-27"',
+                "Parameters:",
+                "  storey_id:",
+                "    Type: String",
+                "  semantic_file:",
+                "    Type: String",
+                "Parts:",
+                "  Storey:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: architecture_demo_pkg.storey_generator.make_storey",
+                "      Architecture:",
+                "        StoreySpecification:",
+                "          id: !Ref storey_id",
+                "          storey_index: 3",
+                "          path: !Ref semantic_file",
+            ]
+        ),
+    )
+    _write_file(
+        assemblies_dir / "assemblies.yaml",
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: sample_assembly",
+                "    resource_file: sample_assembly.yaml",
+                "    parameters:",
+                "      storey_id: existing_house_storey_3",
+                "      semantic_file: data/storey.yaml",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+
+    monkeypatch.setattr(
+        builder,
+        "_export_part_to_step",
+        lambda part, destination: _write_file(destination, str(part)),
+    )
+    monkeypatch.delitem(sys.modules, "architecture_demo_pkg", raising=False)
+    monkeypatch.delitem(
+        sys.modules,
+        "architecture_demo_pkg.storey_generator",
+        raising=False,
+    )
+
+    result = builder.build_from_file(config_path)[0]
+    expected_dependency = {
+        "path": str(semantic_file.resolve()),
+        "sha256": builder._file_sha256(semantic_file.resolve()),
+    }
+    assert result["file_dependencies"] == [expected_dependency]
+    assert result["architecture"]["storey_specification"] == {
+        "id": "existing_house_storey_3",
+        "storey_index": 3,
+        "path": str(semantic_file.resolve()),
+        "sha256": expected_dependency["sha256"],
+    }
+    assert result["generator_kwargs"]["architecture"] == result["architecture"]
+    assert result["additional_data"]["architecture"]["storey"]["id"] == (
+        "existing_house_storey_3"
+    )
+    assert result["version_inputs"]["file_dependency_0000_path"] == str(
+        semantic_file.resolve()
+    )
+
+
+def test_architecture_plan_renders_use_injected_storey_metadata(monkeypatch, tmp_path):
+    import shellforgepy.architecture.plan_render as plan_render
+
+    selected_metadata = {
+        "assembly_name": "scene_assembly",
+        "public_parameters": {
+            "scene_colors": {"excluded_living_area": [1.0, 0.05, 0.04]}
+        },
+        "dependencies": [{"kwarg_name": "storey", "assembly_name": "storey_assembly"}],
+    }
+    storey_metadata = {
+        "assembly_name": "storey_assembly",
+        "additional_data": {"architecture": {"storey": {"id": "storey_a"}}},
+    }
+    resource_data = {
+        "Builder": {
+            "Visualization": {
+                "architecture_plan_renders": [
+                    {
+                        "source": "injected",
+                        "assembly": "storey",
+                        "name": "storey_a_plan",
+                        "formats": ["svg"],
+                        "excluded_living_area_color": {
+                            "$ref": "scene_colors.excluded_living_area"
+                        },
+                    }
+                ]
+            }
+        }
+    }
+    calls = []
+
+    def fake_render(metadata, output_path, *, excluded_living_area_color, image_width):
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_text("svg", encoding="utf-8")
+        calls.append((metadata, output_path, excluded_living_area_color, image_width))
+        return {
+            "format": "svg",
+            "storey_id": "storey_a",
+            "storey_index": 2,
+            "semantic_path": "storey.yaml",
+        }
+
+    monkeypatch.setattr(plan_render, "render_storey_plan_from_metadata", fake_render)
+
+    rendered = builder._render_architecture_plan_renders(
+        metadata=selected_metadata,
+        resource_data=resource_data,
+        mode="visualization",
+        config_data={},
+        built_results_by_name={"storey_assembly": storey_metadata},
+        repository_dir=tmp_path / "repo",
+        run_directory=tmp_path / "run",
+    )
+
+    assert calls[0][0] == storey_metadata
+    assert calls[0][2] == [1.0, 0.05, 0.04]
+    assert rendered == [
+        {
+            "name": "storey_a_plan",
+            "format": "svg",
+            "source": "injected",
+            "source_assembly": "storey_assembly",
+            "storey_id": "storey_a",
+            "storey_index": 2,
+            "semantic_path": "storey.yaml",
+            "path": "architecture_plan_renders/storey_a_plan.svg",
+        }
+    ]
+    assert (tmp_path / "run" / rendered[0]["path"]).read_text(encoding="utf-8") == "svg"
+
+
 def test_build_from_file_reports_missing_file_dependency(tmp_path):
     project_root = tmp_path / "project"
     src_dir = project_root / "src" / "demo_pkg"

@@ -82,19 +82,17 @@ def _create_holed_box_for_filled_part():
 
 
 def _force_filled_part_raster_fallback(monkeypatch):
-    def missing_pyclipr(paths):
-        raise ImportError("No module named pyclipr")
+    def missing_pyclipper(paths):
+        raise ImportError("No module named pyclipper")
 
     monkeypatch.setattr(
         modifications,
-        "_union_projected_paths_with_pyclipr",
-        missing_pyclipr,
+        "_union_projected_paths_with_pyclipper",
+        missing_pyclipper,
     )
 
 
-def test_filled_part_from_pyclipr_fills_vertical_hole():
-    pytest.importorskip("pyclipr")
-
+def test_filled_part_from_pyclipper_fills_vertical_hole():
     part = _create_holed_box_for_filled_part()
     filled = filled_part_from(part)
 

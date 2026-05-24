@@ -41,6 +41,7 @@ _logger = logging.getLogger(__name__)
 _REF_PATTERN = re.compile(r"\$\{([A-Za-z0-9_./:-]+)\}")
 _SAFE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 _COMPOSITE_TEMPLATE_PATTERN = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_ARCHITECTURE_ID_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 BUILD_METADATA_SCHEMA_VERSION = 2
 PLACED_ASSEMBLIES_DEBUG_FILENAME = "placed_assemblies_bounding_boxes.json"
 PLACED_ASSEMBLIES_DEBUG_FLOAT_DIGITS = 4
@@ -103,6 +104,7 @@ class _ResolvedAssembly:
     is_collection: bool = False
     is_composite: bool = False
     file_dependencies: List[Dict[str, str]] = field(default_factory=list)
+    architecture: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1317,6 +1319,116 @@ def _normalize_file_dependencies(
     return [dependencies_by_path[path] for path in sorted(dependencies_by_path)]
 
 
+def _resolve_dependency_path(
+    raw_path: str,
+    *,
+    logical_part_name: str,
+    resource_path: Path,
+    label: str,
+) -> Dict[str, str]:
+    dependency_path = Path(raw_path).expanduser()
+    if not dependency_path.is_absolute():
+        dependency_path = (resource_path.parent / dependency_path).resolve()
+    else:
+        dependency_path = dependency_path.resolve()
+    if not dependency_path.exists():
+        raise BuilderError(
+            f"{label} for part '{logical_part_name}' in {resource_path} "
+            f"does not exist: {dependency_path}"
+        )
+    if not dependency_path.is_file():
+        raise BuilderError(
+            f"{label} for part '{logical_part_name}' in {resource_path} "
+            f"is not a file: {dependency_path}"
+        )
+    return {"path": str(dependency_path), "sha256": _file_sha256(dependency_path)}
+
+
+def _normalize_architecture(
+    raw_architecture: Any,
+    *,
+    public_parameters: Mapping[str, Any],
+    logical_part_name: str,
+    resource_path: Path,
+) -> tuple[Dict[str, Any], List[Dict[str, str]]]:
+    if raw_architecture is None:
+        return {}, []
+    if not isinstance(raw_architecture, Mapping):
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} has Architecture "
+            "that must be a mapping"
+        )
+
+    resolved = _resolve_inline_mapping(raw_architecture, public_parameters)
+    architecture: Dict[str, Any] = {}
+    dependencies: List[Dict[str, str]] = []
+
+    storey_spec = resolved.get("StoreySpecification")
+    if storey_spec is not None:
+        if not isinstance(storey_spec, Mapping):
+            raise BuilderError(
+                f"Part '{logical_part_name}' in {resource_path} has "
+                "Architecture.StoreySpecification that must be a mapping"
+            )
+        spec_id = str(storey_spec.get("id", "")).strip()
+        if not spec_id or not _ARCHITECTURE_ID_PATTERN.fullmatch(spec_id):
+            raise BuilderError(
+                "Architecture.StoreySpecification.id must be non-empty and use "
+                f"letters, numbers, and underscores: {spec_id!r}"
+            )
+        raw_path = storey_spec.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise BuilderError(
+                "Architecture.StoreySpecification.path must be a non-empty string"
+            )
+        try:
+            storey_index = int(storey_spec["storey_index"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise BuilderError(
+                "Architecture.StoreySpecification.storey_index must be an integer"
+            ) from exc
+        if storey_index <= 0:
+            raise BuilderError(
+                "Architecture.StoreySpecification.storey_index must be positive"
+            )
+        dependency = _resolve_dependency_path(
+            raw_path,
+            logical_part_name=logical_part_name,
+            resource_path=resource_path,
+            label="Architecture.StoreySpecification.path",
+        )
+        dependencies.append(dependency)
+        architecture["storey_specification"] = {
+            **dict(storey_spec),
+            "id": spec_id,
+            "storey_index": storey_index,
+            "path": dependency["path"],
+            "sha256": dependency["sha256"],
+        }
+
+    unsupported = set(resolved) - {"StoreySpecification"}
+    if unsupported:
+        raise BuilderError(
+            f"Unsupported Architecture keys for part '{logical_part_name}' in "
+            f"{resource_path}: {sorted(unsupported)}"
+        )
+
+    return architecture, dependencies
+
+
+def _merge_file_dependency_lists(
+    *dependency_lists: Sequence[Mapping[str, str]],
+) -> List[Dict[str, str]]:
+    dependencies_by_path: Dict[str, Dict[str, str]] = {}
+    for dependency_list in dependency_lists:
+        for dependency in dependency_list:
+            dependencies_by_path[str(dependency["path"])] = {
+                "path": str(dependency["path"]),
+                "sha256": str(dependency["sha256"]),
+            }
+    return [dependencies_by_path[path] for path in sorted(dependencies_by_path)]
+
+
 def _resolve_assembly(
     config_path: Path,
     entry: Mapping[str, Any],
@@ -1371,6 +1483,8 @@ def _resolve_assembly(
         resource_path=resource_path,
     )
 
+    file_dependencies: List[Dict[str, str]] = []
+    architecture: Dict[str, Any] = {}
     if is_collection:
         generator_path = _COLLECTION_ASSEMBLY_GENERATOR_PATH
         generator_kwargs = {}
@@ -1385,6 +1499,15 @@ def _resolve_assembly(
             properties.get("FileDependencies"),
             logical_part_name=logical_part_name,
             resource_path=resource_path,
+        )
+        architecture, architecture_dependencies = _normalize_architecture(
+            properties.get("Architecture"),
+            public_parameters=public_parameters,
+            logical_part_name=logical_part_name,
+            resource_path=resource_path,
+        )
+        file_dependencies = _merge_file_dependency_lists(
+            file_dependencies, architecture_dependencies
         )
         composite_path = properties.get("Composite")
         if composite_path is not None:
@@ -1418,6 +1541,14 @@ def _resolve_assembly(
             generator_kwargs = _resolve_inline_mapping(
                 generator_properties, public_parameters
             )
+            if architecture:
+                if "architecture" in generator_kwargs:
+                    raise BuilderError(
+                        f"Part '{logical_part_name}' in {resource_path} cannot "
+                        "define both Properties.Architecture and "
+                        "Properties.Properties.architecture"
+                    )
+                generator_kwargs["architecture"] = architecture
             is_composite = False
     return _ResolvedAssembly(
         name=str(entry["name"]),
@@ -1432,6 +1563,7 @@ def _resolve_assembly(
         is_collection=is_collection,
         is_composite=is_composite,
         file_dependencies=file_dependencies if not is_collection else [],
+        architecture=architecture if not is_collection else {},
     )
 
 
@@ -2147,6 +2279,14 @@ def _normalize_generated_part(generated_part: Any) -> Dict[str, Any]:
     }
 
 
+def _generated_part_additional_data(generated_part: Any) -> Dict[str, Any]:
+    additional_data = getattr(generated_part, "additional_data", None)
+    if not isinstance(additional_data, Mapping):
+        return {}
+    # Force JSON-compatible values while preserving deterministic metadata output.
+    return json.loads(json.dumps(additional_data, sort_keys=True, default=str))
+
+
 def _export_part_to_step(part: Any, destination: Path) -> None:
     from shellforgepy.produce.arrange_and_export import export_solid_to_step
 
@@ -2444,7 +2584,8 @@ def _import_dependency_assembly(metadata: Mapping[str, Any]) -> Any:
         )
 
     assembly = LeaderFollowersCuttersPart(
-        _import_dependency_part(Path(leader_path).expanduser().resolve())
+        _import_dependency_part(Path(leader_path).expanduser().resolve()),
+        additional_data=deepcopy(dict(metadata.get("additional_data") or {})),
     )
 
     for item in artifacts.get("followers", []):
@@ -6361,6 +6502,8 @@ def build_from_file(
                 "parameter_hash": parameter_hash,
                 "public_parameters": resolved.public_parameters,
                 "generator_kwargs": resolved.generator_kwargs,
+                "architecture": deepcopy(resolved.architecture),
+                "additional_data": _generated_part_additional_data(generated_part),
                 "file_dependencies": deepcopy(resolved.file_dependencies),
                 "generator_context": (
                     {
@@ -6454,6 +6597,154 @@ def _resolve_runs_base_dir(args: argparse.Namespace, config: Mapping[str, Any]) 
     runs_base = runs_base.resolve()
     runs_base.mkdir(parents=True, exist_ok=True)
     return runs_base
+
+
+def _architecture_plan_render_rules_for_mode(
+    metadata: Mapping[str, Any],
+    resource_data: Mapping[str, Any],
+    mode: str,
+    config_data: Optional[Mapping[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    if mode != "visualization":
+        return []
+    section = _builder_section(resource_data, "Visualization", config_data)
+    rules = section.get("architecture_plan_renders", [])
+    if rules is None:
+        return []
+    if not isinstance(rules, list):
+        raise BuilderError(
+            "Builder.Visualization.architecture_plan_renders must be a list"
+        )
+    return [dict(rule) for rule in rules]
+
+
+def _injected_metadata_target_for_rule(
+    metadata: Mapping[str, Any],
+    rule: Mapping[str, Any],
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+    repository_dir: Path,
+) -> Dict[str, Any]:
+    source = str(rule.get("source", "self"))
+    if source in {"self", "assembly"}:
+        return dict(metadata)
+    if source not in {"injected", "inject"}:
+        raise BuilderError(f"Unsupported architecture plan render source '{source}'")
+
+    dependency_key = rule.get("assembly")
+    if not dependency_key:
+        raise BuilderError(
+            "Injected architecture plan render rules require an assembly selector"
+        )
+    dependency_key = str(dependency_key)
+    for dependency in metadata.get("dependencies", []):
+        assembly_name = str(dependency["assembly_name"])
+        kwarg_name = dependency.get("kwarg_name")
+        if dependency_key not in {assembly_name, str(kwarg_name)}:
+            continue
+        return _dependency_metadata_for_assembly(
+            assembly_name,
+            built_results_by_name,
+            repository_dir,
+        )
+    raise BuilderError(
+        f"Unsupported injected architecture plan render dependency '{dependency_key}'"
+    )
+
+
+def _architecture_plan_render_color(
+    rule: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+):
+    context = _metadata_resolution_context(metadata)
+    raw_color = rule.get("excluded_living_area_color", rule.get("color"))
+    if raw_color is not None:
+        return _resolve_inline_value(raw_color, context)
+    scene_colors = context.get("scene_colors")
+    if isinstance(scene_colors, Mapping):
+        return scene_colors.get("excluded_living_area")
+    return None
+
+
+def _architecture_plan_render_formats(rule: Mapping[str, Any]) -> List[str]:
+    raw_formats = rule.get("formats", rule.get("format", "svg"))
+    if isinstance(raw_formats, str):
+        formats = [raw_formats]
+    elif isinstance(raw_formats, Sequence):
+        formats = list(raw_formats)
+    else:
+        raise BuilderError("architecture_plan_renders formats must be a string or list")
+
+    normalized = []
+    for raw_format in formats:
+        fmt = str(raw_format).strip().lower().lstrip(".")
+        if not fmt:
+            continue
+        if fmt != "svg":
+            raise BuilderError(
+                "architecture_plan_renders currently support only SVG output"
+            )
+        normalized.append(fmt)
+    return normalized or ["svg"]
+
+
+def _render_architecture_plan_renders(
+    *,
+    metadata: Mapping[str, Any],
+    resource_data: Mapping[str, Any],
+    mode: str,
+    config_data: Mapping[str, Any],
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+    repository_dir: Path,
+    run_directory: Path,
+) -> List[Dict[str, Any]]:
+    rules = _architecture_plan_render_rules_for_mode(
+        metadata,
+        resource_data,
+        mode,
+        config_data,
+    )
+    if not rules:
+        return []
+
+    from shellforgepy.architecture.plan_render import render_storey_plan_from_metadata
+
+    render_dir = run_directory / "architecture_plan_renders"
+    rendered: List[Dict[str, Any]] = []
+    for index, rule in enumerate(rules, start=1):
+        target = _injected_metadata_target_for_rule(
+            metadata,
+            rule,
+            built_results_by_name,
+            repository_dir,
+        )
+        raw_name = rule.get("name") or f"{target.get('assembly_name')}_plan"
+        name = _safe_name(str(raw_name))
+        if not name:
+            name = f"architecture_plan_{index}"
+        image_width = int(rule.get("width", rule.get("image_width", 1800)))
+        for output_format in _architecture_plan_render_formats(rule):
+            output_path = render_dir / f"{name}.{output_format}"
+            render_info = render_storey_plan_from_metadata(
+                target,
+                output_path,
+                excluded_living_area_color=_architecture_plan_render_color(
+                    rule, metadata
+                ),
+                image_width=image_width,
+            )
+            rendered.append(
+                {
+                    "name": name,
+                    "format": output_format,
+                    "source": str(rule.get("source", "self")),
+                    "source_assembly": str(target.get("assembly_name")),
+                    "storey_id": render_info.get("storey_id"),
+                    "storey_index": render_info.get("storey_index"),
+                    "semantic_path": render_info.get("semantic_path"),
+                    "path": str(output_path.relative_to(run_directory)),
+                }
+            )
+    return rendered
 
 
 def _export_scene_for_assembly(
@@ -6780,6 +7071,17 @@ def _export_scene_for_assembly(
     if not manifest_path.exists():
         raise BuilderError(f"Expected workflow manifest at {manifest_path}")
     manifest = _read_metadata(manifest_path)
+    architecture_plan_renders = _render_architecture_plan_renders(
+        metadata=selected_metadata,
+        resource_data=selected_resource_data,
+        mode=mode,
+        config_data=config_data,
+        built_results_by_name=built_results_by_name,
+        repository_dir=repository_dir,
+        run_directory=run_directory,
+    )
+    if architecture_plan_renders:
+        manifest["architecture_plan_renders"] = architecture_plan_renders
     builder_debug = manifest.get("builder_debug")
     if not isinstance(builder_debug, Mapping):
         builder_debug = {}
