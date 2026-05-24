@@ -16,7 +16,9 @@ from shellforgepy.metrics import (
     record_ground_coverage_footprint_metric,
     record_ground_coverage_phase_metric,
     record_length_metric,
+    record_living_space_area_metric,
     record_living_space_metric,
+    record_living_space_phase_metric,
     record_mark_metric,
     record_measured_mass_metric,
     record_weight_metric,
@@ -183,6 +185,24 @@ def test_living_space_metrics_are_grouped_by_assembly_and_part():
     ]
 
 
+def test_living_space_phase_metrics_report_before_after_delta():
+    record_living_space_area_metric("before", "existing_house_storey_2", 42.0)
+    record_living_space_area_metric("after", "existing_house_storey_2", 42.0)
+    record_living_space_area_metric("after", "extension_storey_1", 18.5)
+    record_living_space_phase_metric("before", 42.0)
+    record_living_space_phase_metric("after", 60.5)
+
+    assert build_living_space_report_lines() == [
+        "Living space metrics:",
+        "before: 42.000 m2",
+        "  existing_house_storey_2: 42.000 m2",
+        "after: 60.500 m2",
+        "  existing_house_storey_2: 42.000 m2",
+        "  extension_storey_1: 18.500 m2",
+        "Delta after-before: 18.500 m2",
+    ]
+
+
 def test_ground_coverage_metrics_report_phase_ratios_and_footprints():
     record_ground_coverage_footprint_metric("before", "existing_house", 100.0)
     record_ground_coverage_footprint_metric("before", "existing_garage", 25.0)
@@ -289,6 +309,28 @@ def test_ground_coverage_metrics_round_trip_through_snapshots():
         "Legal coverage limit: 25.00% = 125.000 m2",
         "before: 100.000 m2 / 500.000 m2 = 20.00% (25.000 m2 remaining)",
         "  existing_house: 100.000 m2",
+    ]
+
+
+def test_living_space_phase_metrics_round_trip_through_snapshots():
+    record_living_space_area_metric("before", "existing_house_storey_2", 42.0)
+    record_living_space_phase_metric("before", 42.0)
+
+    snapshot = snapshot_metrics()
+    reset_metrics()
+    merge_metrics_snapshot(snapshot)
+
+    assert snapshot_metrics()["living_space_area_metrics"] == [
+        {
+            "phase": "before",
+            "part_id": "existing_house_storey_2",
+            "square_meters": 42.0,
+        }
+    ]
+    assert build_metrics_report_lines() == [
+        "Living space metrics:",
+        "before: 42.000 m2",
+        "  existing_house_storey_2: 42.000 m2",
     ]
 
 
