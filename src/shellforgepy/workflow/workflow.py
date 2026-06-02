@@ -1555,6 +1555,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Build only the named assembly. Repeat for multiple assemblies.",
     )
     build_parser.add_argument(
+        "--list-assemblies",
+        action="store_true",
+        help="List available assembly names alphabetically and exit without building.",
+    )
+    build_parser.add_argument(
         "--repository-dir",
         help="Override the repository directory used for cached STEP artifacts.",
     )

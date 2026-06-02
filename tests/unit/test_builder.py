@@ -2487,6 +2487,81 @@ def test_run_builder_invokes_build_from_file(monkeypatch, tmp_path):
     }
 
 
+def test_run_builder_lists_assemblies_alphabetically_without_building(
+    monkeypatch, tmp_path, capsys
+):
+    def fail_build_from_file(*args, **kwargs):
+        raise AssertionError("list mode must not build assemblies")
+
+    monkeypatch.setattr(builder, "build_from_file", fail_build_from_file)
+
+    config_path = tmp_path / "assemblies.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: zed",
+                "  - name: alpha",
+                "  - name: middle",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = builder.run_builder(
+        argparse.Namespace(
+            config_file=str(config_path),
+            assembly=["does_not_matter"],
+            list_assemblies=True,
+        )
+    )
+
+    assert result == 0
+    assert capsys.readouterr().out == "alpha\nmiddle\nzed\n"
+
+
+def test_run_builder_unknown_assembly_error_includes_available_assemblies(
+    monkeypatch, tmp_path
+):
+    def fail_build_from_file(*args, **kwargs):
+        raise AssertionError("unknown assemblies must fail before building")
+
+    monkeypatch.setattr(builder, "build_from_file", fail_build_from_file)
+
+    config_path = tmp_path / "assemblies.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: zed",
+                "  - name: alpha",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder.run_builder(
+            argparse.Namespace(
+                config_file=str(config_path),
+                assembly=["missing"],
+                list_assemblies=False,
+                repository_dir=None,
+                force=False,
+                visualize=False,
+                with_dependents=False,
+                production=False,
+                prototype=False,
+                slice=False,
+                upload=False,
+            )
+        )
+
+    message = str(excinfo.value)
+    assert "Unknown assembly name(s): missing" in message
+    assert "Available assemblies:\n  - alpha\n  - zed" in message
+
+
 def test_run_builder_visualization_expands_dependents_and_exports_scene(
     monkeypatch, tmp_path
 ):

@@ -147,7 +147,7 @@ support_interface_bottom_layers: '-1'
 support_interface_filament: '0'
 support_interface_loop_pattern: '0'
 support_interface_pattern: auto
-support_interface_spacing: '0.5'
+support_interface_spacing: '0.5' # on Orca UI, this is Top interface spacing
 support_bottom_interface_spacing: '0.5'
 support_interface_top_layers: '2'
 support_object_first_layer_gap: '0.2'

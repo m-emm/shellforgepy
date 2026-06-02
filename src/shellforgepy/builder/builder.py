@@ -835,6 +835,21 @@ def _get_assemblies(config: Mapping[str, Any]) -> List[Dict[str, Any]]:
     return [dict(item) for item in assemblies]
 
 
+def _sorted_assembly_names(assemblies_by_name: Mapping[str, Any]) -> List[str]:
+    return sorted(str(name) for name in assemblies_by_name)
+
+
+def _unknown_assemblies_message(
+    unknown_assemblies: Sequence[str],
+    available_assembly_names: Sequence[str],
+) -> str:
+    available_lines = "\n".join(f"  - {name}" for name in available_assembly_names)
+    return (
+        f"Unknown assembly name(s): {', '.join(unknown_assemblies)}\n"
+        f"Available assemblies:\n{available_lines}"
+    )
+
+
 def _dependency_names(entry: Mapping[str, Any]) -> List[str]:
     return builder_graph_model.dependency_names(entry)
 
@@ -7108,8 +7123,25 @@ def run_builder(args: argparse.Namespace) -> int:
     assemblies = _get_assemblies(config_data)
     graph_model = builder_graph_model.build_graph_model(assemblies, config_data)
     assemblies_by_name = graph_model.assemblies_by_name
+    available_assembly_names = _sorted_assembly_names(assemblies_by_name)
+
+    if bool(getattr(args, "list_assemblies", False)):
+        for assembly_name in available_assembly_names:
+            print(assembly_name)
+        return 0
 
     requested_assemblies = list(args.assembly or [])
+    unknown_assemblies = sorted(
+        set(requested_assemblies) - set(available_assembly_names)
+    )
+    if unknown_assemblies:
+        raise BuilderError(
+            _unknown_assemblies_message(
+                unknown_assemblies,
+                available_assembly_names,
+            )
+        )
+
     build_assemblies: Optional[List[str]] = requested_assemblies or None
     if requested_assemblies and getattr(args, "with_dependents", False):
         build_assemblies = _expand_with_dependents(
@@ -7215,6 +7247,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--assembly",
         action="append",
         help="Build only the named assembly. Repeat for multiple assemblies.",
+    )
+    parser.add_argument(
+        "--list-assemblies",
+        action="store_true",
+        help="List available assembly names alphabetically and exit without building.",
     )
     parser.add_argument(
         "--repository-dir",

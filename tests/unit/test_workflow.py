@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import shellforgepy.builder.builder as builder_module
 import shellforgepy.render.api as render_api
 import shellforgepy.workflow.preview_generator as preview_generator_module
 import shellforgepy.workflow.upload_to_printer as upload_to_printer_module
@@ -1102,3 +1103,41 @@ def test_main_accepts_workflow_flags_after_target(monkeypatch, tmp_path):
         "target": str(target),
         "target_args": [],
     }
+
+
+def test_main_build_list_assemblies_flag_reaches_builder(monkeypatch, tmp_path):
+    config_path = tmp_path / "assemblies.yaml"
+    captured = {}
+
+    def fake_run_builder(args):
+        captured["config_file"] = args.config_file
+        captured["list_assemblies"] = args.list_assemblies
+        captured["assembly"] = args.assembly
+        return 0
+
+    monkeypatch.setattr(builder_module, "run_builder", fake_run_builder)
+
+    result = main(["build", str(config_path), "--list-assemblies"])
+
+    assert result == 0
+    assert captured == {
+        "config_file": str(config_path),
+        "list_assemblies": True,
+        "assembly": None,
+    }
+
+
+def test_module_main_reports_builder_errors_without_traceback(monkeypatch, capsys):
+    import shellforgepy.__main__ as shellforgepy_main
+
+    def fake_main():
+        raise builder_module.BuilderError("bad assembly")
+
+    monkeypatch.setattr(shellforgepy_main, "main", fake_main)
+
+    result = shellforgepy_main._main()
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert captured.out == ""
+    assert captured.err == "Error: bad assembly\n"
