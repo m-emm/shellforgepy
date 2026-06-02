@@ -120,6 +120,7 @@ from shellforgepy.geometry.mesh_utils import (
 from shellforgepy.geometry.modifications import (
     create_convex_hull,
     cut_in_two,
+    expand,
     fit_part_between,
     orient_for_flatness,
     orient_for_flatness_riemannian,
@@ -241,6 +242,7 @@ __all__ = [
     "export_solid_to_stl",
     "export_structured_step",
     "face_point_cloud",
+    "expand",
     "fit_part_between",
     "fibonacci_sphere",
     "filter_edges_by_function",

@@ -9,6 +9,7 @@ from shellforgepy.adapters._adapter import (
     create_box,
     create_extruded_polygon,
     create_solid_from_traditional_face_vertex_maps,
+    expand_part,
     get_bounding_box,
     get_bounding_box_center,
     get_bounding_box_size,
@@ -41,6 +42,17 @@ _PROJECTED_FOOTPRINT_FALLBACK_WARNING = (
     "pyclipper is not installed; using approximate slow raster fallback for "
     "projected footprint metrics. Install shellforgepy[clipper] for exact polygon clipping."
 )
+
+
+def expand(part, distance, *, tolerance=1e-4, kind="arc"):
+    """Expand a solid outward along its surface normals.
+
+    This is a modification-style API: pass a part in, get an expanded copy
+    back. ``distance`` is in model units and must be non-negative.
+    """
+    if distance < 0:
+        raise ValueError("distance must be non-negative")
+    return expand_part(part, distance, tolerance=tolerance, kind=kind)
 
 
 def _vertex_to_array(vertex):

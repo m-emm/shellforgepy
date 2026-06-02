@@ -29,6 +29,7 @@ from shellforgepy.adapters._adapter_bridge import cut_parts as adapter_cut_parts
 from shellforgepy.adapters._adapter_bridge import (
     deserialize_structured_step as adapter_deserialize_structured_step,
 )
+from shellforgepy.adapters._adapter_bridge import expand_part as adapter_expand_part
 from shellforgepy.adapters._adapter_bridge import (
     export_colored_parts_to_obj as adapter_export_colored_parts_to_obj,
 )
@@ -362,6 +363,11 @@ def fuse_parts(part1, part2):
 def cut_parts(part1, part2):
     """Cut part2 from part1."""
     return adapter_cut_parts(part1, part2)
+
+
+def expand_part(part, distance, *, tolerance=1e-4, kind="arc"):
+    """Expand a CAD part outward along surface normals."""
+    return adapter_expand_part(part, distance, tolerance=tolerance, kind=kind)
 
 
 def create_filleted_box(

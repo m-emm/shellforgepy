@@ -889,6 +889,32 @@ def copy_part(part):
     return part.copy()
 
 
+def expand_part(part, distance, *, tolerance=1e-4, kind="arc"):
+    """Expand a CadQuery part outward along surface normals."""
+    distance = float(distance)
+    if distance < 0:
+        raise ValueError("distance must be non-negative")
+    if kind not in {"arc", "intersection"}:
+        raise ValueError("kind must be either 'arc' or 'intersection'")
+    if distance == 0:
+        return copy_part(part)
+
+    solids = extract_solids(part)
+    if not solids:
+        raise ValueError(f"No solids found in object. type(part)={type(part)}")
+
+    expanded_parts = []
+    for solid in solids:
+        solid = normalize_to_solid(solid)
+        coat = solid.shell([], distance, tolerance=tolerance, kind=kind)
+        expanded_parts.append(solid.fuse(coat).clean())
+
+    acc = expanded_parts[0]
+    for expanded in expanded_parts[1:]:
+        acc = acc.fuse(expanded)
+    return acc.clean()
+
+
 def translate_part(part, vector):
     """Translate a CadQuery part by the given vector."""
     _logger.debug(f"Translating part by vector {vector}, part={part} , id={id(part)}")

@@ -833,6 +833,11 @@ def scale_part(part, factor, center=(0.0, 0.0, 0.0)):
         return scale_retval
 
 
+def expand_part(part, distance, *, tolerance=1e-4, kind="arc"):
+    """Expand a FreeCAD part outward along surface normals."""
+    raise NotImplementedError("expand is not implemented for the FreeCAD adapter yet")
+
+
 def mirror_part(part, normal=(1, 0, 0), point=(0, 0, 0)):
     """Mirror a FreeCAD part across a plane defined by normal and point.
 

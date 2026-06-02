@@ -13,6 +13,7 @@ create_cone = selected_adapter.create_cone
 create_text_object = selected_adapter.create_text_object
 fuse_parts = selected_adapter.fuse_parts
 cut_parts = selected_adapter.cut_parts
+expand_part = selected_adapter.expand_part
 create_extruded_polygon = selected_adapter.create_extruded_polygon
 get_volume = selected_adapter.get_volume
 
@@ -66,6 +67,7 @@ __all__ = [
     "export_solid_to_stl",
     "export_solid_to_step",
     "export_structured_step",
+    "expand_part",
     "fuse_parts",
     "filter_edges_by_function",
     "get_adapter_id",
