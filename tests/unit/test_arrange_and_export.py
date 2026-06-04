@@ -295,6 +295,25 @@ def test_arrange_plate_parts_for_bed_matches_legacy_production_layout():
     assert plate_bounds["small"][0][1] == pytest.approx(72.5)
 
 
+def test_arrange_plate_parts_for_bed_supports_rectangular_origin_offset():
+    arranged = _arrange_plate_parts_for_bed(
+        [{"name": "token", "part": create_box(20.0, 20.0, 1.0)}],
+        bed_width=140.0,
+        bed_depth=250.0,
+        gap=5.0,
+        prod_origin=(155.0, 55.0),
+    )
+
+    min_point, max_point = get_bounding_box(arranged[0]["part"])
+
+    assert min_point[0] == pytest.approx(215.0)
+    assert max_point[0] == pytest.approx(235.0)
+    assert min_point[1] == pytest.approx(170.0)
+    assert max_point[1] == pytest.approx(190.0)
+    assert min_point[2] == pytest.approx(0.0)
+    assert max_point[2] == pytest.approx(1.0)
+
+
 def test_build_production_obj_scene_parts_offsets_each_plate_independently():
     prepared_plate_groups = [
         (

@@ -458,6 +458,8 @@ def _arrange_prepared_parts_on_bed(
     gap,
     bed_width,
     bed_depth,
+    origin_x=0.0,
+    origin_y=0.0,
     enforce_bed_size=True,
 ):
     """Arrange already-prepared part rectangles using the legacy row layout."""
@@ -578,8 +580,8 @@ def _arrange_prepared_parts_on_bed(
         total_width = max_x - min_x
         total_height = max_y - min_y
 
-        offset_x = (bed_width - total_width) / 2 - min_x
-        offset_y = (bed_depth - total_height) / 2 - min_y
+        offset_x = float(origin_x) + (bed_width - total_width) / 2 - min_x
+        offset_y = float(origin_y) + (bed_depth - total_height) / 2 - min_y
 
         for item in arranged:
             item["shape"] = translate(offset_x, offset_y, 0)(item["shape"])
@@ -689,6 +691,7 @@ def _arrange_parts_for_production(
     gap,
     bed_width,
     bed_depth=None,
+    prod_origin=(0.0, 0.0),
     verbose=False,
     max_build_height=None,
     enforce_bed_size=True,
@@ -740,6 +743,8 @@ def _arrange_parts_for_production(
         gap=gap,
         bed_width=bed_width,
         bed_depth=bed_depth,
+        origin_x=prod_origin[0],
+        origin_y=prod_origin[1],
         enforce_bed_size=enforce_bed_size,
     )
 
@@ -1028,6 +1033,7 @@ def _build_production_obj_scene_parts(
     *,
     bed_width,
     bed_depth,
+    prod_origin=(0.0, 0.0),
     plate_scene_gap,
     visualize_plate_boundaries,
 ):
@@ -1048,8 +1054,8 @@ def _build_production_obj_scene_parts(
             scene_parts.extend(
                 _build_plate_boundary_parts(
                     plate_name,
-                    origin_x=plate_offset_x,
-                    origin_y=0.0,
+                    origin_x=plate_offset_x + prod_origin[0],
+                    origin_y=prod_origin[1],
                     bed_width=bed_width,
                     bed_depth=bed_depth,
                 )
@@ -1171,6 +1177,7 @@ def _arrange_plate_parts_for_bed(
     bed_width,
     bed_depth,
     gap,
+    prod_origin=(0.0, 0.0),
 ):
     if not plate_parts:
         return []
@@ -1202,6 +1209,8 @@ def _arrange_plate_parts_for_bed(
         gap=gap,
         bed_width=bed_width,
         bed_depth=bed_depth,
+        origin_x=prod_origin[0],
+        origin_y=prod_origin[1],
     )
 
 
@@ -1211,6 +1220,8 @@ def arrange_and_export_parts(
     bed_width,
     script_file,
     *,
+    bed_depth=None,
+    prod_origin=(0.0, 0.0),
     export_base_name=None,
     export_directory=None,
     prod=False,
@@ -1241,6 +1252,11 @@ def arrange_and_export_parts(
         viewer_base_url: Base URL for the 3D viewer. If set, viewer URLs are added to the manifest.
         export_individual_parts: If True (default), export individual part files alongside the fused assembly.
     """
+    if bed_depth is None:
+        bed_depth = bed_width
+    prod_origin = tuple(float(value) for value in prod_origin)
+    if len(prod_origin) != 2:
+        raise ValueError("prod_origin must be a two-item (x, y) tuple")
 
     env_export_dir = os.environ.get("SHELLFORGEPY_EXPORT_DIR")
     env_viewer_url = os.environ.get("SHELLFORGEPY_VIEWER_BASE_URL")
@@ -1337,7 +1353,7 @@ def arrange_and_export_parts(
         declared_plates=plates,
         auto_assign_plates=auto_assign_plates,
         bed_width=bed_width,
-        bed_depth=bed_width,
+        bed_depth=bed_depth,
         gap=prod_gap,
     )
     plate_groups = _filter_plate_groups(plate_groups, selected_plates)
@@ -1356,8 +1372,9 @@ def arrange_and_export_parts(
                     _arrange_plate_parts_for_bed(
                         plate_parts,
                         bed_width=bed_width,
-                        bed_depth=bed_width,
+                        bed_depth=bed_depth,
                         gap=prod_gap,
+                        prod_origin=prod_origin,
                     )
                     if prod
                     else list(plate_parts)
@@ -1541,7 +1558,8 @@ def arrange_and_export_parts(
             obj_scene_parts = _build_production_obj_scene_parts(
                 prepared_plate_groups,
                 bed_width=bed_width,
-                bed_depth=bed_width,
+                bed_depth=bed_depth,
+                prod_origin=prod_origin,
                 plate_scene_gap=float(plate_scene_gap),
                 visualize_plate_boundaries=bool(visualize_plate_boundaries),
             )
@@ -1618,6 +1636,8 @@ def arrange_and_export(
     *,
     prod_gap=4.0,
     bed_width=200.0,
+    bed_depth=None,
+    prod_origin=(0.0, 0.0),
     script_file=None,
     export_base_name=None,
     export_directory=None,
@@ -1663,6 +1683,8 @@ def arrange_and_export(
         parts,
         prod_gap=prod_gap,
         bed_width=bed_width,
+        bed_depth=bed_depth,
+        prod_origin=prod_origin,
         script_file=script_file,
         export_base_name=export_base_name,
         export_directory=export_directory,
