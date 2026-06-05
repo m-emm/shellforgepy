@@ -16,7 +16,7 @@ def _first_list_value(value):
     return value
 
 
-def _sync_machine_default_filament(machine_data, filament_data):
+def _sync_machine_default_filament(machine_data, filament_data_list):
     """Keep the machine preset's default filament metadata aligned with the export.
 
     Orca persists these machine-level defaults into the 3MF project. If they are left
@@ -24,11 +24,74 @@ def _sync_machine_default_filament(machine_data, filament_data):
     when the actual filament profile embedded for the plate is correct.
     """
 
-    machine_data["default_filament_profile"] = [str(filament_data["name"])]
+    machine_data["default_filament_profile"] = [
+        str(filament_data["name"]) for filament_data in filament_data_list
+    ]
 
-    filament_colour = _first_list_value(filament_data.get("default_filament_colour"))
-    if filament_colour is not None:
-        machine_data["default_filament_colour"] = [str(filament_colour)]
+    filament_colours = []
+    for filament_data in filament_data_list:
+        filament_colour = _first_list_value(
+            filament_data.get("default_filament_colour")
+        )
+        if filament_colour is not None:
+            filament_colours.append(str(filament_colour))
+    if filament_colours:
+        machine_data["default_filament_colour"] = filament_colours
+        machine_data["extruder_colour"] = filament_colours
+
+
+def _format_coordinate(value):
+    return f"{float(value):g}"
+
+
+def _apply_print_area(machine_data, print_area):
+    if not isinstance(print_area, dict):
+        return
+
+    required_keys = (
+        "x_min_mm",
+        "x_max_mm",
+        "y_min_mm",
+        "y_max_mm",
+        "z_max_mm",
+    )
+    missing_keys = [key for key in required_keys if key not in print_area]
+    if missing_keys:
+        raise ValueError(
+            "print_area is missing required keys: " + ", ".join(sorted(missing_keys))
+        )
+
+    x_min = _format_coordinate(print_area["x_min_mm"])
+    x_max = _format_coordinate(print_area["x_max_mm"])
+    y_min = _format_coordinate(print_area["y_min_mm"])
+    y_max = _format_coordinate(print_area["y_max_mm"])
+    z_max = _format_coordinate(print_area["z_max_mm"])
+
+    machine_data["printable_area"] = [
+        f"{x_min}x{y_min}",
+        f"{x_max}x{y_min}",
+        f"{x_max}x{y_max}",
+        f"{x_min}x{y_max}",
+    ]
+    machine_data["printable_height"] = z_max
+
+
+def _filament_names_from_process_data(process_data):
+    filament_names = process_data.get("filaments")
+    if filament_names is None:
+        filament = process_data.get("filament")
+        if not isinstance(filament, str) or not filament:
+            raise ValueError("process data must define filament or filaments")
+        return [filament]
+
+    if not isinstance(filament_names, list) or not filament_names:
+        raise ValueError("process data filaments must be a non-empty list")
+    normalized_names = []
+    for filament_name in filament_names:
+        if not isinstance(filament_name, str) or not filament_name:
+            raise ValueError("process data filaments entries must be non-empty strings")
+        normalized_names.append(filament_name)
+    return normalized_names
 
 
 def _resolve_process_override_targets(process_overrides, used_master_configs):
@@ -45,6 +108,13 @@ def _resolve_process_override_targets(process_overrides, used_master_configs):
             missing_keys.append(key)
             continue
 
+        if len(matching_configs) > 1 and all(
+            config["master_data"].get("type") == "filament"
+            for config in matching_configs
+        ):
+            resolved_targets[key] = matching_configs
+            continue
+
         if len(matching_configs) > 1:
             ambiguous_keys[key] = [
                 config["config_file"].absolute().as_posix()
@@ -52,7 +122,7 @@ def _resolve_process_override_targets(process_overrides, used_master_configs):
             ]
             continue
 
-        resolved_targets[key] = matching_configs[0]
+        resolved_targets[key] = [matching_configs[0]]
 
     if not missing_keys and not ambiguous_keys:
         return resolved_targets
@@ -105,7 +175,8 @@ def generate_settings(
         f"Loaded {process_data_file}, data:\n{json.dumps(process_data, indent=2)}"
     )
 
-    filament = process_data["filament"]
+    filament_names = _filament_names_from_process_data(process_data)
+    filament_name_set = set(filament_names)
     process_overrides = dict(process_data.get("process_overrides", {}))
 
     if not output_dir.exists():
@@ -119,11 +190,10 @@ def generate_settings(
     if not master_settings_dir.exists():
         raise FileNotFoundError(f"Directory {master_settings_dir} does not exist.")
 
-    filament_found = False
-    filament_filename = None
-    selected_filament_master = None
     settings_files_used = []
     used_master_configs = []
+    selected_filament_masters_by_name = {}
+    generated_filament_paths_by_name = {}
     generated_artifacts: dict[str, object] = {
         "machine_settings_path": None,
         "process_settings_path": None,
@@ -141,14 +211,12 @@ def generate_settings(
         if master_data["type"] == "filament":
             path_part = "filaments/"
 
-            if master_data["name"] != filament:
+            if master_data["name"] not in filament_name_set:
                 _logger.info(
-                    f"Skipping {name} config, in {config_file.absolute().as_posix()} matching filament name {filament}"
+                    f"Skipping {name} config, in {config_file.absolute().as_posix()} matching filament names {filament_names}"
                 )
                 continue
-            filament_found = True
-            filament_filename = config_file.absolute().as_posix()
-            selected_filament_master = master_data
+            selected_filament_masters_by_name[master_data["name"]] = master_data
 
         settings_files_used.append(config_file.absolute().as_posix())
         used_master_configs.append(
@@ -159,10 +227,22 @@ def generate_settings(
             }
         )
 
-    if not filament_found:
-        raise ValueError(f"Filament {filament} not found in {master_settings_dir}.")
-    else:
-        _logger.info(f"Filament {filament} found in {filament_filename} and processed.")
+    missing_filament_names = [
+        filament_name
+        for filament_name in filament_names
+        if filament_name not in selected_filament_masters_by_name
+    ]
+    if missing_filament_names:
+        raise ValueError(
+            "Filament(s) "
+            + ", ".join(missing_filament_names)
+            + f" not found in {master_settings_dir}."
+        )
+    selected_filament_masters = [
+        selected_filament_masters_by_name[filament_name]
+        for filament_name in filament_names
+    ]
+    _logger.info("Filaments %s found and processed.", ", ".join(filament_names))
 
     override_targets = _resolve_process_override_targets(
         process_overrides, used_master_configs
@@ -174,7 +254,8 @@ def generate_settings(
         name = master_data["name"]
 
         if master_data["type"] == "machine":
-            _sync_machine_default_filament(master_data, selected_filament_master)
+            _sync_machine_default_filament(master_data, selected_filament_masters)
+            _apply_print_area(master_data, process_data.get("print_area"))
 
             print_host = master_data.get("print_host")
             if print_host is not None:
@@ -189,7 +270,7 @@ def generate_settings(
                 )
 
         for key, value in process_overrides.items():
-            if override_targets.get(key) != config:
+            if config not in override_targets.get(key, []):
                 continue
 
             _logger.info(f"Overriding {key} in {name} with {value}")
@@ -204,9 +285,7 @@ def generate_settings(
         elif master_data["type"] == "process":
             generated_artifacts["process_settings_path"] = str(json_path)
         elif master_data["type"] == "filament":
-            cast_list = generated_artifacts["filament_settings_paths"]
-            assert isinstance(cast_list, list)
-            cast_list.append(str(json_path))
+            generated_filament_paths_by_name[master_data["name"]] = str(json_path)
 
         info_text = (
             " "
@@ -227,6 +306,10 @@ def generate_settings(
         f"Used the following master settings files:\n{'\n'.join(settings_files_used)}"
     )
     generated_artifacts["used_master_settings_files"] = settings_files_used
+    generated_artifacts["filament_settings_paths"] = [
+        generated_filament_paths_by_name[filament_name]
+        for filament_name in filament_names
+    ]
 
     part_path = Path(process_data["part_file"]).expanduser()
     if not part_path.exists():

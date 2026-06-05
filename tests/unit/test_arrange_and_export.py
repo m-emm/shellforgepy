@@ -314,6 +314,36 @@ def test_arrange_plate_parts_for_bed_supports_rectangular_origin_offset():
     assert max_point[2] == pytest.approx(1.0)
 
 
+def test_arrange_plate_parts_for_bed_keeps_production_group_together():
+    grouped_metadata = {"production_group": "offset_cross"}
+    arranged = _arrange_plate_parts_for_bed(
+        [
+            {
+                "name": "left_material",
+                "part": create_box(10.0, 10.0, 1.0, origin=(0.0, 0.0, 0.0)),
+                "obj_metadata": grouped_metadata,
+            },
+            {
+                "name": "right_material",
+                "part": create_box(10.0, 10.0, 1.0, origin=(20.0, 0.0, 0.0)),
+                "obj_metadata": grouped_metadata,
+            },
+        ],
+        bed_width=100.0,
+        bed_depth=100.0,
+        gap=5.0,
+    )
+
+    bounds = {entry["name"]: get_bounding_box(entry["part"]) for entry in arranged}
+
+    assert bounds["left_material"][0][0] == pytest.approx(35.0)
+    assert bounds["left_material"][1][0] == pytest.approx(45.0)
+    assert bounds["right_material"][0][0] == pytest.approx(55.0)
+    assert bounds["right_material"][1][0] == pytest.approx(65.0)
+    assert arranged[0]["obj_metadata"] == grouped_metadata
+    assert arranged[1]["obj_metadata"] == grouped_metadata
+
+
 def test_build_production_obj_scene_parts_offsets_each_plate_independently():
     prepared_plate_groups = [
         (
@@ -508,6 +538,61 @@ def test_arrange_and_export_exports_plate_obj_files_and_manifest_entries(
     assert manifest["plates"][1]["mtl_path"].endswith(
         "test_multi_plate_right_plate.mtl"
     )
+
+
+def test_arrange_and_export_manifest_records_plate_local_part_files(
+    monkeypatch, tmp_path
+):
+    import shellforgepy.produce.arrange_and_export as arrange_and_export_module
+
+    manifest_path = tmp_path / "workflow_manifest.json"
+
+    def fake_export_solid_to_stl(part, destination):
+        Path(destination).write_text("solid test\nendsolid test\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        arrange_and_export_module,
+        "export_solid_to_stl",
+        fake_export_solid_to_stl,
+    )
+    monkeypatch.setenv("SHELLFORGEPY_WORKFLOW_MANIFEST", str(manifest_path))
+
+    arrange_and_export_parts(
+        [
+            {
+                "name": "tool_0_body",
+                "part": create_box(10, 10, 1),
+                "obj_metadata": {"slicer_filament_id": 1},
+            },
+            {
+                "name": "tool_1_body",
+                "part": create_box(10, 10, 1),
+                "obj_metadata": {"slicer_filament_id": 2},
+            },
+        ],
+        prod_gap=2.0,
+        bed_width=100.0,
+        script_file="test_multi_material.py",
+        export_directory=tmp_path,
+        export_stl=True,
+        export_step=False,
+        export_obj=False,
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    plate_part_files = manifest["plates"][0]["part_files"]
+
+    assert [entry["name"] for entry in plate_part_files] == [
+        "tool_0_body",
+        "tool_1_body",
+    ]
+    assert [
+        entry["obj_metadata"]["slicer_filament_id"] for entry in plate_part_files
+    ] == [
+        1,
+        2,
+    ]
+    assert all(Path(entry["path"]).exists() for entry in plate_part_files)
 
 
 def test_arrange_and_export_parts_uses_export_base_name_for_filenames(

@@ -306,6 +306,114 @@ def test_complete_workflow_run_loads_only_current_plate_filament(monkeypatch, tm
     ]
 
 
+def test_complete_workflow_run_passes_multi_material_parts_to_orca(
+    monkeypatch, tmp_path
+):
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    filaments_dir = run_directory / "filaments"
+    filaments_dir.mkdir()
+
+    plate_stl = run_directory / "machine_plate_a.stl"
+    tool_0_stl = run_directory / "machine_tool_0.stl"
+    tool_1_stl = run_directory / "machine_tool_1.stl"
+    for stl_path in (plate_stl, tool_0_stl, tool_1_stl):
+        stl_path.write_text("solid test\nendsolid test\n", encoding="utf-8")
+
+    plate_process = run_directory / "machine_plate_a_process.json"
+    orca_exec = tmp_path / "orca"
+    orca_exec.write_text("#!/bin/sh\n", encoding="utf-8")
+    master_settings_dir = tmp_path / "masters"
+    master_settings_dir.mkdir()
+    process_master_settings_dir = tmp_path / "process_masters"
+    process_master_settings_dir.mkdir()
+
+    slicer_commands = []
+    generated_master_settings_dirs = []
+    plate_process.write_text(
+        json.dumps(
+            {
+                "filaments": ["PLA_T0", "PLA_T1"],
+                "master_settings_dir": str(process_master_settings_dir),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_generate_settings(*, process_data_file, output_dir, master_settings_dir):
+        output_dir = Path(output_dir)
+        generated_master_settings_dirs.append(Path(master_settings_dir))
+        (output_dir / "machine_settings.json").write_text("{}", encoding="utf-8")
+        (output_dir / "process_settings.json").write_text("{}", encoding="utf-8")
+        for filament_name in ("PLA_T0", "PLA_T1"):
+            (output_dir / "filaments" / f"{filament_name}.json").write_text(
+                json.dumps({"name": filament_name}),
+                encoding="utf-8",
+            )
+        return _fake_slicer_artifacts(
+            output_dir,
+            filament_names=["PLA_T0.json", "PLA_T1.json"],
+        )
+
+    def fake_execute_subprocess(cmd, *, env=None, cwd=None, stdin_data=None):
+        if "--load-settings" in cmd:
+            slicer_commands.append(cmd)
+        return SubprocessResult(0, [], [])
+
+    monkeypatch.setattr(workflow_module, "generate_settings", fake_generate_settings)
+    monkeypatch.setattr(workflow_module, "execute_subprocess", fake_execute_subprocess)
+
+    args = argparse.Namespace(
+        slice=True,
+        upload=False,
+        open=False,
+        part_file=None,
+        process_file=None,
+        master_settings_dir=str(master_settings_dir),
+        orca_executable=str(orca_exec),
+        orca_debug=None,
+        printer=None,
+    )
+    config = {"orca": {"debug_level": 6}}
+    manifest = {
+        "plates": [
+            {
+                "name": "plate_a",
+                "assembly_path": str(plate_stl),
+                "process_data_path": str(plate_process),
+                "part_files": [
+                    {
+                        "name": "tool_0_body",
+                        "path": str(tool_0_stl),
+                        "obj_metadata": {"slicer_filament_id": 1},
+                    },
+                    {
+                        "name": "tool_1_body",
+                        "path": str(tool_1_stl),
+                        "obj_metadata": {"slicer_filament_id": 2},
+                    },
+                ],
+            }
+        ]
+    }
+
+    result = complete_workflow_run(
+        args,
+        config=config,
+        run_directory=run_directory,
+        manifest=manifest,
+        target_label="machine",
+    )
+
+    assert result == 0
+    assert len(slicer_commands) == 1
+    assert generated_master_settings_dirs == [process_master_settings_dir]
+    slicer_cmd = slicer_commands[0]
+    assert "--allow-multicolor-oneplate" in slicer_cmd
+    assert slicer_cmd[slicer_cmd.index("--load-filament-ids") + 1] == "1,2"
+    assert slicer_cmd[-2:] == [str(tool_0_stl), str(tool_1_stl)]
+
+
 def test_complete_workflow_run_excludes_builder_debug_json_from_orca_settings(
     monkeypatch, tmp_path
 ):
@@ -623,6 +731,88 @@ def test_complete_workflow_run_preserves_and_uploads_each_plate_gcode(
         ("machine_plate_b.gcode", "192.168.0.10:4409", "machine_plate_b"),
     ]
     assert not (run_directory / "plate_1.gcode").exists()
+
+
+def test_upload_prefers_generated_print_host_over_configured_printer(
+    monkeypatch, tmp_path
+):
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    plate_stl = run_directory / "machine_plate_a.stl"
+    plate_stl.write_text("solid a\n", encoding="utf-8")
+    process_file = run_directory / "machine_plate_a_process.json"
+    process_file.write_text("{}", encoding="utf-8")
+
+    orca_exec = tmp_path / "orca"
+    orca_exec.write_text("#!/bin/sh\n", encoding="utf-8")
+    master_settings_dir = tmp_path / "masters"
+    master_settings_dir.mkdir()
+
+    upload_calls = []
+
+    def fake_generate_settings(*, process_data_file, output_dir, master_settings_dir):
+        output_dir = Path(output_dir)
+        print_host_path = output_dir / "print_host.txt"
+        print_host_path.write_text("menderpi.local:7125", encoding="utf-8")
+        (output_dir / "machine_settings.json").write_text("{}", encoding="utf-8")
+        (output_dir / "process_settings.json").write_text("{}", encoding="utf-8")
+        artifacts = _fake_slicer_artifacts(output_dir)
+        artifacts["print_host_path"] = str(print_host_path)
+        return artifacts
+
+    def fake_execute_subprocess(cmd, *, env=None, cwd=None, stdin_data=None):
+        if "--load-settings" in cmd:
+            (run_directory / "plate_1.gcode").write_text(
+                "machine_plate_a", encoding="utf-8"
+            )
+        return SubprocessResult(0, [], [])
+
+    def fake_upload_to_printer(gcode_file, printer):
+        upload_calls.append((Path(gcode_file).name, printer))
+
+    monkeypatch.setattr(workflow_module, "generate_settings", fake_generate_settings)
+    monkeypatch.setattr(workflow_module, "execute_subprocess", fake_execute_subprocess)
+    monkeypatch.setattr(
+        upload_to_printer_module,
+        "upload_to_printer",
+        fake_upload_to_printer,
+    )
+
+    args = argparse.Namespace(
+        slice=True,
+        upload=True,
+        open=False,
+        part_file=None,
+        process_file=None,
+        master_settings_dir=str(master_settings_dir),
+        orca_executable=str(orca_exec),
+        orca_debug=None,
+        printer=None,
+    )
+    config = {
+        "orca": {"debug_level": 6},
+        "upload": {"printer": "192.168.178.85:4409"},
+    }
+    manifest = {
+        "plates": [
+            {
+                "name": "plate_a",
+                "assembly_path": str(plate_stl),
+                "process_data_path": str(process_file),
+            }
+        ]
+    }
+
+    result = complete_workflow_run(
+        args,
+        config=config,
+        run_directory=run_directory,
+        manifest=manifest,
+        target_label="machine",
+    )
+
+    assert result == 0
+    assert upload_calls == [("machine_plate_a.gcode", None)]
 
 
 def test_orca_open_commands_uses_open_with_app_bundle_on_macos(monkeypatch, tmp_path):

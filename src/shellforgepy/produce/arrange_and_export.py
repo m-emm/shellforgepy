@@ -1171,6 +1171,142 @@ def _auto_assign_remaining_parts_to_plates(
     return generated_plates
 
 
+def _arrange_prepared_part_groups_on_bed(
+    rects,
+    *,
+    gap,
+    bed_width,
+    bed_depth,
+    origin_x=0.0,
+    origin_y=0.0,
+    enforce_bed_size=True,
+):
+    """Arrange grouped rectangles while preserving member-relative placement."""
+
+    arranged_rects = [dict(rect) for rect in rects]
+    arranged_rects.sort(key=lambda rect: -(rect["width"] * rect["height"]))
+
+    arranged = []
+    x_cursor = 0.0
+    y_cursor = 0.0
+    row_depth = 0.0
+
+    for rect in arranged_rects:
+        width = rect["width"]
+        height = rect["height"]
+
+        if width > bed_width and enforce_bed_size:
+            raise ValueError(
+                f"Part '{rect['name']}' too wide for bed ({width:.1f}mm > {bed_width}mm)"
+            )
+        elif width > bed_width:
+            _logger.warning(
+                "Part '%s' exceeds bed width for production visualization "
+                "(%0.1fmm > %0.1fmm); keeping it for export",
+                rect["name"],
+                width,
+                bed_width,
+            )
+
+        if height > bed_depth and enforce_bed_size:
+            raise ValueError(
+                f"Part '{rect['name']}' too deep for bed ({height:.1f}mm > {bed_depth}mm)"
+            )
+        elif height > bed_depth:
+            _logger.warning(
+                "Part '%s' exceeds bed depth for production visualization "
+                "(%0.1fmm > %0.1fmm); keeping it for export",
+                rect["name"],
+                height,
+                bed_depth,
+            )
+
+        if arranged and x_cursor + width > bed_width:
+            y_cursor += row_depth + gap
+            x_cursor = 0.0
+            row_depth = 0.0
+
+        _logger.info("Placing '%s' at (%0.1f, %0.1f)", rect["name"], x_cursor, y_cursor)
+
+        min_point = rect["min_point"]
+        placement_vectors = [
+            (-min_point[0], -min_point[1], -min_point[2]),
+            (x_cursor, y_cursor, 0.0),
+        ]
+        arranged_members = []
+        for entry in rect["entries"]:
+            arranged_entry = dict(entry)
+            arranged_entry["transform_history"] = _copy_transform_history(entry)
+            shape = entry["part"]
+            for vector in placement_vectors:
+                if vector == (0.0, 0.0, 0.0):
+                    continue
+                shape = translate(*vector)(shape)
+                _append_transform_record(
+                    arranged_entry,
+                    {
+                        "kind": "translate",
+                        "vector": [float(value) for value in vector],
+                    },
+                )
+            arranged_entry["part"] = shape
+            arranged_members.append(arranged_entry)
+
+        arranged.append(
+            {
+                "x": x_cursor,
+                "y": y_cursor,
+                "width": width,
+                "height": height,
+                "members": arranged_members,
+            }
+        )
+
+        x_cursor += width + gap
+        row_depth = max(row_depth, height)
+
+    if arranged:
+        min_x = min(item["x"] for item in arranged)
+        max_x = max(item["x"] + item["width"] for item in arranged)
+        min_y = min(item["y"] for item in arranged)
+        max_y = max(item["y"] + item["height"] for item in arranged)
+
+        total_width = max_x - min_x
+        total_height = max_y - min_y
+
+        offset_x = float(origin_x) + (bed_width - total_width) / 2 - min_x
+        offset_y = float(origin_y) + (bed_depth - total_height) / 2 - min_y
+
+        for item in arranged:
+            for member in item["members"]:
+                if offset_x == 0.0 and offset_y == 0.0:
+                    continue
+                member["part"] = translate(offset_x, offset_y, 0)(member["part"])
+                _append_transform_record(
+                    member,
+                    {
+                        "kind": "translate",
+                        "vector": [float(offset_x), float(offset_y), 0.0],
+                    },
+                )
+
+    return [
+        {
+            "name": member["name"],
+            "part": member["part"],
+            "color": member.get("color"),
+            "animation": member.get("animation"),
+            "source_path": member.get("source_path"),
+            "source_parameter_hash": member.get("source_parameter_hash"),
+            "source_version_inputs": deepcopy(member.get("source_version_inputs", {})),
+            "transform_history": _copy_transform_history(member),
+            "obj_metadata": deepcopy(member.get("obj_metadata")),
+        }
+        for item in arranged
+        for member in item["members"]
+    ]
+
+
 def _arrange_plate_parts_for_bed(
     plate_parts,
     *,
@@ -1182,29 +1318,44 @@ def _arrange_plate_parts_for_bed(
     if not plate_parts:
         return []
 
+    def production_group_for(entry):
+        metadata = entry.get("obj_metadata") or {}
+        group_name = metadata.get("production_group")
+        if group_name is None or str(group_name).strip() == "":
+            return None
+        return str(group_name)
+
+    grouped_parts = []
+    group_index_by_key = {}
+    for index, entry in enumerate(plate_parts):
+        group_name = production_group_for(entry)
+        group_key = ("group", group_name) if group_name else ("part", index)
+        if group_key not in group_index_by_key:
+            group_index_by_key[group_key] = len(grouped_parts)
+            grouped_parts.append({"key": group_key, "entries": []})
+        grouped_parts[group_index_by_key[group_key]]["entries"].append(entry)
+
     rects = []
-    for entry in plate_parts:
-        min_point, max_point = get_bounding_box(entry["part"])
+    for group in grouped_parts:
+        entries = group["entries"]
+        bounds = [get_bounding_box(entry["part"]) for entry in entries]
+        min_point = tuple(min(bound[0][axis] for bound in bounds) for axis in range(3))
+        max_point = tuple(max(bound[1][axis] for bound in bounds) for axis in range(3))
+        first_entry = entries[0]
+        display_name = (
+            group["key"][1] if group["key"][0] == "group" else first_entry["name"]
+        )
         rects.append(
             {
-                "name": entry["name"],
-                "shape": entry["part"],
+                "name": str(display_name),
                 "width": float(max_point[0] - min_point[0]),
                 "height": float(max_point[1] - min_point[1]),
                 "min_point": min_point,
-                "color": entry.get("color"),
-                "animation": entry.get("animation"),
-                "source_path": entry.get("source_path"),
-                "source_parameter_hash": entry.get("source_parameter_hash"),
-                "source_version_inputs": deepcopy(
-                    entry.get("source_version_inputs", {})
-                ),
-                "transform_history": _copy_transform_history(entry),
-                "obj_metadata": deepcopy(entry.get("obj_metadata")),
+                "entries": entries,
             }
         )
 
-    return _arrange_prepared_parts_on_bed(
+    return _arrange_prepared_part_groups_on_bed(
         rects,
         gap=gap,
         bed_width=bed_width,
@@ -1509,16 +1660,21 @@ def arrange_and_export_parts(
         if manifest_data is not None:
             if export_stl and export_individual_parts:
                 manifest_parts = manifest_data.setdefault("part_files", [])
+                plate_part_records = []
                 if isinstance(manifest_parts, list):
                     for item in export_plate_parts:
-                        manifest_parts.append(
-                            str(
-                                (
-                                    export_dir
-                                    / f"{base_name}_{_safe_name(item['name'])}.stl"
-                                ).resolve()
-                            )
+                        part_path = (
+                            export_dir / f"{base_name}_{_safe_name(item['name'])}.stl"
+                        ).resolve()
+                        manifest_parts.append(str(part_path))
+                        plate_part_records.append(
+                            {
+                                "name": str(item["name"]),
+                                "path": str(part_path),
+                                "obj_metadata": deepcopy(item.get("obj_metadata")),
+                            }
                         )
+                plate_manifest["part_files"] = plate_part_records
 
             plate_manifest["assembly_path"] = (
                 str(current_assembly_path.resolve())

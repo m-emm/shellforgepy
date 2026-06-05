@@ -34,6 +34,12 @@ def _write_master_settings(
     _write_yaml(master_dir / "filament.yaml", filament_master)
 
 
+def _write_filament_master(master_dir: Path, filename: str, data: dict) -> None:
+    filament_master = {"type": "filament"}
+    filament_master.update(data)
+    _write_yaml(master_dir / filename, filament_master)
+
+
 def _write_process_data(
     path: Path,
     *,
@@ -266,6 +272,110 @@ def test_generate_settings_syncs_machine_default_filament_metadata(tmp_path):
 
     assert generated_machine["default_filament_profile"] == ["TestTPU"]
     assert generated_machine["default_filament_colour"] == ["#00FF00"]
+
+
+def test_generate_settings_supports_multiple_filaments_and_print_area(tmp_path):
+    master_dir = tmp_path / "masters"
+    master_dir.mkdir()
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    part_file = tmp_path / "part.stl"
+    part_file.write_text("solid part\nendsolid part\n", encoding="utf-8")
+    process_data_file = tmp_path / "process.json"
+
+    _write_yaml(
+        master_dir / "machine.yaml",
+        {
+            "name": "TestMachine",
+            "type": "machine",
+            "default_filament_profile": ["OldPLA"],
+            "default_filament_colour": ["#000000"],
+            "extruder_colour": ["#000000"],
+            "printable_area": ["10x10", "20x10", "20x20", "10x20"],
+            "printable_height": "100",
+        },
+    )
+    _write_yaml(
+        master_dir / "process.yaml",
+        {
+            "name": "TestProcess",
+            "type": "process",
+            "layer_height": "0.2",
+        },
+    )
+    _write_filament_master(
+        master_dir,
+        "filament_t0.yaml",
+        {
+            "name": "PLA_T0",
+            "default_filament_colour": ["#FF0000"],
+            "nozzle_temperature": ["200"],
+        },
+    )
+    _write_filament_master(
+        master_dir,
+        "filament_t1.yaml",
+        {
+            "name": "PLA_T1",
+            "default_filament_colour": ["#0000FF"],
+            "nozzle_temperature": ["200"],
+        },
+    )
+    process_data_file.write_text(
+        json.dumps(
+            {
+                "filament": "PLA_T0",
+                "filaments": ["PLA_T0", "PLA_T1"],
+                "process_overrides": {
+                    "layer_height": "0.24",
+                    "nozzle_temperature": "205",
+                },
+                "print_area": {
+                    "mode": "dual_toolswitch",
+                    "x_min_mm": 0,
+                    "x_max_mm": 244,
+                    "y_min_mm": 0,
+                    "y_max_mm": 290,
+                    "z_max_mm": 294,
+                },
+                "part_file": str(part_file),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    artifacts = generate_settings(process_data_file, output_dir, master_dir)
+
+    generated_machine = json.loads(
+        (output_dir / "TestMachine.json").read_text(encoding="utf-8")
+    )
+    generated_process = json.loads(
+        (output_dir / "TestProcess.json").read_text(encoding="utf-8")
+    )
+    generated_t0 = json.loads(
+        (output_dir / "filaments" / "PLA_T0.json").read_text(encoding="utf-8")
+    )
+    generated_t1 = json.loads(
+        (output_dir / "filaments" / "PLA_T1.json").read_text(encoding="utf-8")
+    )
+
+    assert artifacts["filament_settings_paths"] == [
+        str((output_dir / "filaments" / "PLA_T0.json").resolve()),
+        str((output_dir / "filaments" / "PLA_T1.json").resolve()),
+    ]
+    assert generated_machine["default_filament_profile"] == ["PLA_T0", "PLA_T1"]
+    assert generated_machine["default_filament_colour"] == ["#FF0000", "#0000FF"]
+    assert generated_machine["extruder_colour"] == ["#FF0000", "#0000FF"]
+    assert generated_machine["printable_area"] == [
+        "0x0",
+        "244x0",
+        "244x290",
+        "0x290",
+    ]
+    assert generated_machine["printable_height"] == "294"
+    assert generated_process["layer_height"] == "0.24"
+    assert generated_t0["nozzle_temperature"] == "205"
+    assert generated_t1["nozzle_temperature"] == "205"
 
 
 def test_generate_settings_allows_disabled_pressure_advance_override(tmp_path):

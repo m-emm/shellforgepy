@@ -308,6 +308,106 @@ def _resolve_manifest_path(base_dir: Path, value: Optional[str]) -> Optional[Pat
     return candidate
 
 
+def _resolve_manifest_part_file_entries(
+    base_dir: Path, entries: object
+) -> List[Dict[str, object]]:
+    if not isinstance(entries, list):
+        return []
+
+    resolved_entries: List[Dict[str, object]] = []
+    for entry in entries:
+        if isinstance(entry, str):
+            path = _resolve_manifest_path(base_dir, entry)
+            metadata = None
+            name = Path(entry).stem
+        elif isinstance(entry, dict):
+            path = _resolve_manifest_path(base_dir, entry.get("path"))
+            metadata = entry.get("obj_metadata")
+            name = entry.get("name")
+        else:
+            continue
+
+        if path is None:
+            continue
+        resolved_entries.append(
+            {
+                "name": str(name or path.stem),
+                "path": path,
+                "obj_metadata": metadata if isinstance(metadata, dict) else {},
+            }
+        )
+    return resolved_entries
+
+
+def _slicer_part_inputs_from_manifest_entries(
+    entries: object,
+) -> tuple[List[Path], List[str]]:
+    if not isinstance(entries, list):
+        return [], []
+
+    material_entries = []
+    has_filament_id = False
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        metadata = entry.get("obj_metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        if "slicer_filament_id" in metadata:
+            has_filament_id = True
+        material_entries.append((entry, metadata))
+
+    if not has_filament_id:
+        return [], []
+
+    part_paths: List[Path] = []
+    filament_ids: List[str] = []
+    missing = []
+    for entry, metadata in material_entries:
+        filament_id = metadata.get("slicer_filament_id")
+        path = entry.get("path")
+        if filament_id is None:
+            missing.append(str(entry.get("name") or path or "<unnamed>"))
+            continue
+        part_paths.append(Path(path))
+        filament_ids.append(str(filament_id))
+
+    if missing:
+        raise WorkflowError(
+            "All individual part files on a multi-material plate need "
+            "obj_metadata.slicer_filament_id. Missing: " + ", ".join(missing)
+        )
+
+    return part_paths, filament_ids
+
+
+def _resolve_process_master_settings_dir(
+    process_data_path: Path, default_master_settings_dir: Path
+) -> Path:
+    try:
+        process_data = json.loads(process_data_path.read_text(encoding="utf-8"))
+    except Exception:
+        return default_master_settings_dir
+
+    if not isinstance(process_data, dict):
+        return default_master_settings_dir
+
+    configured_dir = process_data.get("master_settings_dir") or process_data.get(
+        "orca_master_settings_dir"
+    )
+    if not configured_dir:
+        return default_master_settings_dir
+
+    candidate = Path(str(configured_dir)).expanduser()
+    if not candidate.is_absolute():
+        candidate = (process_data_path.parent / candidate).resolve()
+    if not candidate.is_dir():
+        raise WorkflowError(
+            f"Process data master settings directory not found: {candidate}"
+        )
+    return candidate
+
+
 def _write_manifest(run_directory: Path, manifest: Dict[str, object]) -> None:
     manifest_path = run_directory / MANIFEST_FILENAME
     with manifest_path.open("w", encoding="utf-8") as handle:
@@ -366,6 +466,19 @@ def _normalize_generated_slicer_artifacts(
         raise WorkflowError("used_master_settings_files must be a list.")
 
     return normalized
+
+
+def _upload_printer_for_gcode(
+    gcode_file: Path,
+    *,
+    explicit_printer: Optional[str],
+    configured_printer: Optional[str],
+) -> Optional[str]:
+    if explicit_printer:
+        return explicit_printer
+    if (gcode_file.parent / "print_host.txt").is_file():
+        return None
+    return configured_printer
 
 
 def _gather_filament_jsons(directory: Path) -> List[Path]:
@@ -762,6 +875,9 @@ def complete_workflow_run(
                 {
                     "name": plate_name,
                     "part_path": part_entry,
+                    "part_file_entries": _resolve_manifest_part_file_entries(
+                        run_directory, entry.get("part_files")
+                    ),
                     "process_path": process_entry,
                     "obj_path": _resolve_manifest_path(
                         run_directory, entry.get("obj_path")
@@ -882,6 +998,7 @@ def complete_workflow_run(
                 {
                     "name": str(job["name"]),
                     "part_path": resolved_part,
+                    "part_file_entries": job.get("part_file_entries", []),
                     "process_path": resolved_process,
                     "obj_path": job.get("obj_path"),
                     "manifest_entry": job.get("manifest_entry"),
@@ -898,6 +1015,9 @@ def complete_workflow_run(
             {
                 "name": "plate_1",
                 "part_path": _ensure_path(part_path, "generated STL"),
+                "part_file_entries": _resolve_manifest_part_file_entries(
+                    run_directory, manifest.get("part_files")
+                ),
                 "process_path": resolved_process_path,
                 "obj_path": _resolve_manifest_path(
                     run_directory, manifest.get("obj_path")
@@ -971,13 +1091,22 @@ def complete_workflow_run(
         _logger.info(
             "Detected process file for %s: %s", current_plate_name, current_process_path
         )
+        current_master_settings_dir = _resolve_process_master_settings_dir(
+            current_process_path, master_settings_dir
+        )
+        if current_master_settings_dir != master_settings_dir:
+            _logger.info(
+                "Using process-specific Orca master settings for %s: %s",
+                current_plate_name,
+                current_master_settings_dir,
+            )
 
         _logger.info("Generating OrcaSlicer settings in %s", run_directory)
         try:
             generated_artifacts = generate_settings(
                 process_data_file=current_process_path,
                 output_dir=run_directory,
-                master_settings_dir=master_settings_dir,
+                master_settings_dir=current_master_settings_dir,
             )
         except Exception as exc:
             raise WorkflowError(
@@ -1049,7 +1178,18 @@ def complete_workflow_run(
             filament_arg = ";".join(str(path) for path in filament_files)
             slicer_cmd.extend(["--load-filaments", filament_arg])
 
-        slicer_cmd.append(str(current_part_path))
+        slicer_part_paths, slicer_filament_ids = (
+            _slicer_part_inputs_from_manifest_entries(job.get("part_file_entries"))
+        )
+        if slicer_part_paths:
+            for slicer_part_path in slicer_part_paths:
+                _ensure_path(slicer_part_path, "generated individual STL")
+            slicer_cmd.append("--allow-multicolor-oneplate")
+            slicer_cmd.extend(["--load-filament-ids", ",".join(slicer_filament_ids)])
+        else:
+            slicer_part_paths = [current_part_path]
+
+        slicer_cmd.extend(str(path) for path in slicer_part_paths)
         _logger.info(
             "Running OrcaSlicer for %s: %s",
             current_plate_name,
@@ -1172,13 +1312,18 @@ def complete_workflow_run(
         if not gcode_files:
             raise WorkflowError("Upload requested but no G-code files were generated.")
 
-        printer = args.printer or _resolve_config_key_value(config, "upload_printer")
+        configured_printer = _resolve_config_key_value(config, "upload_printer")
 
         for gcode_file in gcode_files:
             _logger.info("Uploading %s", gcode_file)
             try:
                 import shellforgepy.workflow.upload_to_printer as upload_to_printer
 
+                printer = _upload_printer_for_gcode(
+                    gcode_file,
+                    explicit_printer=args.printer,
+                    configured_printer=configured_printer,
+                )
                 upload_to_printer.upload_to_printer(gcode_file, printer)
             except Exception as exc:
                 raise WorkflowError(f"Failed to upload {gcode_file}: {exc}") from exc
