@@ -6966,28 +6966,6 @@ def _export_scene_for_assembly(
         perf_counter() - placed_debug_start,
     )
 
-    process_data = None
-    plate_process_data_map = None
-    if production_mode:
-        process_data = _resolve_process_data(
-            selected_metadata,
-            selected_resource_data,
-            include_prototype_overrides=bool(getattr(args, "prototype", False)),
-            config_data=config_data,
-            selected_assembly_name=selected_assembly,
-        )
-        plate_process_data_map = _resolve_plate_process_data_map(
-            selected_metadata,
-            selected_resource_data,
-            default_process_data=process_data,
-            config_data=config_data,
-            selected_assembly_name=selected_assembly,
-        )
-        if process_data is None and not plate_process_data_map:
-            raise BuilderError(
-                f"Assembly '{selected_assembly}' does not declare Builder.Production.process_data, Builder.Production.process_data_preset, or per-plate process settings"
-            )
-
     export_options = _resolve_export_options(
         selected_resource_data,
         mode,
@@ -7004,6 +6982,32 @@ def _export_scene_for_assembly(
             export_options.get("plates"),
             scene_parts,
         )
+
+    process_data = None
+    plate_process_data_map = None
+    if production_mode:
+        process_data = _resolve_process_data(
+            selected_metadata,
+            selected_resource_data,
+            include_prototype_overrides=bool(getattr(args, "prototype", False)),
+            config_data=config_data,
+            selected_assembly_name=selected_assembly,
+        )
+        needs_process_data = bool(export_options.get("export_stl", True)) or bool(
+            getattr(args, "slice", False) or getattr(args, "upload", False)
+        )
+        if needs_process_data or process_data is not None:
+            plate_process_data_map = _resolve_plate_process_data_map(
+                selected_metadata,
+                selected_resource_data,
+                default_process_data=process_data,
+                config_data=config_data,
+                selected_assembly_name=selected_assembly,
+            )
+        if needs_process_data and process_data is None and not plate_process_data_map:
+            raise BuilderError(
+                f"Assembly '{selected_assembly}' does not declare Builder.Production.process_data, Builder.Production.process_data_preset, or per-plate process settings"
+            )
     metrics_assembly_names = _scene_metrics_assembly_names(
         seed_assemblies=scene_assembly_names,
         built_results_by_name=built_results_by_name,

@@ -339,6 +339,40 @@ def _resolve_manifest_part_file_entries(
     return resolved_entries
 
 
+def _resolve_manifest_step_file_entries(
+    base_dir: Path, entries: object
+) -> List[Dict[str, object]]:
+    if not isinstance(entries, list):
+        return []
+
+    resolved_entries: List[Dict[str, object]] = []
+    for entry in entries:
+        if isinstance(entry, str):
+            path = _resolve_manifest_path(base_dir, entry)
+            name = Path(entry).stem
+            parts: List[str] = []
+        elif isinstance(entry, dict):
+            path = _resolve_manifest_path(base_dir, entry.get("path"))
+            name = entry.get("name")
+            raw_parts = entry.get("parts")
+            parts = (
+                [str(item) for item in raw_parts] if isinstance(raw_parts, list) else []
+            )
+        else:
+            continue
+
+        if path is None:
+            continue
+        resolved_entries.append(
+            {
+                "name": str(name or path.stem),
+                "path": path,
+                "parts": parts,
+            }
+        )
+    return resolved_entries
+
+
 def _slicer_part_inputs_from_manifest_entries(
     entries: object,
 ) -> tuple[List[Path], List[str]]:
@@ -855,6 +889,10 @@ def complete_workflow_run(
     target_label: str,
 ) -> int:
     slice_requested = bool(args.slice or args.upload)
+    production_mode = bool(getattr(args, "production", False))
+    step_file_entries = _resolve_manifest_step_file_entries(
+        run_directory, manifest.get("step_files")
+    )
 
     plate_entries = manifest.get("plates")
     plate_jobs: List[Dict[str, object]] = []
@@ -904,6 +942,8 @@ def complete_workflow_run(
             primary_artifact_path = _resolve_manifest_path(
                 run_directory, manifest.get("assembly_step_path")
             )
+        if primary_artifact_path is None and step_file_entries:
+            primary_artifact_path = step_file_entries[0]["path"]
 
         if primary_artifact_path is not None and primary_artifact_path.exists():
             _logger.info("Detected geometry artifact: %s", primary_artifact_path)
@@ -911,6 +951,19 @@ def complete_workflow_run(
             _logger.warning(
                 "No assembly STL/OBJ/STEP artifact path found in workflow manifest."
             )
+
+    if production_mode:
+        if step_file_entries:
+            _logger.info("Production STEP files:")
+            for entry in step_file_entries:
+                _logger.info("  %s: %s", entry["name"], entry["path"])
+        else:
+            assembly_step_path = _resolve_manifest_path(
+                run_directory, manifest.get("assembly_step_path")
+            )
+            if assembly_step_path is not None:
+                _logger.info("Production STEP files:")
+                _logger.info("  main: %s", assembly_step_path)
 
     viewer_url = manifest.get("viewer_url")
     if viewer_url:

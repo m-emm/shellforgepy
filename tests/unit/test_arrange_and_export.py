@@ -595,6 +595,66 @@ def test_arrange_and_export_manifest_records_plate_local_part_files(
     assert all(Path(entry["path"]).exists() for entry in plate_part_files)
 
 
+def test_arrange_and_export_manifest_records_plate_step_files(monkeypatch, tmp_path):
+    import shellforgepy.produce.arrange_and_export as arrange_and_export_module
+
+    manifest_path = tmp_path / "workflow_manifest.json"
+
+    def fake_export_solid_to_step(part, destination):
+        Path(destination).write_text("ISO-10303-21;\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        arrange_and_export_module,
+        "export_solid_to_step",
+        fake_export_solid_to_step,
+    )
+    monkeypatch.setenv("SHELLFORGEPY_WORKFLOW_MANIFEST", str(manifest_path))
+
+    result = arrange_and_export_parts(
+        [
+            {"name": "left_bracket", "part": create_box(10, 10, 1)},
+            {"name": "right_bracket", "part": create_box(10, 10, 1)},
+        ],
+        prod_gap=2.0,
+        bed_width=100.0,
+        script_file="test_cnc_bundle.py",
+        export_directory=tmp_path,
+        export_base_name="cnc_bundle",
+        export_stl=False,
+        export_step=True,
+        export_obj=False,
+        export_individual_parts=False,
+        plates=[
+            {
+                "name": "left_part",
+                "filename": "left_upload.step",
+                "parts": ["left_bracket"],
+            },
+            {
+                "name": "right_part",
+                "filename": "right_upload",
+                "parts": ["right_bracket"],
+            },
+        ],
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert result == tmp_path / "left_upload.step"
+    assert manifest["assembly_step_path"].endswith("left_upload.step")
+    assert [entry["name"] for entry in manifest["step_files"]] == [
+        "left_part",
+        "right_part",
+    ]
+    assert [entry["parts"] for entry in manifest["step_files"]] == [
+        ["left_bracket"],
+        ["right_bracket"],
+    ]
+    assert manifest["plates"][0]["step_path"].endswith("left_upload.step")
+    assert manifest["plates"][1]["step_path"].endswith("right_upload.step")
+    assert all(Path(entry["path"]).exists() for entry in manifest["step_files"])
+
+
 def test_arrange_and_export_parts_uses_export_base_name_for_filenames(
     monkeypatch, tmp_path
 ):

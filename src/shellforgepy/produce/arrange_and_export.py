@@ -858,6 +858,45 @@ def _split_parts_into_plates(
     return plates
 
 
+def _declared_plate_file_stems(declared_plates):
+    if not isinstance(declared_plates, list):
+        return {}
+
+    file_stems = {}
+    used_stems = {}
+    for index, entry in enumerate(declared_plates, start=1):
+        if not isinstance(entry, dict):
+            continue
+        plate_name = str(entry.get("name") or f"plate_{index}")
+        raw_filename = None
+        for key in ("filename", "file_name", "file_stem", "output_name"):
+            if entry.get(key) is not None:
+                raw_filename = entry.get(key)
+                break
+        if raw_filename is None:
+            continue
+
+        filename = Path(str(raw_filename).strip()).name
+        if not filename:
+            raise ValueError(f"Plate '{plate_name}' filename must not be empty")
+        path_filename = Path(filename)
+        if path_filename.suffix.lower() in {".stl", ".step", ".obj"}:
+            filename = path_filename.stem
+
+        file_stem = _safe_name(filename)
+        if not file_stem:
+            raise ValueError(f"Plate '{plate_name}' filename must not be empty")
+        if file_stem in used_stems:
+            raise ValueError(
+                f"Plate '{plate_name}' filename '{file_stem}' is also used by plate "
+                f"'{used_stems[file_stem]}'"
+            )
+        used_stems[file_stem] = plate_name
+        file_stems[plate_name] = file_stem
+
+    return file_stems
+
+
 def _filter_plate_groups(plate_groups, selected_plate_names):
     """Filter named plate groups by requested plate names."""
 
@@ -1540,12 +1579,14 @@ def arrange_and_export_parts(
     if manifest_data is not None:
         manifest_data["export_dir"] = str(export_dir.resolve())
         manifest_data["plates"] = []
+        manifest_data["step_files"] = []
 
     base_name = (
         str(export_base_name).strip()
         if export_base_name is not None and str(export_base_name).strip()
         else (Path(script_file).stem or "cadquery_parts")
     )
+    plate_file_stems = _declared_plate_file_stems(plates)
     single_selected_plate_name = None
     if selected_plates and len(prepared_plate_groups) == 1:
         single_selected_plate_name = _safe_name(prepared_plate_groups[0][0])
@@ -1604,6 +1645,9 @@ def arrange_and_export_parts(
             fused_shape = None
 
         plate_suffix = f"_{safe_plate_name}" if len(plate_groups) > 1 or plates else ""
+        plate_export_stem = plate_file_stems.get(str(plate_name)) or (
+            f"{base_name}{plate_suffix}"
+        )
         current_assembly_path = None
         current_step_path = None
         current_process_path = None
@@ -1612,7 +1656,7 @@ def arrange_and_export_parts(
 
         if export_stl:
             assert fused_shape is not None
-            current_assembly_path = export_dir / f"{base_name}{plate_suffix}.stl"
+            current_assembly_path = export_dir / f"{plate_export_stem}.stl"
             export_solid_to_stl(fused_shape, current_assembly_path)
             _logger.info("Exported plate STL to %s", current_assembly_path)
             if assembly_path is None:
@@ -1620,7 +1664,7 @@ def arrange_and_export_parts(
 
         if export_step:
             assert fused_shape is not None
-            current_step_path = export_dir / f"{base_name}{plate_suffix}.step"
+            current_step_path = export_dir / f"{plate_export_stem}.step"
             export_solid_to_step(fused_shape, current_step_path)
             _logger.info("Exported plate STEP to %s", current_step_path)
             if assembly_step_path is None:
@@ -1647,7 +1691,7 @@ def arrange_and_export_parts(
             _logger.info("Exported process data to %s", current_process_path)
 
         if export_obj and plate_suffix and single_selected_plate_name is None:
-            current_obj_path = export_dir / f"{base_name}{plate_suffix}.obj"
+            current_obj_path = export_dir / f"{plate_export_stem}.obj"
             _logger.info("Exporting plate OBJ to %s", current_obj_path)
             plate_colored_meshes = _build_colored_meshes(
                 export_plate_parts,
@@ -1681,6 +1725,11 @@ def arrange_and_export_parts(
                 if current_assembly_path is not None
                 else None
             )
+            plate_manifest["step_path"] = (
+                str(current_step_path.resolve())
+                if current_step_path is not None
+                else None
+            )
             plate_manifest["process_data_path"] = (
                 str(current_process_path.resolve())
                 if current_process_path is not None
@@ -1699,6 +1748,15 @@ def arrange_and_export_parts(
             manifest_plates = manifest_data.get("plates")
             if isinstance(manifest_plates, list):
                 manifest_plates.append(plate_manifest)
+            manifest_step_files = manifest_data.get("step_files")
+            if isinstance(manifest_step_files, list) and current_step_path is not None:
+                manifest_step_files.append(
+                    {
+                        "name": str(plate_name),
+                        "path": str(current_step_path.resolve()),
+                        "parts": [str(item["name"]) for item in export_plate_parts],
+                    }
+                )
 
     # Export colored OBJ file. Keep production arrangement view distinct from the
     # assembled visualization by suffixing production OBJ/MTL names.

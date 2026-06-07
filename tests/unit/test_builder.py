@@ -2970,6 +2970,179 @@ def test_export_scene_for_assembly_passes_merged_plate_process_data_to_export(
     }
 
 
+def test_export_scene_for_assembly_allows_step_only_production_without_process_data(
+    monkeypatch, tmp_path
+):
+    import os
+
+    resource_path = tmp_path / "machined.yaml"
+    resource_path.write_text(
+        "\n".join(
+            [
+                "Builder:",
+                "  Production:",
+                "    parts:",
+                "      - source: self",
+                "        artifact: leader",
+                "        name: machined_plate",
+                "      - source: self",
+                "        artifact: followers",
+                "        names: [spacer]",
+                "        name_template: '{name}'",
+                "    arrange:",
+                "      export_step: true",
+                "      export_stl: false",
+                "      export_obj: false",
+                "      export_individual_parts: false",
+                "      plates:",
+                "        - name: machined_plate",
+                "          filename: mh_plate",
+                "          parts: [machined_plate]",
+                "        - name: spacer",
+                "          filename: mh_spacer.step",
+                "          parts: [spacer]",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    leader_step = tmp_path / "repo" / "machined" / "leader.step"
+    follower_step = tmp_path / "repo" / "machined" / "spacer.step"
+    leader_step.parent.mkdir(parents=True)
+    leader_step.write_text("leader", encoding="utf-8")
+    follower_step.write_text("spacer", encoding="utf-8")
+
+    build_results = [
+        {
+            "assembly_name": "machined",
+            "artifact_dir": str(tmp_path / "repo" / "machined"),
+            "repository_dir": str(tmp_path / "repo"),
+            "resource_file": str(resource_path),
+            "public_parameters": {},
+            "generator_kwargs": {},
+            "generator_context": {},
+            "artifacts": {
+                "leader_step": str(leader_step),
+                "followers": [
+                    {
+                        "name": "spacer",
+                        "path": str(follower_step),
+                        "kind": "step",
+                        "index": 0,
+                    }
+                ],
+            },
+        }
+    ]
+
+    captured = {}
+
+    def fake_arrange_and_export_parts(*args, **kwargs):
+        captured["part_names"] = [part["name"] for part in args[0]]
+        captured["process_data"] = kwargs["process_data"]
+        captured["plate_process_data_map"] = kwargs["plate_process_data_map"]
+        captured["export_step"] = kwargs["export_step"]
+        captured["export_stl"] = kwargs["export_stl"]
+        captured["export_obj"] = kwargs["export_obj"]
+        captured["export_individual_parts"] = kwargs["export_individual_parts"]
+        captured["plates"] = kwargs["plates"]
+        run_directory = Path(kwargs["export_directory"])
+        step_path = run_directory / "machined_machined_plate.step"
+        step_path.write_text("ISO-10303-21;\n", encoding="utf-8")
+        manifest_path = Path(os.environ["SHELLFORGEPY_WORKFLOW_MANIFEST"])
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "step_files": [
+                        {
+                            "name": "machined_plate",
+                            "path": str(step_path),
+                            "parts": ["machined_plate"],
+                        },
+                        {
+                            "name": "spacer",
+                            "path": str(run_directory / "machined_spacer.step"),
+                            "parts": ["spacer"],
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(
+        builder,
+        "_import_dependency_part",
+        lambda path: create_box(1, 1, 1),
+    )
+    monkeypatch.setattr(builder, "_apply_placement_alignments", lambda *a, **k: a[0])
+    monkeypatch.setattr(builder, "_scene_metrics_assembly_names", lambda **kwargs: [])
+    monkeypatch.setattr(
+        builder,
+        "_combined_metrics_snapshot_for_results",
+        lambda build_results, assembly_names: None,
+    )
+    monkeypatch.setattr(
+        arrange_and_export_module,
+        "arrange_and_export_parts",
+        fake_arrange_and_export_parts,
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "get_config_path",
+        lambda override=None: tmp_path / "config.json",
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "load_config",
+        lambda path: {"render": {"enabled": False}},
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "complete_workflow_run",
+        lambda *args, **kwargs: 0,
+    )
+
+    result = builder._export_scene_for_assembly(
+        args=argparse.Namespace(
+            config=None,
+            run_id="test",
+            runs_dir=str(tmp_path / "runs"),
+            production=True,
+            slice=False,
+            upload=False,
+            visualize=False,
+            prototype=False,
+            verbose=False,
+            plate=None,
+        ),
+        config_data={"assemblies": [{"name": "machined"}]},
+        build_results=build_results,
+        selected_assembly="machined",
+        scene_assembly_names=["machined"],
+    )
+
+    assert result == 0
+    assert captured["part_names"] == ["machined_plate", "spacer"]
+    assert captured["process_data"] is None
+    assert captured["plate_process_data_map"] is None
+    assert captured["export_step"] is True
+    assert captured["export_stl"] is False
+    assert captured["export_obj"] is False
+    assert captured["export_individual_parts"] is False
+    assert captured["plates"] == [
+        {
+            "name": "machined_plate",
+            "filename": "mh_plate",
+            "parts": ["machined_plate"],
+        },
+        {
+            "name": "spacer",
+            "filename": "mh_spacer.step",
+            "parts": ["spacer"],
+        },
+    ]
+
+
 def test_export_scene_for_assembly_skips_runtime_placement_in_production(
     monkeypatch, tmp_path
 ):

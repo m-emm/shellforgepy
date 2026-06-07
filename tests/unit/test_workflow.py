@@ -494,6 +494,49 @@ def test_complete_workflow_run_excludes_builder_debug_json_from_orca_settings(
     ]
 
 
+def test_complete_workflow_run_logs_production_step_files(caplog, tmp_path):
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    step_path = run_directory / "tool_head_mount_machined.step"
+    step_path.write_text("ISO-10303-21;\n", encoding="utf-8")
+
+    args = argparse.Namespace(
+        production=True,
+        slice=False,
+        upload=False,
+        open=False,
+        part_file=None,
+        process_file=None,
+        master_settings_dir=None,
+        orca_executable=None,
+        orca_debug=None,
+        printer=None,
+    )
+    manifest = {
+        "step_files": [
+            {
+                "name": "tool_head_mount_machined",
+                "path": str(step_path),
+                "parts": ["tool_head_mount_machined"],
+            }
+        ]
+    }
+
+    caplog.set_level(logging.INFO)
+
+    result = complete_workflow_run(
+        args,
+        config={},
+        run_directory=run_directory,
+        manifest=manifest,
+        target_label="tool_head_mount_machined_top_assembly",
+    )
+
+    assert result == 0
+    assert "Production STEP files:" in caplog.text
+    assert f"tool_head_mount_machined: {step_path}" in caplog.text
+
+
 def test_complete_workflow_run_errors_for_manifest_plate_without_process_data(
     monkeypatch, tmp_path
 ):
