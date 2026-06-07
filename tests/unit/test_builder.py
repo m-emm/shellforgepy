@@ -4262,6 +4262,71 @@ def test_resolve_process_data_applies_prototype_overrides(monkeypatch):
     }
 
 
+def test_resolve_process_data_allows_prototype_preset_without_production_process_data(
+    monkeypatch,
+):
+    class ProcessModule:
+        @staticmethod
+        def generate_settings(*, label, wall_loops):
+            return {
+                "filament": label,
+                "process_overrides": {
+                    "wall_loops": wall_loops,
+                },
+            }
+
+    real_import_module = importlib.import_module
+    monkeypatch.setattr(
+        builder.importlib,
+        "import_module",
+        lambda module_name: (
+            ProcessModule
+            if module_name == "demo.parametric"
+            else real_import_module(module_name)
+        ),
+    )
+
+    resolved = builder._resolve_process_data(
+        {
+            "public_parameters": {},
+            "generator_kwargs": {},
+        },
+        {
+            "Builder": {
+                "Production": {
+                    "prototype": {
+                        "process_data_preset": "petgcf_max_strength",
+                    },
+                }
+            }
+        },
+        include_prototype_overrides=True,
+        config_data={
+            "process_data_generators": {
+                "demo_parametric": {
+                    "function": "demo.parametric.generate_settings",
+                }
+            },
+            "process_data_presets": {
+                "petgcf_max_strength": {
+                    "generator": "demo_parametric",
+                    "arguments": {
+                        "label": "PETGCF",
+                        "wall_loops": 4,
+                    },
+                }
+            },
+        },
+    )
+
+    assert resolved == {
+        "filament": "PETGCF",
+        "process_overrides": {
+            "wall_loops": "4",
+        },
+    }
+
+
 def test_resolve_process_data_applies_config_named_base_and_entry_overrides():
     resolved = builder._resolve_process_data(
         {

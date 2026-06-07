@@ -5698,9 +5698,6 @@ def _resolve_process_data(
         process_data_spec_from_mapping(selected_assembly_entry),
         field_name="assemblies[].process_data",
     )
-    if resolved is None:
-        return None
-
     if include_prototype_overrides:
         prototype = production_section.get("prototype")
         if prototype is not None:
@@ -5711,6 +5708,9 @@ def _resolve_process_data(
                 process_data_spec_from_mapping(prototype),
                 field_name="Builder.Production.prototype.process_data",
             )
+
+    if resolved is None:
+        return None
 
     return normalize_process_data_for_export(resolved)
 
