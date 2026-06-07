@@ -3142,6 +3142,31 @@ def test_export_scene_for_assembly_allows_step_only_production_without_process_d
         },
     ]
 
+    captured.clear()
+    result = builder._export_scene_for_assembly(
+        args=argparse.Namespace(
+            config=None,
+            run_id="test_visualize",
+            runs_dir=str(tmp_path / "runs"),
+            production=True,
+            slice=False,
+            upload=False,
+            visualize=True,
+            prototype=False,
+            verbose=False,
+            plate=None,
+        ),
+        config_data={"assemblies": [{"name": "machined"}]},
+        build_results=build_results,
+        selected_assembly="machined",
+        scene_assembly_names=["machined"],
+    )
+
+    assert result == 0
+    assert captured["export_step"] is True
+    assert captured["export_stl"] is False
+    assert captured["export_obj"] is True
+
 
 def test_export_scene_for_assembly_skips_runtime_placement_in_production(
     monkeypatch, tmp_path

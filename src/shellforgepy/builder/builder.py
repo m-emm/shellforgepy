@@ -6971,6 +6971,12 @@ def _export_scene_for_assembly(
         mode,
         config_data,
     )
+    if production_mode and bool(getattr(args, "visualize", False)):
+        if not bool(export_options.get("export_obj", True)):
+            _logger.info(
+                "Enabling production OBJ export because --visualize was requested"
+            )
+        export_options["export_obj"] = True
     if bool(getattr(args, "prototype", False)):
         export_options = _apply_prototype_arrange_overrides(
             export_options,
@@ -6978,6 +6984,8 @@ def _export_scene_for_assembly(
             selected_resource_data=selected_resource_data,
             config_data=config_data,
         )
+        if production_mode and bool(getattr(args, "visualize", False)):
+            export_options["export_obj"] = True
         export_options["plates"] = _filter_declared_plates_for_scene_parts(
             export_options.get("plates"),
             scene_parts,
