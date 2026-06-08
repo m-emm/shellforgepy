@@ -203,6 +203,55 @@ def placement_alignments(
     return [dict(item) for item in alignments]
 
 
+def _placement_step_error(
+    index: int,
+    alignment: Mapping[str, Any],
+    message: str,
+) -> BuilderError:
+    keys = sorted(str(key) for key in alignment)
+    details = [f"placement.alignments[{index}]: {message}"]
+    if keys:
+        details.append("keys present: " + ", ".join(f"'{key}'" for key in keys))
+    else:
+        details.append("entry is empty")
+
+    if "rigd_group" in alignment and "rigid_group" not in alignment:
+        details.append("did you mean 'rigid_group' instead of 'rigd_group'?")
+
+    return BuilderError("; ".join(details))
+
+
+def _placement_step_summary(step: PlacementStep) -> str:
+    if step.is_rigid_group:
+        return (
+            f"rigid_group {list(step.rigid_group_assembly_names)} "
+            f"to {step.target_assembly_name}"
+        )
+    if step.target_reference is None:
+        return str(step.moving_reference)
+    return f"{step.moving_reference} to {step.target_reference}"
+
+
+def _placement_rigid_motion_error(
+    step: PlacementStep,
+    moving_assembly_name: str,
+    target_assembly_name: str,
+    moving_group: Iterable[str],
+) -> BuilderError:
+    return _placement_step_error(
+        step.index,
+        step.spec,
+        (
+            f"{_placement_step_summary(step)} attempts to move rigidly attached "
+            f"assemblies '{moving_assembly_name}' and '{target_assembly_name}' "
+            "relative to each other; "
+            f"placement spec: {step.spec}; "
+            f"'{moving_assembly_name}' is already rigidly connected with "
+            f"{sorted(moving_group)}"
+        ),
+    )
+
+
 def parse_part_reference(
     reference: str,
     known_assembly_names: Sequence[str],
@@ -327,17 +376,29 @@ def _build_placement_steps(
         has_post_rotation = alignment.get("post_rotation") is not None
         has_post_translation = alignment.get("post_translation") is not None
         if "rigid_attach" in alignment:
-            raise BuilderError(
+            raise _placement_step_error(
+                index,
+                alignment,
                 "placement rigid_attach is no longer supported; use a separate "
-                "'rigid_group' placement step"
+                "'rigid_group' placement step",
             )
         if not moving_reference:
-            raise BuilderError("Each placement alignment requires 'part'")
+            raise _placement_step_error(
+                index,
+                alignment,
+                "placement alignment requires 'part' or 'rigid_group'",
+            )
         if has_alignment and not target_reference:
-            raise BuilderError("Placement steps with 'alignment' also require 'to'")
+            raise _placement_step_error(
+                index,
+                alignment,
+                "Placement steps with 'alignment' also require 'to'",
+            )
         if not has_alignment and not has_post_rotation and not has_post_translation:
-            raise BuilderError(
-                "Each placement step requires 'alignment', 'post_rotation', or 'post_translation'"
+            raise _placement_step_error(
+                index,
+                alignment,
+                "Each placement step requires 'alignment', 'post_rotation', or 'post_translation'",
             )
         moving_assembly_name, _ = parse_part_reference(
             str(moving_reference), known_assembly_names
@@ -432,11 +493,11 @@ def _build_placement_execution_dag(
             for assembly_name in sorted(source_members):
                 moving_group = _rigid_group_members(rigidity_graph, assembly_name)
                 if step.target_assembly_name in moving_group:
-                    raise BuilderError(
-                        "Placement step "
-                        f"{step.index} attempts to move rigidly attached assemblies "
-                        f"'{assembly_name}' and '{step.target_assembly_name}' "
-                        "relative to each other"
+                    raise _placement_rigid_motion_error(
+                        step,
+                        assembly_name,
+                        step.target_assembly_name,
+                        moving_group,
                     )
                 affected_members.update(moving_group)
 
@@ -486,11 +547,11 @@ def _build_placement_execution_dag(
                 rigidity_graph, step.target_assembly_name
             )
             if step.target_assembly_name in moving_group:
-                raise BuilderError(
-                    "Placement step "
-                    f"{step.index} attempts to move rigidly attached assemblies "
-                    f"'{step.moving_assembly_name}' and '{step.target_assembly_name}' "
-                    "relative to each other"
+                raise _placement_rigid_motion_error(
+                    step,
+                    step.moving_assembly_name,
+                    step.target_assembly_name,
+                    moving_group,
                 )
 
         graph.add_node(

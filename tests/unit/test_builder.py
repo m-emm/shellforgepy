@@ -5764,6 +5764,57 @@ def test_build_graph_model_supports_rigid_group():
     assert set(model.placement_execution_dag.predecessors(1)) == {0}
 
 
+def test_build_graph_model_reports_malformed_placement_step_context():
+    with pytest.raises(builder.BuilderError) as exc_info:
+        builder_graph_model.build_graph_model(
+            [{"name": "extruder"}, {"name": "x_axis"}],
+            {
+                "placement": {
+                    "alignments": [
+                        {
+                            "to": "x_axis",
+                            "rigd_group": ["extruder"],
+                        }
+                    ]
+                }
+            },
+        )
+
+    message = str(exc_info.value)
+    assert "placement.alignments[0]" in message
+    assert "requires 'part' or 'rigid_group'" in message
+    assert "'rigd_group'" in message
+    assert "did you mean 'rigid_group' instead of 'rigd_group'?" in message
+
+
+def test_build_graph_model_reports_rigid_motion_conflict_step_context():
+    with pytest.raises(builder.BuilderError) as exc_info:
+        builder_graph_model.build_graph_model(
+            [{"name": "extruder"}, {"name": "board"}],
+            {
+                "placement": {
+                    "alignments": [
+                        {
+                            "to": "extruder",
+                            "rigid_group": ["board"],
+                        },
+                        {
+                            "to": "extruder",
+                            "rigid_group": ["board"],
+                        },
+                    ]
+                }
+            },
+        )
+
+    message = str(exc_info.value)
+    assert "placement.alignments[1]" in message
+    assert "rigid_group ['board'] to extruder" in message
+    assert "keys present: 'rigid_group', 'to'" in message
+    assert "placement spec: {'to': 'extruder', 'rigid_group': ['board']}" in message
+    assert "'board' is already rigidly connected with ['board', 'extruder']" in message
+
+
 def test_build_graph_model_requires_to_on_rigid_group():
     with pytest.raises(builder.BuilderError, match="rigid_group"):
         builder_graph_model.build_graph_model(
@@ -6557,7 +6608,7 @@ def test_apply_placement_alignments_rigid_group_rejects_relative_motion_inside_g
         ),
     )
 
-    with pytest.raises(builder.BuilderError, match="rigidly attached assemblies"):
+    with pytest.raises(builder.BuilderError) as exc_info:
         builder._apply_placement_alignments(
             [
                 {
@@ -6599,6 +6650,14 @@ def test_apply_placement_alignments_rigid_group_rejects_relative_motion_inside_g
                 },
             },
         )
+
+    message = str(exc_info.value)
+    assert "placement.alignments[1]" in message
+    assert "right to left" in message
+    assert "rigidly attached assemblies 'right' and 'left'" in message
+    assert "placement spec: {'part': 'right', 'to': 'left', 'alignment': 'TOP'}" in message
+    assert "'right' is already rigidly connected with ['left', 'right']" in message
+    assert "keys present: 'alignment', 'part', 'to'" in message
 
 
 def test_apply_placement_alignments_supports_post_translation(monkeypatch, tmp_path):

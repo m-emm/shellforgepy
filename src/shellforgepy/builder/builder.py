@@ -4613,21 +4613,64 @@ def _rigid_group_members(rigidity_graph: nx.Graph, assembly_name: str) -> List[s
     return sorted(nx.node_connected_component(rigidity_graph, assembly_name))
 
 
+def _placement_step_description_for_error(
+    placement_step: builder_graph_model.PlacementStep,
+) -> str:
+    if placement_step.is_rigid_group:
+        return (
+            f"rigid_group {list(placement_step.rigid_group_assembly_names)} "
+            f"to {placement_step.target_assembly_name}"
+        )
+    if placement_step.target_reference is None:
+        return f"{placement_step.moving_reference}"
+    return f"{placement_step.moving_reference} to {placement_step.target_reference}"
+
+
+def _placement_rigid_motion_error(
+    *,
+    placement_step_index: int,
+    moving_assembly_name: str,
+    target_assembly_name: str,
+    moving_group: Sequence[str],
+    placement_step: Optional[builder_graph_model.PlacementStep] = None,
+) -> BuilderError:
+    if placement_step is None:
+        return BuilderError(
+            "Placement step "
+            f"{placement_step_index} attempts to move rigidly attached assemblies "
+            f"'{moving_assembly_name}' and '{target_assembly_name}' relative to each other; "
+            f"'{moving_assembly_name}' is already rigidly connected with "
+            f"{sorted(moving_group)}"
+        )
+    return BuilderError(
+        f"Placement step {placement_step_index} "
+        f"({_placement_step_description_for_error(placement_step)}) attempts to move "
+        f"rigidly attached assemblies '{moving_assembly_name}' and "
+        f"'{target_assembly_name}' relative to each other; "
+        f"placement spec: {placement_step.spec}; "
+        f"'{moving_assembly_name}' is already rigidly connected with "
+        f"{sorted(moving_group)}"
+    )
+
+
 def _validate_rigid_group_motion(
     rigidity_graph: nx.Graph,
     *,
     moving_assembly_name: str,
     target_assembly_name: Optional[str],
     placement_step_index: int,
+    placement_step: Optional[builder_graph_model.PlacementStep] = None,
 ) -> List[str]:
     moving_group = _rigid_group_members(rigidity_graph, moving_assembly_name)
     if target_assembly_name is None:
         return moving_group
     if target_assembly_name in moving_group:
-        raise BuilderError(
-            "Placement step "
-            f"{placement_step_index} attempts to move rigidly attached assemblies "
-            f"'{moving_assembly_name}' and '{target_assembly_name}' relative to each other"
+        raise _placement_rigid_motion_error(
+            placement_step_index=placement_step_index,
+            moving_assembly_name=moving_assembly_name,
+            target_assembly_name=target_assembly_name,
+            moving_group=moving_group,
+            placement_step=placement_step,
         )
     return moving_group
 
@@ -4965,6 +5008,7 @@ def _advance_placement_execution(
                     moving_assembly_name=assembly_name,
                     target_assembly_name=target_assembly_name,
                     placement_step_index=placement_step.index,
+                    placement_step=placement_step,
                 )
 
             rigidity_group_members = _attach_rigid_group(
@@ -4997,6 +5041,7 @@ def _advance_placement_execution(
             moving_assembly_name=moving_assembly_name,
             target_assembly_name=target_assembly_name,
             placement_step_index=placement_step.index,
+            placement_step=placement_step,
         )
 
         moving_group_parts_before = {
@@ -5372,6 +5417,7 @@ def _apply_placement_alignments(
                     moving_assembly_name=assembly_name,
                     target_assembly_name=target_assembly_name,
                     placement_step_index=placement_index,
+                    placement_step=effective_step,
                 )
             rigidity_group_members = _attach_rigid_group(
                 rigidity_graph,
@@ -5400,6 +5446,7 @@ def _apply_placement_alignments(
             moving_assembly_name=moving_assembly_name,
             target_assembly_name=effective_step.target_assembly_name,
             placement_step_index=placement_index,
+            placement_step=effective_step,
         )
         moved_anchor = moving_anchor
         step_transforms: List[Callable[[Any], Any]] = []
