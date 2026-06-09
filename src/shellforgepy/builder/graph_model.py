@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import islice
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
@@ -38,6 +38,40 @@ class BuilderGraphModel:
     first_moving_alignment_index: Dict[str, int]
     first_involved_alignment_index: Dict[str, int]
     placement_build_dependencies: Dict[str, List[str]]
+    build_items_by_name: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    join_operations_by_name: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    join_output_to_operation: Dict[str, str] = field(default_factory=dict)
+    join_outputs_by_operation: Dict[str, Dict[str, str]] = field(default_factory=dict)
+
+
+JOIN_NODE_PREFIX = "join:"
+
+
+def join_node_name(operation_name: str) -> str:
+    return f"{JOIN_NODE_PREFIX}{operation_name}"
+
+
+def is_join_node_name(name: str) -> bool:
+    return str(name).startswith(JOIN_NODE_PREFIX)
+
+
+def join_operation_name_from_node(node_name: str) -> str:
+    normalized = str(node_name)
+    if not is_join_node_name(normalized):
+        raise BuilderError(f"Not a join operation node: {node_name}")
+    return normalized[len(JOIN_NODE_PREFIX) :]
+
+
+def _entry_kind(entry: Mapping[str, Any]) -> str:
+    return str(entry.get("kind", "assembly")).strip().lower()
+
+
+def _is_join_entry(entry: Mapping[str, Any]) -> bool:
+    return _entry_kind(entry) == "join"
+
+
+def _is_joined_output_entry(entry: Mapping[str, Any]) -> bool:
+    return _entry_kind(entry) == "joined_output"
 
 
 def dependency_names(entry: Mapping[str, Any]) -> List[str]:
@@ -53,17 +87,205 @@ def dependency_names(entry: Mapping[str, Any]) -> List[str]:
     return [str(item) for item in dependencies]
 
 
-def assemblies_by_name(
+def _entry_name(entry: Mapping[str, Any]) -> str:
+    name = entry.get("name")
+    if not name:
+        raise BuilderError("Each assembly entry must define a name")
+    return str(name)
+
+
+def _validate_output_alias(alias: Any, operation_name: str) -> str:
+    normalized = str(alias).strip()
+    if not normalized:
+        raise BuilderError(
+            f"Join operation '{operation_name}' has an empty output alias"
+        )
+    return normalized
+
+
+def _validate_output_assembly_name(value: Any, operation_name: str) -> str:
+    normalized = str(value).strip()
+    if not normalized:
+        raise BuilderError(
+            f"Join operation '{operation_name}' has an empty output assembly name"
+        )
+    return normalized
+
+
+def _normalize_join_declarations(
     assemblies: Sequence[Mapping[str, Any]],
-) -> Dict[str, Dict[str, Any]]:
-    by_name: Dict[str, Dict[str, Any]] = {}
-    for entry in assemblies:
+) -> tuple[
+    List[Dict[str, Any]],
+    Dict[str, Dict[str, Any]],
+    Dict[str, Dict[str, Any]],
+    Dict[str, str],
+    Dict[str, Dict[str, str]],
+]:
+    normal_entries_by_name: Dict[str, Dict[str, Any]] = {}
+    join_entries_by_name: Dict[str, Dict[str, Any]] = {}
+    output_entries_by_name: Dict[str, Dict[str, Any]] = {}
+    join_output_to_operation: Dict[str, str] = {}
+    join_outputs_by_operation: Dict[str, Dict[str, str]] = {}
+    resource_keys = (
+        "assembly_file",
+        "assembly_resource",
+        "resource_file",
+        "template_file",
+    )
+
+    for raw_entry in assemblies:
+        if not isinstance(raw_entry, Mapping):
+            raise BuilderError("Each assembly entry must be a mapping")
+        entry = dict(raw_entry)
         name = entry.get("name")
         if not name:
             raise BuilderError("Each assembly entry must define a name")
-        if name in by_name:
+        name = str(name)
+
+        if _is_join_entry(entry):
+            if name in join_entries_by_name:
+                raise BuilderError(f"Duplicate join operation name '{name}'")
+            if name in normal_entries_by_name:
+                raise BuilderError(
+                    f"Join operation name '{name}' collides with an assembly name"
+                )
+            if name in output_entries_by_name:
+                raise BuilderError(
+                    f"Join operation name '{name}' collides with a join output assembly name"
+                )
+            if not any(entry.get(resource_key) for resource_key in resource_keys):
+                raise BuilderError(f"Join operation '{name}' must define resource_file")
+
+            raw_outputs = entry.get("outputs")
+            if not isinstance(raw_outputs, Mapping):
+                raise BuilderError(
+                    f"Join operation '{name}' must define outputs as a mapping"
+                )
+            if len(raw_outputs) < 2:
+                raise BuilderError(
+                    f"Join operation '{name}' must define at least two outputs"
+                )
+
+            outputs: Dict[str, str] = {}
+            for raw_alias, raw_output_name in raw_outputs.items():
+                alias = _validate_output_alias(raw_alias, name)
+                output_name = _validate_output_assembly_name(raw_output_name, name)
+                if alias in outputs:
+                    raise BuilderError(
+                        f"Join operation '{name}' repeats output alias '{alias}'"
+                    )
+                if output_name in normal_entries_by_name:
+                    raise BuilderError(
+                        f"Join output assembly name '{output_name}' collides with a normal assembly name"
+                    )
+                if output_name in join_entries_by_name or output_name == name:
+                    raise BuilderError(
+                        f"Join output assembly name '{output_name}' collides with a join operation name"
+                    )
+                if output_name in output_entries_by_name:
+                    raise BuilderError(
+                        f"Duplicate join output assembly name '{output_name}'"
+                    )
+                outputs[alias] = output_name
+                output_entry = {
+                    "name": output_name,
+                    "kind": "joined_output",
+                    "join_operation": name,
+                    "join_output_alias": alias,
+                    "_join_outputs": dict(outputs),
+                    "_join_operation_entry": dict(entry),
+                }
+                for resource_key in resource_keys:
+                    if resource_key in entry:
+                        output_entry[resource_key] = entry[resource_key]
+                output_entries_by_name[output_name] = output_entry
+                join_output_to_operation[output_name] = name
+
+            join_entry = dict(entry)
+            join_entry["_join_outputs"] = dict(outputs)
+            join_entries_by_name[name] = join_entry
+            join_outputs_by_operation[name] = dict(outputs)
+            for alias, output_name in outputs.items():
+                output_entries_by_name[output_name]["_join_outputs"] = dict(outputs)
+            continue
+
+        if name in normal_entries_by_name:
             raise BuilderError(f"Duplicate assembly name '{name}'")
-        by_name[str(name)] = dict(entry)
+        if name in join_entries_by_name:
+            raise BuilderError(
+                f"Assembly name '{name}' collides with a join operation name"
+            )
+        if name in output_entries_by_name:
+            raise BuilderError(
+                f"Assembly name '{name}' collides with a join output assembly name"
+            )
+        normal_entries_by_name[name] = entry
+
+    output_collisions = sorted(set(output_entries_by_name) & set(join_entries_by_name))
+    if output_collisions:
+        raise BuilderError(
+            "Join output assembly name(s) collide with join operation name(s): "
+            + ", ".join(output_collisions)
+        )
+
+    for operation_name, outputs in join_outputs_by_operation.items():
+        join_entry = join_entries_by_name[operation_name]
+        for alias, output_name in outputs.items():
+            output_entries_by_name[output_name] = {
+                **output_entries_by_name[output_name],
+                "_join_outputs": dict(outputs),
+                "_join_operation_entry": dict(join_entry),
+            }
+
+    public_entries_by_name: Dict[str, Dict[str, Any]] = {}
+    public_entries_by_name.update(normal_entries_by_name)
+    public_entries_by_name.update(output_entries_by_name)
+
+    for operation_name, outputs in join_outputs_by_operation.items():
+        join_entry = join_entries_by_name[operation_name]
+        injections = resolve_injected_parts_config(join_entry)
+        if not injections:
+            raise BuilderError(
+                f"Join operation '{operation_name}' must define inject_parts"
+            )
+        for kwarg_name, spec in injections.items():
+            if spec["artifact"] != "assembly":
+                raise BuilderError(
+                    f"Join operation '{operation_name}' inject_parts.{kwarg_name} must inject the full assembly"
+                )
+            provider = spec["assembly"]
+            if provider not in public_entries_by_name:
+                raise BuilderError(
+                    f"Join operation '{operation_name}' injects unknown assembly '{provider}'"
+                )
+
+        own_outputs = set(outputs.values())
+        for dependency in dependency_names(join_entry):
+            if dependency not in public_entries_by_name:
+                raise BuilderError(
+                    f"Join operation '{operation_name}' depends on unknown assembly '{dependency}'"
+                )
+            if dependency in own_outputs:
+                raise BuilderError(
+                    f"Join operation '{operation_name}' must not depend on its own output '{dependency}'"
+                )
+
+    public_entries = [dict(entry) for entry in normal_entries_by_name.values()] + [
+        dict(entry) for entry in output_entries_by_name.values()
+    ]
+    return (
+        public_entries,
+        public_entries_by_name,
+        join_entries_by_name,
+        join_output_to_operation,
+        join_outputs_by_operation,
+    )
+
+
+def assemblies_by_name(
+    assemblies: Sequence[Mapping[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    _, by_name, _, _, _ = _normalize_join_declarations(assemblies)
     return by_name
 
 
@@ -132,6 +354,8 @@ def builder_section(
     resource_data: Mapping[str, Any],
     section_name: str,
     config_data: Optional[Mapping[str, Any]] = None,
+    *,
+    output_alias: Optional[str] = None,
 ) -> Dict[str, Any]:
     defaults = _builder_defaults(config_data)
     default_section = defaults.get(section_name, {})
@@ -145,6 +369,25 @@ def builder_section(
         resource_builder_data = {}
     if not isinstance(resource_builder_data, Mapping):
         raise BuilderError("Builder section must be a mapping")
+
+    if output_alias is not None:
+        raw_outputs = resource_builder_data.get("Outputs", {})
+        if raw_outputs is None:
+            raw_outputs = {}
+        if not isinstance(raw_outputs, Mapping):
+            raise BuilderError("Builder.Outputs must be a mapping")
+        raw_output = raw_outputs.get(output_alias)
+        if raw_output is not None:
+            if not isinstance(raw_output, Mapping):
+                raise BuilderError(f"Builder.Outputs.{output_alias} must be a mapping")
+            output_section = raw_output.get(section_name)
+            if output_section is not None:
+                if not isinstance(output_section, Mapping):
+                    raise BuilderError(
+                        f"Builder.Outputs.{output_alias}.{section_name} must be a mapping"
+                    )
+                return _merge_mapping(default_section, output_section)
+
     section = resource_builder_data.get(section_name, {})
     if section is None:
         section = {}
@@ -157,9 +400,18 @@ def scene_dependency_names(
     resource_data: Mapping[str, Any],
     mode: str,
     config_data: Optional[Mapping[str, Any]],
+    *,
+    output_alias: Optional[str] = None,
+    join_outputs: Optional[Mapping[str, str]] = None,
+    join_inputs: Optional[Mapping[str, str]] = None,
 ) -> List[str]:
     section_name = "Visualization" if mode == "visualization" else "Production"
-    section = builder_section(resource_data, section_name, config_data)
+    section = builder_section(
+        resource_data,
+        section_name,
+        config_data,
+        output_alias=output_alias,
+    )
     parts = section.get("parts")
     if not isinstance(parts, list):
         return []
@@ -169,11 +421,30 @@ def scene_dependency_names(
         if not isinstance(rule, Mapping):
             raise BuilderError(f"Builder.{section_name}.parts items must be mappings")
         source = str(rule.get("source", "self"))
-        if source not in {"dependencies", "dependency"}:
-            continue
         dependency_name = rule.get("assembly")
-        if dependency_name:
-            dependency_names_set.add(str(dependency_name))
+        if source in {"dependencies", "dependency"}:
+            if dependency_name:
+                dependency_names_set.add(str(dependency_name))
+            continue
+        if source == "output":
+            if dependency_name:
+                output_name = (join_outputs or {}).get(str(dependency_name))
+                if output_name:
+                    dependency_names_set.add(str(output_name))
+            else:
+                dependency_names_set.update(
+                    str(name) for name in (join_outputs or {}).values()
+                )
+            continue
+        if source in {"injected", "inject"}:
+            if dependency_name:
+                input_name = (join_inputs or {}).get(str(dependency_name))
+                if input_name:
+                    dependency_names_set.add(str(input_name))
+            else:
+                dependency_names_set.update(
+                    str(name) for name in (join_inputs or {}).values()
+                )
     return sorted(dependency_names_set)
 
 
@@ -695,6 +966,9 @@ def _compute_placement_build_dependencies(
         return referenced
 
     implicit_dependencies: Dict[str, List[str]] = {name: [] for name in assemblies}
+    public_assembly_names = set(
+        model.assemblies_by_name if model is not None else assemblies
+    )
     for assembly_name, entry in assemblies.items():
         injected_assemblies = {
             spec["assembly"]
@@ -704,15 +978,38 @@ def _compute_placement_build_dependencies(
         if not injected_assemblies:
             continue
 
-        boundary_index = model.first_moving_alignment_index.get(assembly_name)
-        if boundary_index is None:
-            boundary_index = model.first_involved_alignment_index.get(assembly_name)
+        output_names: Sequence[str] = ()
+        if _is_join_entry(entry):
+            output_names = tuple(
+                str(name)
+                for name in model.join_outputs_by_operation.get(
+                    str(entry["name"]),
+                    {},
+                ).values()
+            )
+        else:
+            output_names = (assembly_name,)
+
+        boundary_candidates = [
+            index
+            for output_name in output_names
+            for index in (
+                model.first_moving_alignment_index.get(output_name),
+                model.first_involved_alignment_index.get(output_name),
+            )
+            if index is not None
+        ]
+        boundary_index = min(boundary_candidates) if boundary_candidates else None
+        if boundary_index is None and _is_join_entry(entry):
+            boundary_index = (
+                max((step.index for step in placement_steps), default=-1) + 1
+            )
         if boundary_index is None:
             continue
 
         required_prefix_index: Optional[int] = None
         rigidity_graph = nx.Graph()
-        rigidity_graph.add_nodes_from(assemblies)
+        rigidity_graph.add_nodes_from(public_assembly_names)
 
         for step in placement_steps:
             if step.index >= boundary_index:
@@ -753,15 +1050,38 @@ def build_graph_model(
     assemblies: Sequence[Mapping[str, Any]],
     config_data: Optional[Mapping[str, Any]] = None,
 ) -> BuilderGraphModel:
-    by_name = assemblies_by_name(assemblies)
+    (
+        public_assemblies,
+        by_name,
+        join_operations_by_name,
+        join_output_to_operation,
+        join_outputs_by_operation,
+    ) = _normalize_join_declarations(assemblies)
+
+    build_items_by_name: Dict[str, Dict[str, Any]] = {
+        name: dict(entry) for name, entry in by_name.items()
+    }
+    for operation_name, entry in join_operations_by_name.items():
+        build_items_by_name[join_node_name(operation_name)] = dict(entry)
 
     assembly_dependency_graph = nx.DiGraph()
     injection_graph = nx.MultiDiGraph()
     for assembly_name in sorted(by_name):
         assembly_dependency_graph.add_node(assembly_name)
         injection_graph.add_node(assembly_name)
+    for operation_name in sorted(join_operations_by_name):
+        assembly_dependency_graph.add_node(join_node_name(operation_name))
 
     for assembly_name, entry in by_name.items():
+        if _is_joined_output_entry(entry):
+            operation_name = str(entry["join_operation"])
+            _add_edge_kind(
+                assembly_dependency_graph,
+                join_node_name(operation_name),
+                assembly_name,
+                "join_output",
+            )
+            continue
         for dependency in dependency_names(entry):
             if dependency not in by_name:
                 raise BuilderError(
@@ -792,6 +1112,30 @@ def build_graph_model(
                 artifact=spec["artifact"],
             )
 
+    for operation_name, entry in join_operations_by_name.items():
+        operation_node = join_node_name(operation_name)
+        for dependency in dependency_names(entry):
+            _add_edge_kind(
+                assembly_dependency_graph,
+                dependency,
+                operation_node,
+                "declared_dependency",
+            )
+        for kwarg_name, spec in resolve_injected_parts_config(entry).items():
+            provider = spec["assembly"]
+            _add_edge_kind(
+                assembly_dependency_graph,
+                provider,
+                operation_node,
+                "join_injection",
+            )
+            injection_graph.add_edge(
+                provider,
+                operation_node,
+                kwarg_name=kwarg_name,
+                artifact=spec["artifact"],
+            )
+
     placement_steps = _build_placement_steps(by_name, config_data)
     (
         placement_execution_dag,
@@ -801,7 +1145,7 @@ def build_graph_model(
     ) = _build_placement_execution_dag(placement_steps)
 
     partial_model = BuilderGraphModel(
-        assemblies=[dict(item) for item in assemblies],
+        assemblies=[dict(item) for item in public_assemblies],
         assemblies_by_name=by_name,
         assembly_dependency_graph=assembly_dependency_graph,
         injection_graph=injection_graph,
@@ -810,14 +1154,18 @@ def build_graph_model(
         first_moving_alignment_index=first_moving_alignment_index,
         first_involved_alignment_index=first_involved_alignment_index,
         placement_build_dependencies={},
+        build_items_by_name=build_items_by_name,
+        join_operations_by_name=join_operations_by_name,
+        join_output_to_operation=join_output_to_operation,
+        join_outputs_by_operation=join_outputs_by_operation,
     )
     placement_build_dependencies = _compute_placement_build_dependencies(
-        by_name,
+        build_items_by_name,
         placement_steps,
         model=partial_model,
     )
     return BuilderGraphModel(
-        assemblies=[dict(item) for item in assemblies],
+        assemblies=[dict(item) for item in public_assemblies],
         assemblies_by_name=by_name,
         assembly_dependency_graph=assembly_dependency_graph,
         injection_graph=injection_graph,
@@ -826,6 +1174,10 @@ def build_graph_model(
         first_moving_alignment_index=first_moving_alignment_index,
         first_involved_alignment_index=first_involved_alignment_index,
         placement_build_dependencies=placement_build_dependencies,
+        build_items_by_name=build_items_by_name,
+        join_operations_by_name=join_operations_by_name,
+        join_output_to_operation=join_output_to_operation,
+        join_outputs_by_operation=join_outputs_by_operation,
     )
 
 
@@ -851,9 +1203,20 @@ def _replace_placement_steps(
         first_moving_alignment_index=first_moving_alignment_index,
         first_involved_alignment_index=first_involved_alignment_index,
         placement_build_dependencies={},
+        build_items_by_name={
+            name: dict(entry) for name, entry in model.build_items_by_name.items()
+        },
+        join_operations_by_name={
+            name: dict(entry) for name, entry in model.join_operations_by_name.items()
+        },
+        join_output_to_operation=dict(model.join_output_to_operation),
+        join_outputs_by_operation={
+            name: dict(outputs)
+            for name, outputs in model.join_outputs_by_operation.items()
+        },
     )
     placement_build_dependencies = _compute_placement_build_dependencies(
-        partial_model.assemblies_by_name,
+        partial_model.build_items_by_name,
         placement_steps,
         model=partial_model,
     )
@@ -869,6 +1232,17 @@ def _replace_placement_steps(
         first_moving_alignment_index=first_moving_alignment_index,
         first_involved_alignment_index=first_involved_alignment_index,
         placement_build_dependencies=placement_build_dependencies,
+        build_items_by_name={
+            name: dict(entry) for name, entry in model.build_items_by_name.items()
+        },
+        join_operations_by_name={
+            name: dict(entry) for name, entry in model.join_operations_by_name.items()
+        },
+        join_output_to_operation=dict(model.join_output_to_operation),
+        join_outputs_by_operation={
+            name: dict(outputs)
+            for name, outputs in model.join_outputs_by_operation.items()
+        },
     )
 
 
@@ -965,6 +1339,17 @@ def restrict_to_active_assemblies(
         first_moving_alignment_index=first_moving_alignment_index,
         first_involved_alignment_index=first_involved_alignment_index,
         placement_build_dependencies=filtered_placement_build_dependencies,
+        build_items_by_name={
+            name: dict(entry) for name, entry in model.build_items_by_name.items()
+        },
+        join_operations_by_name={
+            name: dict(entry) for name, entry in model.join_operations_by_name.items()
+        },
+        join_output_to_operation=dict(model.join_output_to_operation),
+        join_outputs_by_operation={
+            name: dict(outputs)
+            for name, outputs in model.join_outputs_by_operation.items()
+        },
     )
 
 
@@ -987,7 +1372,7 @@ def expand_with_dependents(
         expanded.add(current)
         pending.extend(sorted(model.assembly_dependency_graph.successors(current)))
 
-    return sorted(expanded)
+    return sorted(name for name in expanded if name in model.assemblies_by_name)
 
 
 def _canonicalize_cycle(cycle: Sequence[str]) -> tuple[str, ...]:
@@ -1051,6 +1436,15 @@ def resolve_build_generation_names(
     if missing:
         raise BuilderError(f"Unknown assembly name(s): {', '.join(missing)}")
 
+    expanded_requested: set[str] = set(requested)
+    for assembly_name in requested:
+        operation_name = model.join_output_to_operation.get(assembly_name)
+        if operation_name is None:
+            continue
+        expanded_requested.update(
+            model.join_outputs_by_operation[operation_name].values()
+        )
+
     dependency_graph = nx.DiGraph()
     dependency_graph.add_nodes_from(model.assembly_dependency_graph.nodes)
     dependency_graph.add_edges_from(model.assembly_dependency_graph.edges(data=True))
@@ -1068,9 +1462,15 @@ def resolve_build_generation_names(
             )
 
     required_names: set[str] = set()
-    for assembly_name in requested:
+    for assembly_name in sorted(expanded_requested):
         required_names.add(assembly_name)
         required_names.update(nx.ancestors(dependency_graph, assembly_name))
+
+    for node_name in list(required_names):
+        if not is_join_node_name(node_name):
+            continue
+        operation_name = join_operation_name_from_node(node_name)
+        required_names.update(model.join_outputs_by_operation[operation_name].values())
 
     subgraph = dependency_graph.subgraph(sorted(required_names)).copy()
     try:

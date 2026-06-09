@@ -55,6 +55,10 @@ _COMPOSITE_ASSEMBLY_GENERATOR_PATH = (
     "shellforgepy.builder.builder._build_composite_assembly"
 )
 
+_JOINED_ASSEMBLY_GENERATOR_PATH = (
+    "shellforgepy.builder.builder._build_joined_assembly_operation"
+)
+
 _LAST_BUILD_ARTIFACT_POOL: Optional["_BuildArtifactPool"] = None
 
 
@@ -105,6 +109,21 @@ class _ResolvedAssembly:
     is_composite: bool = False
     file_dependencies: List[Dict[str, str]] = field(default_factory=list)
     architecture: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class _ResolvedJoinOperation:
+    name: str
+    entry: Dict[str, Any]
+    resource_path: Path
+    resource_data: Dict[str, Any]
+    public_parameters: Dict[str, Any]
+    joiner_kwargs: Dict[str, Any]
+    joiner_path: str
+    logical_part_name: str
+    outputs: Dict[str, str]
+    file_dependencies: List[Dict[str, str]] = field(default_factory=list)
+    normalized_joiner_spec: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -854,6 +873,36 @@ def _dependency_names(entry: Mapping[str, Any]) -> List[str]:
     return builder_graph_model.dependency_names(entry)
 
 
+def _entry_kind(entry: Mapping[str, Any]) -> str:
+    return str(entry.get("kind", "assembly")).strip().lower()
+
+
+def _is_join_entry(entry: Mapping[str, Any]) -> bool:
+    return _entry_kind(entry) == "join"
+
+
+def _is_joined_output_entry(entry: Mapping[str, Any]) -> bool:
+    return _entry_kind(entry) == "joined_output"
+
+
+def _join_outputs_for_entry(entry: Mapping[str, Any]) -> Dict[str, str]:
+    raw_outputs = entry.get("_join_outputs")
+    if raw_outputs is None:
+        raw_outputs = entry.get("outputs", {})
+    if not isinstance(raw_outputs, Mapping):
+        raise BuilderError(
+            f"Join operation '{entry.get('name')}' must define outputs as a mapping"
+        )
+    return {str(alias): str(name) for alias, name in raw_outputs.items()}
+
+
+def _join_inputs_for_entry(entry: Mapping[str, Any]) -> Dict[str, str]:
+    return {
+        alias: spec["assembly"]
+        for alias, spec in _resolve_injected_parts_config(entry).items()
+    }
+
+
 def _placement_build_dependencies(
     assemblies: Sequence[Mapping[str, Any]],
     config_data: Optional[Mapping[str, Any]] = None,
@@ -879,7 +928,7 @@ def _resolve_build_generations(
     model = graph_model or builder_graph_model.build_graph_model(
         assemblies, config_data
     )
-    by_name = model.assemblies_by_name
+    by_name = model.build_items_by_name or model.assemblies_by_name
     generations = builder_graph_model.resolve_build_generation_names(
         model, selected_names
     )
@@ -1021,6 +1070,118 @@ def _select_part_definition(
     raise BuilderError(
         f"Assembly resource {resource_path} defines multiple parts; specify logical_part_name for '{entry['name']}'"
     )
+
+
+def _select_joiner_definition(
+    resource_path: Path,
+    resource_data: Mapping[str, Any],
+    entry: Mapping[str, Any],
+) -> tuple[str, Dict[str, Any]]:
+    parts = resource_data.get("Parts")
+    if not isinstance(parts, Mapping) or not parts:
+        raise BuilderError(f"Joiner resource {resource_path} does not define any Parts")
+
+    explicit_name = (
+        entry.get("logical_part_name")
+        or entry.get("part_name")
+        or entry.get("resource_name")
+    )
+    if explicit_name:
+        if explicit_name not in parts:
+            raise BuilderError(
+                f"Joiner resource {resource_path} has no part named '{explicit_name}'"
+            )
+        return str(explicit_name), dict(parts[explicit_name])
+
+    joiner_definitions = [
+        (str(logical_name), dict(definition))
+        for logical_name, definition in parts.items()
+        if isinstance(definition, Mapping)
+        and str(definition.get("Type")) == "Shellforgepy::AssemblyJoiner"
+    ]
+    if len(joiner_definitions) == 1:
+        return joiner_definitions[0]
+    if not joiner_definitions:
+        raise BuilderError(
+            f"Joiner resource {resource_path} must define a Shellforgepy::AssemblyJoiner part"
+        )
+    raise BuilderError(
+        f"Joiner resource {resource_path} defines multiple Shellforgepy::AssemblyJoiner parts; specify logical_part_name for '{entry['name']}'"
+    )
+
+
+def _validate_joiner_outputs_builder_section(
+    resource_path: Path,
+    resource_data: Mapping[str, Any],
+    *,
+    output_aliases: Iterable[str],
+    injected_aliases: Iterable[str],
+) -> None:
+    resource_builder_data = resource_data.get("Builder", {})
+    if resource_builder_data is None:
+        return
+    if not isinstance(resource_builder_data, Mapping):
+        raise BuilderError(f"Builder section in {resource_path} must be a mapping")
+    raw_outputs = resource_builder_data.get("Outputs")
+    if raw_outputs is None:
+        return
+    if not isinstance(raw_outputs, Mapping):
+        raise BuilderError(f"Builder.Outputs in {resource_path} must be a mapping")
+
+    output_alias_set = {str(alias) for alias in output_aliases}
+    injected_alias_set = {str(alias) for alias in injected_aliases}
+    unknown_output_sections = sorted(
+        set(str(alias) for alias in raw_outputs) - output_alias_set
+    )
+    if unknown_output_sections:
+        raise BuilderError(
+            f"Builder.Outputs in {resource_path} references unknown output alias(es): "
+            + ", ".join(unknown_output_sections)
+        )
+
+    for output_alias, raw_output_section in raw_outputs.items():
+        if not isinstance(raw_output_section, Mapping):
+            raise BuilderError(
+                f"Builder.Outputs.{output_alias} in {resource_path} must be a mapping"
+            )
+        unsupported = set(raw_output_section) - {"Visualization", "Production"}
+        if unsupported:
+            raise BuilderError(
+                f"Builder.Outputs.{output_alias} in {resource_path} has unsupported section(s): "
+                + ", ".join(sorted(str(item) for item in unsupported))
+            )
+        for section_name in ("Visualization", "Production"):
+            section = raw_output_section.get(section_name)
+            if section is None:
+                continue
+            if not isinstance(section, Mapping):
+                raise BuilderError(
+                    f"Builder.Outputs.{output_alias}.{section_name} in {resource_path} must be a mapping"
+                )
+            parts = section.get("parts")
+            if parts is None:
+                continue
+            if not isinstance(parts, list):
+                raise BuilderError(
+                    f"Builder.Outputs.{output_alias}.{section_name}.parts in {resource_path} must be a list"
+                )
+            for rule in parts:
+                if not isinstance(rule, Mapping):
+                    raise BuilderError(
+                        f"Builder.Outputs.{output_alias}.{section_name}.parts items in {resource_path} must be mappings"
+                    )
+                source = str(rule.get("source", "self"))
+                target_alias = rule.get("assembly")
+                if source == "output" and target_alias is not None:
+                    if str(target_alias) not in output_alias_set:
+                        raise BuilderError(
+                            f"Builder.Outputs.{output_alias}.{section_name} references unknown output alias '{target_alias}'"
+                        )
+                if source in {"injected", "inject"} and target_alias is not None:
+                    if str(target_alias) not in injected_alias_set:
+                        raise BuilderError(
+                            f"Builder.Outputs.{output_alias}.{section_name} references unknown injected alias '{target_alias}'"
+                        )
 
 
 def _collection_assembly_enabled(
@@ -1582,6 +1743,108 @@ def _resolve_assembly(
     )
 
 
+def _resolve_join_operation(
+    config_path: Path,
+    entry: Mapping[str, Any],
+    resolution_context: Mapping[str, Any],
+) -> _ResolvedJoinOperation:
+    resource_path = _discover_resource_file(config_path, entry)
+    resource_data = _load_yaml(resource_path)
+    if _collection_assembly_enabled(resource_path, resource_data):
+        raise BuilderError(
+            f"Joiner resource {resource_path} cannot declare Builder.Collection"
+        )
+
+    logical_part_name, part_definition = _select_joiner_definition(
+        resource_path,
+        resource_data,
+        entry,
+    )
+    if str(part_definition.get("Type")) != "Shellforgepy::AssemblyJoiner":
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} must have Type Shellforgepy::AssemblyJoiner"
+        )
+
+    parameter_definitions = resource_data.get("Parameters", {})
+    if not isinstance(parameter_definitions, Mapping):
+        raise BuilderError(f"Parameters section in {resource_path} must be a mapping")
+
+    parameter_overrides = entry.get("parameters", {})
+    if not isinstance(parameter_overrides, Mapping):
+        raise BuilderError(
+            f"Parameters for join operation '{entry['name']}' must be a mapping"
+        )
+
+    public_parameters = _resolve_public_parameters(
+        parameter_definitions,
+        parameter_overrides,
+        resolution_context,
+        assembly_name=str(entry["name"]),
+        config_path=config_path,
+        resource_path=resource_path,
+    )
+
+    properties = part_definition.get("Properties", {})
+    if not isinstance(properties, Mapping):
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} has invalid Properties"
+        )
+    if "Generator" in properties:
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} cannot have both Joiner and Generator properties"
+        )
+    if "Composite" in properties:
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} cannot have both Joiner and Composite properties"
+        )
+
+    joiner_path = properties.get("Joiner")
+    if not joiner_path:
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} is missing Properties.Joiner"
+        )
+
+    joiner_properties = properties.get("Properties", {})
+    if not isinstance(joiner_properties, Mapping):
+        raise BuilderError(
+            f"Part '{logical_part_name}' in {resource_path} has invalid Properties.Properties section"
+        )
+    joiner_kwargs = _resolve_inline_mapping(joiner_properties, public_parameters)
+    file_dependencies = _normalize_file_dependencies(
+        properties.get("FileDependencies"),
+        logical_part_name=logical_part_name,
+        resource_path=resource_path,
+    )
+    outputs = _join_outputs_for_entry(entry)
+    injected_parts = _resolve_injected_parts_config(entry)
+    _validate_joiner_outputs_builder_section(
+        resource_path,
+        resource_data,
+        output_aliases=outputs,
+        injected_aliases=injected_parts,
+    )
+    normalized_joiner_spec = {
+        "schema_version": 1,
+        "joiner_path": str(joiner_path),
+        "joiner_kwargs": deepcopy(joiner_kwargs),
+        "outputs": dict(outputs),
+    }
+
+    return _ResolvedJoinOperation(
+        name=str(entry["name"]),
+        entry=dict(entry),
+        resource_path=resource_path,
+        resource_data=resource_data,
+        public_parameters=public_parameters,
+        joiner_kwargs=joiner_kwargs,
+        joiner_path=str(joiner_path),
+        logical_part_name=logical_part_name,
+        outputs=outputs,
+        file_dependencies=file_dependencies,
+        normalized_joiner_spec=normalized_joiner_spec,
+    )
+
+
 def _build_collection_assembly() -> Any:
     from shellforgepy.construct.leader_followers_cutters_part import (
         LeaderFollowersCuttersPart,
@@ -1872,6 +2135,12 @@ def _build_composite_assembly(**kwargs: Any) -> Any:
     return result
 
 
+def _build_joined_assembly_operation(**kwargs: Any) -> Any:
+    raise BuilderError(
+        "_build_joined_assembly_operation is a metadata marker and is not called directly"
+    )
+
+
 def _load_generator_callable(generator_path: str) -> Callable[..., Any]:
     if "." not in generator_path:
         raise BuilderError(
@@ -1885,12 +2154,13 @@ def _load_generator_callable(generator_path: str) -> Callable[..., Any]:
         if module_spec and module_spec.origin and module_spec.origin.endswith(".py"):
             pyc_path = Path(importlib.util.cache_from_source(module_spec.origin))
             pyc_path.unlink(missing_ok=True)
-        package_name = module_name
-        while "." in package_name:
+        if not module_name.startswith("shellforgepy."):
+            package_name = module_name
+            while "." in package_name:
+                sys.modules.pop(package_name, None)
+                package_name = package_name.rsplit(".", 1)[0]
             sys.modules.pop(package_name, None)
-            package_name = package_name.rsplit(".", 1)[0]
-        sys.modules.pop(package_name, None)
-        sys.modules.pop(module_name, None)
+            sys.modules.pop(module_name, None)
         module = importlib.import_module(module_name)
     except ImportError as exc:
         raise BuilderError(
@@ -2043,6 +2313,29 @@ def _raise_missing_generator_arguments_error(
     )
 
 
+def _raise_missing_joiner_arguments_error(
+    *,
+    joiner: Callable[..., Any],
+    resolved: _ResolvedJoinOperation,
+    config_file: Path,
+    provided_kwargs: Mapping[str, Any],
+) -> None:
+    missing_argument_names = _missing_required_generator_arguments(
+        joiner,
+        provided_kwargs,
+    )
+    if not missing_argument_names:
+        return
+
+    raise BuilderError(
+        f"Could not call joiner '{resolved.joiner_path}' for join operation "
+        f"'{resolved.name}' because required keyword argument(s) were not provided: "
+        f"{', '.join(missing_argument_names)}. Top-level config {config_file}. "
+        f"Resource file {resolved.resource_path}. Provide them through Parameters, "
+        "Properties.Properties, inject_parts, or builder context."
+    )
+
+
 def _auto_injected_context_kwargs(
     generator: Callable[..., Any],
     builder_context: Mapping[str, Any],
@@ -2132,18 +2425,28 @@ def _version_inputs(
     generator_path: str,
     resource_path: Path,
     composite_spec: Optional[Mapping[str, Any]] = None,
+    joiner_spec: Optional[Mapping[str, Any]] = None,
     file_dependencies: Optional[Sequence[Mapping[str, str]]] = None,
 ) -> Dict[str, Any]:
     inputs: Dict[str, Any] = {
         "generator_path": generator_path,
         "resource_path": str(resource_path.resolve()),
     }
-    if composite_spec is None:
+    if composite_spec is not None and joiner_spec is not None:
+        raise BuilderError(
+            "Version inputs cannot include both composite and joiner specs"
+        )
+    if composite_spec is None and joiner_spec is None:
         inputs["resource_sha256"] = _file_sha256(resource_path.resolve())
-    else:
+    elif composite_spec is not None:
         composite_spec_payload = _stable_json_dumps(composite_spec)
         inputs["composite_spec_sha256"] = hashlib.sha256(
             composite_spec_payload.encode("utf-8")
+        ).hexdigest()
+    else:
+        joiner_spec_payload = _stable_json_dumps(joiner_spec)
+        inputs["joiner_spec_sha256"] = hashlib.sha256(
+            joiner_spec_payload.encode("utf-8")
         ).hexdigest()
     generator_source_path = _generator_source_path(generator, generator_path)
     if generator_source_path is not None:
@@ -2830,7 +3133,12 @@ def _scene_metrics_assembly_names(
             Path(metadata["resource_file"]).expanduser().resolve()
         )
         for dependency_name in reversed(
-            _scene_dependency_names(resource_data, mode, config_data)
+            _scene_dependency_names(
+                resource_data,
+                mode,
+                config_data,
+                metadata=metadata,
+            )
         ):
             if dependency_name not in seen:
                 pending.append(dependency_name)
@@ -3479,6 +3787,8 @@ def _builder_section(
     resource_data: Mapping[str, Any],
     section_name: str,
     config_data: Optional[Mapping[str, Any]] = None,
+    *,
+    metadata: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     defaults = _builder_defaults(config_data)
     default_section = defaults.get(section_name, {})
@@ -3492,6 +3802,28 @@ def _builder_section(
         resource_builder_data = {}
     if not isinstance(resource_builder_data, Mapping):
         raise BuilderError("Builder section must be a mapping")
+
+    output_alias = (metadata or {}).get("join_output_scene_alias") or (
+        metadata or {}
+    ).get("join_output_alias")
+    if output_alias:
+        raw_outputs = resource_builder_data.get("Outputs", {})
+        if raw_outputs is None:
+            raw_outputs = {}
+        if not isinstance(raw_outputs, Mapping):
+            raise BuilderError("Builder.Outputs must be a mapping")
+        output_section_root = raw_outputs.get(str(output_alias))
+        if output_section_root is not None:
+            if not isinstance(output_section_root, Mapping):
+                raise BuilderError(f"Builder.Outputs.{output_alias} must be a mapping")
+            output_section = output_section_root.get(section_name)
+            if output_section is not None:
+                if not isinstance(output_section, Mapping):
+                    raise BuilderError(
+                        f"Builder.Outputs.{output_alias}.{section_name} must be a mapping"
+                    )
+                return _merge_mapping(default_section, output_section)
+
     section = resource_builder_data.get(section_name, {})
     if section is None:
         section = {}
@@ -3522,7 +3854,12 @@ def _scene_rules_for_mode(
     config_data: Optional[Mapping[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     section_name = "Visualization" if mode == "visualization" else "Production"
-    section = _builder_section(resource_data, section_name, config_data)
+    section = _builder_section(
+        resource_data,
+        section_name,
+        config_data,
+        metadata=metadata,
+    )
     parts = section.get("parts")
     if parts is None:
         rules = _default_scene_rules(metadata, mode)
@@ -3788,7 +4125,12 @@ def _known_assembly_names(
 ) -> List[str]:
     names = set(str(name) for name in built_results_by_name)
     if config_data is not None:
-        names.update(str(entry["name"]) for entry in _get_assemblies(config_data))
+        names.update(
+            builder_graph_model.build_graph_model(
+                _get_assemblies(config_data),
+                config_data,
+            ).assemblies_by_name
+        )
     return sorted(names, key=len, reverse=True)
 
 
@@ -4032,8 +4374,33 @@ def _scene_dependency_names(
     resource_data: Mapping[str, Any],
     mode: str,
     config_data: Optional[Mapping[str, Any]],
+    *,
+    metadata: Optional[Mapping[str, Any]] = None,
+    entry: Optional[Mapping[str, Any]] = None,
 ) -> List[str]:
-    return builder_graph_model.scene_dependency_names(resource_data, mode, config_data)
+    output_alias = None
+    join_outputs = None
+    join_inputs = None
+    if metadata is not None:
+        output_alias = metadata.get("join_output_scene_alias") or metadata.get(
+            "join_output_alias"
+        )
+        join_outputs = metadata.get("join_output_assembly_names")
+        join_inputs = metadata.get("join_inputs")
+    if entry is not None and _is_joined_output_entry(entry):
+        output_alias = entry.get("join_output_alias")
+        join_outputs = entry.get("_join_outputs")
+        operation_entry = entry.get("_join_operation_entry")
+        if isinstance(operation_entry, Mapping):
+            join_inputs = _join_inputs_for_entry(operation_entry)
+    return builder_graph_model.scene_dependency_names(
+        resource_data,
+        mode,
+        config_data,
+        output_alias=str(output_alias) if output_alias else None,
+        join_outputs=join_outputs,
+        join_inputs=join_inputs,
+    )
 
 
 def _dependency_metadata_map(
@@ -4348,6 +4715,36 @@ def _materialize_rule_parts(
 
         if source in {"self", "assembly"}:
             targets = [metadata]
+        elif source == "output":
+            output_names = metadata.get("join_output_assembly_names")
+            if not isinstance(output_names, Mapping):
+                raise BuilderError(
+                    "Scene source 'output' is only supported for joined outputs"
+                )
+            output_alias = rule.get("assembly")
+            if output_alias:
+                output_assembly_name = output_names.get(str(output_alias))
+                if output_assembly_name is None:
+                    raise BuilderError(
+                        f"Unsupported joined output selector '{output_alias}'"
+                    )
+                targets = [
+                    _dependency_metadata_for_assembly(
+                        str(output_assembly_name),
+                        built_results_by_name,
+                        repository_dir,
+                    )
+                ]
+            else:
+                targets = [
+                    _dependency_metadata_for_assembly(
+                        str(output_assembly_name),
+                        built_results_by_name,
+                        repository_dir,
+                    )
+                    for alias, output_assembly_name in sorted(output_names.items())
+                    if str(alias) != str(metadata.get("join_output_alias"))
+                ]
         elif source in {"injected", "inject"}:
             injected_targets_by_key: Dict[str, Dict[str, Any]] = {}
             injected_targets_in_order: List[Dict[str, Any]] = []
@@ -5734,7 +6131,12 @@ def _resolve_process_data(
         config_data=config_data,
     )
 
-    production_section = _builder_section(resource_data, "Production", config_data)
+    production_section = _builder_section(
+        resource_data,
+        "Production",
+        config_data,
+        metadata=metadata,
+    )
     resolved = apply_process_data_spec(
         None,
         process_data_spec_from_mapping(production_section),
@@ -5811,7 +6213,12 @@ def _resolve_plate_process_data_map(
             }
         return normalized
 
-    production_section = _builder_section(resource_data, "Production", config_data)
+    production_section = _builder_section(
+        resource_data,
+        "Production",
+        config_data,
+        metadata=metadata,
+    )
     arrange = production_section.get("arrange", {})
     if arrange is None:
         return {}
@@ -5867,9 +6274,16 @@ def _resolve_export_options(
     resource_data: Mapping[str, Any],
     mode: str,
     config_data: Optional[Mapping[str, Any]] = None,
+    *,
+    metadata: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     section_name = "Visualization" if mode == "visualization" else "Production"
-    section = _builder_section(resource_data, section_name, config_data)
+    section = _builder_section(
+        resource_data,
+        section_name,
+        config_data,
+        metadata=metadata,
+    )
     arrange = section.get("arrange", {})
     if arrange is None:
         arrange = {}
@@ -5933,7 +6347,12 @@ def _resolve_preview_options(
     config_data: Optional[Mapping[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     section_name = "Visualization" if mode == "visualization" else "Production"
-    section = _builder_section(resource_data, section_name, config_data)
+    section = _builder_section(
+        resource_data,
+        section_name,
+        config_data,
+        metadata=metadata,
+    )
     preview = section.get("preview")
     if preview is None:
         return None
@@ -6009,6 +6428,7 @@ def _apply_prototype_arrange_overrides(
         selected_resource_data,
         "Production",
         config_data,
+        metadata=selected_metadata,
     )
     prototype = production_section.get("prototype")
     if prototype is None:
@@ -6119,6 +6539,7 @@ def _apply_prototype_configuration(
         selected_resource_data,
         "Production",
         config_data,
+        metadata=selected_metadata,
     )
     prototype = production_section.get("prototype")
     if prototype is None:
@@ -6338,6 +6759,370 @@ def _temporary_environment(values: Mapping[str, str]):
                 os.environ[key] = old_value
 
 
+def _dependency_metadata_records(
+    dependency_injections: Sequence[_DependencyInjection],
+) -> List[Dict[str, Any]]:
+    return [
+        {
+            "kwarg_name": injection.kwarg_name,
+            "assembly_name": injection.assembly_name,
+            "artifact": injection.artifact,
+            "source_parameter_hash": injection.source_parameter_hash,
+            "source_assembly_hash": injection.source_parameter_hash,
+            "source_version_inputs": injection.source_version_inputs,
+            "step_path": str(injection.step_path),
+            **(
+                {"source_placement_offset": list(injection.placement_offset)}
+                if injection.placement_offset != (0.0, 0.0, 0.0)
+                else {}
+            ),
+            **(
+                {
+                    "source_placement_transforms": list(
+                        injection.placement_transform_records
+                    )
+                }
+                if injection.placement_transform_records
+                else {}
+            ),
+        }
+        for injection in dependency_injections
+    ]
+
+
+def _join_declaration_payload(
+    resolved: _ResolvedJoinOperation,
+) -> Dict[str, Any]:
+    return {
+        "name": resolved.name,
+        "resource_file": str(resolved.resource_path.resolve()),
+        "logical_part_name": resolved.entry.get("logical_part_name"),
+        "parameters": deepcopy(dict(resolved.entry.get("parameters") or {})),
+        "depends_on": _dependency_names(resolved.entry),
+        "inject_parts": _resolve_injected_parts_config(resolved.entry),
+        "outputs": dict(resolved.outputs),
+    }
+
+
+def _join_output_parameter_hash(
+    *,
+    join_operation_hash: str,
+    output_alias: str,
+    output_assembly_name: str,
+) -> str:
+    return PartParameters(
+        {
+            "join_operation_hash": join_operation_hash,
+            "join_output_alias": output_alias,
+            "output_assembly_name": output_assembly_name,
+        }
+    ).parameters_hash()
+
+
+def _join_output_cache_paths(
+    repository_path: Path,
+    *,
+    output_assembly_name: str,
+    output_parameter_hash: str,
+) -> tuple[Path, Path]:
+    artifact_dir = (
+        repository_path
+        / output_assembly_name
+        / f"{output_assembly_name}__{output_parameter_hash}"
+    )
+    return (
+        artifact_dir,
+        _metadata_path(artifact_dir, output_assembly_name, output_parameter_hash),
+    )
+
+
+def _cached_join_output_metadata(
+    resolved: _ResolvedJoinOperation,
+    repository_path: Path,
+    *,
+    join_operation_hash: str,
+) -> Optional[Dict[str, Dict[str, Any]]]:
+    cached_by_alias: Dict[str, Dict[str, Any]] = {}
+    for output_alias, output_assembly_name in resolved.outputs.items():
+        output_hash = _join_output_parameter_hash(
+            join_operation_hash=join_operation_hash,
+            output_alias=output_alias,
+            output_assembly_name=output_assembly_name,
+        )
+        _, metadata_path = _join_output_cache_paths(
+            repository_path,
+            output_assembly_name=output_assembly_name,
+            output_parameter_hash=output_hash,
+        )
+        if not metadata_path.exists():
+            return None
+        metadata = _read_metadata(metadata_path)
+        if not _metadata_supports_current_schema(metadata):
+            return None
+        if metadata.get("join_operation_hash") != join_operation_hash:
+            return None
+        if metadata.get("join_operation_name") != resolved.name:
+            return None
+        if metadata.get("join_output_alias") != output_alias:
+            return None
+        cached_by_alias[output_alias] = metadata
+    return cached_by_alias
+
+
+def _validate_joiner_result(
+    *,
+    resolved: _ResolvedJoinOperation,
+    returned: Any,
+    dependency_injections: Sequence[_DependencyInjection],
+) -> Dict[str, Any]:
+    if not isinstance(returned, Mapping):
+        raise BuilderError(
+            f"Joiner '{resolved.joiner_path}' for operation '{resolved.name}' "
+            f"must return a mapping, got {type(returned).__name__}"
+        )
+    expected_aliases = set(resolved.outputs)
+    returned_aliases = set(str(alias) for alias in returned)
+    if returned_aliases != expected_aliases:
+        missing = sorted(expected_aliases - returned_aliases)
+        extra = sorted(returned_aliases - expected_aliases)
+        details = []
+        if missing:
+            details.append("missing: " + ", ".join(missing))
+        if extra:
+            details.append("extra: " + ", ".join(extra))
+        raise BuilderError(
+            f"Joiner '{resolved.joiner_path}' for operation '{resolved.name}' "
+            "returned aliases that do not match outputs (" + "; ".join(details) + ")"
+        )
+    injected_alias_by_id = {
+        id(injection.part): injection.kwarg_name for injection in dependency_injections
+    }
+    normalized: Dict[str, Any] = {}
+    for output_alias, generated_part in returned.items():
+        output_alias = str(output_alias)
+        injected_alias = injected_alias_by_id.get(id(generated_part))
+        if injected_alias is not None:
+            raise BuilderError(
+                f"Joiner '{resolved.joiner_path}' returned injected source "
+                f"'{injected_alias}' by identity for output '{output_alias}'; copy "
+                "the source before returning it"
+            )
+        _normalize_generated_part(generated_part)
+        normalized[output_alias] = generated_part
+    return normalized
+
+
+def _build_join_operation(
+    *,
+    config_file: Path,
+    project_root: Path,
+    repository_path: Path,
+    resolved: _ResolvedJoinOperation,
+    dependency_injections: Sequence[_DependencyInjection],
+    builder_context: Mapping[str, Any],
+    generation_index: int,
+    assembly_index: int,
+    built_results_by_name: Dict[str, Dict[str, Any]],
+    build_pool: _BuildArtifactPool,
+    results: List[Dict[str, Any]],
+    force: bool,
+) -> None:
+    joiner = _load_generator_callable(resolved.joiner_path)
+    injected_public_parameter_kwargs = _auto_injected_public_parameter_kwargs(
+        joiner,
+        resolved.public_parameters,
+        resolved.joiner_kwargs,
+    )
+    injected_context_kwargs = _auto_injected_context_kwargs(
+        joiner,
+        builder_context,
+        resolved.joiner_kwargs,
+    )
+    generator_context = injected_context_kwargs or None
+    legacy_context_payload = (
+        _generator_context_payload(builder_context)
+        if builder_context
+        and _generator_accepts_keyword_argument(joiner, "context")
+        and "context" not in resolved.joiner_kwargs
+        else None
+    )
+
+    version_inputs = _version_inputs(
+        generator=joiner,
+        generator_path=resolved.joiner_path,
+        resource_path=resolved.resource_path,
+        joiner_spec=resolved.normalized_joiner_spec,
+        file_dependencies=resolved.file_dependencies,
+    )
+    join_declaration_payload = _join_declaration_payload(resolved)
+    version_inputs["join_declaration_sha256"] = hashlib.sha256(
+        _stable_json_dumps(join_declaration_payload).encode("utf-8")
+    ).hexdigest()
+    join_operation_hash = _hash_with_dependencies(
+        {
+            **injected_public_parameter_kwargs,
+            **resolved.joiner_kwargs,
+        },
+        dependency_injections,
+        (
+            {
+                **injected_context_kwargs,
+                **(
+                    {"context": legacy_context_payload}
+                    if legacy_context_payload is not None
+                    else {}
+                ),
+            }
+            if injected_context_kwargs or legacy_context_payload is not None
+            else None
+        ),
+        version_inputs,
+    )
+
+    if not force:
+        cached_by_alias = _cached_join_output_metadata(
+            resolved,
+            repository_path,
+            join_operation_hash=join_operation_hash,
+        )
+        if cached_by_alias is not None:
+            for output_alias in resolved.outputs:
+                cached_metadata = cached_by_alias[output_alias]
+                cached_metadata["cache_hit"] = True
+                results.append(cached_metadata)
+                output_assembly_name = resolved.outputs[output_alias]
+                built_results_by_name[output_assembly_name] = cached_metadata
+                build_pool.insert_available(
+                    output_assembly_name,
+                    cached_metadata,
+                    source="cache",
+                )
+            _logger.info(
+                "Using cached joined outputs for '%s': %s",
+                resolved.name,
+                ", ".join(resolved.outputs.values()),
+            )
+            return
+
+    generator_kwargs = deepcopy(injected_public_parameter_kwargs)
+    generator_kwargs.update(deepcopy(resolved.joiner_kwargs))
+    generator_kwargs.update(deepcopy(injected_context_kwargs))
+    for injection in dependency_injections:
+        generator_kwargs[injection.kwarg_name] = injection.part
+    if legacy_context_payload is not None:
+        generator_kwargs["context"] = deepcopy(legacy_context_payload)
+    _raise_missing_joiner_arguments_error(
+        joiner=joiner,
+        resolved=resolved,
+        config_file=config_file,
+        provided_kwargs=generator_kwargs,
+    )
+
+    _logger.info(
+        "Building join operation '%s' with %s",
+        resolved.name,
+        resolved.joiner_path,
+    )
+    reset_metrics()
+    try:
+        returned = joiner(**generator_kwargs)
+        metrics_snapshot = snapshot_metrics()
+    finally:
+        reset_metrics()
+
+    generated_outputs = _validate_joiner_result(
+        resolved=resolved,
+        returned=returned,
+        dependency_injections=dependency_injections,
+    )
+    dependency_records = _dependency_metadata_records(dependency_injections)
+    join_inputs = _join_inputs_for_entry(resolved.entry)
+
+    for output_alias, output_assembly_name in resolved.outputs.items():
+        generated_part = generated_outputs[output_alias]
+        output_parameter_hash = _join_output_parameter_hash(
+            join_operation_hash=join_operation_hash,
+            output_alias=output_alias,
+            output_assembly_name=output_assembly_name,
+        )
+        artifact_dir, metadata_path = _join_output_cache_paths(
+            repository_path,
+            output_assembly_name=output_assembly_name,
+            output_parameter_hash=output_parameter_hash,
+        )
+        artifacts = _export_artifacts(
+            output_assembly_name,
+            output_parameter_hash,
+            generated_part,
+            artifact_dir,
+        )
+        metrics_report_path = write_metrics_report(
+            artifact_dir,
+            base_name=f"{output_assembly_name}__{output_parameter_hash}__metrics_report",
+            snapshot=metrics_snapshot,
+        )
+        metadata = {
+            "schema_version": BUILD_METADATA_SCHEMA_VERSION,
+            "cache_hit": False,
+            "built_at": _utc_now_iso(),
+            "project_root": str(project_root),
+            "repository_dir": str(repository_path),
+            "artifact_dir": str(artifact_dir),
+            "assembly_name": output_assembly_name,
+            "logical_part_name": resolved.logical_part_name,
+            "resource_file": str(resolved.resource_path),
+            "generator": _JOINED_ASSEMBLY_GENERATOR_PATH,
+            "joiner": resolved.joiner_path,
+            "parameter_hash": output_parameter_hash,
+            "join_operation_hash": join_operation_hash,
+            "public_parameters": resolved.public_parameters,
+            "generator_kwargs": resolved.joiner_kwargs,
+            "additional_data": _generated_part_additional_data(generated_part),
+            "file_dependencies": deepcopy(resolved.file_dependencies),
+            "generator_context": (
+                {
+                    **(generator_context or {}),
+                    **(
+                        {"context": legacy_context_payload}
+                        if legacy_context_payload is not None
+                        else {}
+                    ),
+                }
+                if generator_context or legacy_context_payload is not None
+                else None
+            ),
+            "version_inputs": version_inputs,
+            "generation": generation_index,
+            "assembly_in_generation": assembly_index,
+            "declared_dependencies": _dependency_names(resolved.entry),
+            "dependencies": deepcopy(dependency_records),
+            "artifacts": artifacts,
+            "metrics": {
+                "has_metrics": snapshot_has_metrics(metrics_snapshot),
+                "snapshot": metrics_snapshot,
+                "report_path": (
+                    None
+                    if metrics_report_path is None
+                    else str(metrics_report_path.resolve())
+                ),
+            },
+            "join_operation_name": resolved.name,
+            "join_output_alias": output_alias,
+            "join_output_assembly_names": dict(resolved.outputs),
+            "join_inputs": dict(join_inputs),
+            "join_output_scene_alias": output_alias,
+        }
+        _write_metadata(metadata_path, metadata)
+        results.append(metadata)
+        built_results_by_name[output_assembly_name] = metadata
+        build_pool.insert_available(
+            output_assembly_name,
+            metadata,
+            source="built",
+            canonical_artifact=generated_part,
+        )
+
+
 def build_from_file(
     config_path: str | os.PathLike[str],
     *,
@@ -6371,6 +7156,15 @@ def build_from_file(
     if assembly_names is not None:
         active_placement_assemblies = {str(name) for name in assembly_names}
         for assembly_name in list(active_placement_assemblies):
+            join_operation_name = full_graph_model.join_output_to_operation.get(
+                assembly_name
+            )
+            if join_operation_name is not None:
+                active_placement_assemblies.update(
+                    full_graph_model.join_outputs_by_operation[
+                        join_operation_name
+                    ].values()
+                )
             if assembly_name in full_graph_model.assembly_dependency_graph:
                 active_placement_assemblies.update(
                     nx.ancestors(
@@ -6393,7 +7187,7 @@ def build_from_file(
             str(entry["name"])
             for generation in build_generations
             for entry in generation
-            if entry.get("name") is not None
+            if entry.get("name") is not None and not _is_join_entry(entry)
         }
     )
 
@@ -6409,6 +7203,49 @@ def build_from_file(
     )
     for generation_index, generation_entries in enumerate(build_generations):
         for assembly_index, entry in enumerate(generation_entries):
+            if _is_joined_output_entry(entry):
+                output_name = str(entry["name"])
+                if output_name not in built_results_by_name:
+                    raise BuilderError(
+                        f"Joined output assembly '{output_name}' was reached before "
+                        f"join operation '{entry.get('join_operation')}' produced it"
+                    )
+                continue
+
+            if _is_join_entry(entry):
+                resolved_join = _resolve_join_operation(
+                    config_file,
+                    entry,
+                    resolution_context,
+                )
+                dependency_injections = _resolve_dependency_injections(
+                    entry,
+                    built_results_by_name,
+                    repository_path,
+                    placement_state,
+                    build_pool=build_pool,
+                )
+                _build_join_operation(
+                    config_file=config_file,
+                    project_root=project_root,
+                    repository_path=repository_path,
+                    resolved=resolved_join,
+                    dependency_injections=dependency_injections,
+                    builder_context=builder_context,
+                    generation_index=generation_index,
+                    assembly_index=assembly_index,
+                    built_results_by_name=built_results_by_name,
+                    build_pool=build_pool,
+                    results=results,
+                    force=force,
+                )
+                placement_state = _advance_placement_execution(
+                    placement_state,
+                    built_results_by_name=built_results_by_name,
+                    repository_dir=repository_path,
+                )
+                continue
+
             resolved = _resolve_assembly(config_file, entry, resolution_context)
             dependency_injections = _resolve_dependency_injections(
                 entry,
@@ -6583,36 +7420,7 @@ def build_from_file(
                 "generation": generation_index,
                 "assembly_in_generation": assembly_index,
                 "declared_dependencies": _dependency_names(entry),
-                "dependencies": [
-                    {
-                        "kwarg_name": injection.kwarg_name,
-                        "assembly_name": injection.assembly_name,
-                        "artifact": injection.artifact,
-                        "source_parameter_hash": injection.source_parameter_hash,
-                        "source_assembly_hash": injection.source_parameter_hash,
-                        "source_version_inputs": injection.source_version_inputs,
-                        "step_path": str(injection.step_path),
-                        **(
-                            {
-                                "source_placement_offset": list(
-                                    injection.placement_offset
-                                )
-                            }
-                            if injection.placement_offset != (0.0, 0.0, 0.0)
-                            else {}
-                        ),
-                        **(
-                            {
-                                "source_placement_transforms": list(
-                                    injection.placement_transform_records
-                                )
-                            }
-                            if injection.placement_transform_records
-                            else {}
-                        ),
-                    }
-                    for injection in dependency_injections
-                ],
+                "dependencies": _dependency_metadata_records(dependency_injections),
                 "artifacts": artifacts,
                 "metrics": {
                     "has_metrics": snapshot_has_metrics(metrics_snapshot),
@@ -6669,7 +7477,12 @@ def _architecture_plan_render_rules_for_mode(
 ) -> List[Dict[str, Any]]:
     if mode != "visualization":
         return []
-    section = _builder_section(resource_data, "Visualization", config_data)
+    section = _builder_section(
+        resource_data,
+        "Visualization",
+        config_data,
+        metadata=metadata,
+    )
     rules = section.get("architecture_plan_renders", [])
     if rules is None:
         return []
@@ -7017,6 +7830,7 @@ def _export_scene_for_assembly(
         selected_resource_data,
         mode,
         config_data,
+        metadata=selected_metadata,
     )
     if production_mode and bool(getattr(args, "visualize", False)):
         if not bool(export_options.get("export_obj", True)):
@@ -7227,7 +8041,12 @@ def run_builder(args: argparse.Namespace) -> int:
         )
         scene_mode = "production" if production_mode else "visualization"
         implicit_scene_dependencies = set(
-            _scene_dependency_names(selected_resource_data, scene_mode, config_data)
+            _scene_dependency_names(
+                selected_resource_data,
+                scene_mode,
+                config_data,
+                entry=selected_entry,
+            )
         )
         scene_root_assemblies = set(requested_assemblies) | implicit_scene_dependencies
         scene_graph_model = builder_graph_model.without_rigid_attach_effects(

@@ -6655,7 +6655,9 @@ def test_apply_placement_alignments_rigid_group_rejects_relative_motion_inside_g
     assert "placement.alignments[1]" in message
     assert "right to left" in message
     assert "rigidly attached assemblies 'right' and 'left'" in message
-    assert "placement spec: {'part': 'right', 'to': 'left', 'alignment': 'TOP'}" in message
+    assert (
+        "placement spec: {'part': 'right', 'to': 'left', 'alignment': 'TOP'}" in message
+    )
     assert "'right' is already rigidly connected with ['left', 'right']" in message
     assert "keys present: 'alignment', 'part', 'to'" in message
 
@@ -7987,6 +7989,324 @@ def test_build_from_file_rejects_composite_name_collisions_across_channels(
         builder.build_from_file(config_path)
 
     assert "Composite part name collision for 'duplicate'" in str(excinfo.value)
+
+
+def _write_join_demo_project(tmp_path: Path, *, package_name: str) -> Path:
+    project_root = tmp_path / "join_project"
+    src_dir = project_root / "src" / package_name
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "generators.py",
+        "\n".join(
+            [
+                "from shellforgepy.construct.leader_followers_cutters_part import LeaderFollowersCuttersPart",
+                "from shellforgepy.simple import create_box, translate",
+                "",
+                "JOIN_CALLS = []",
+                "",
+                "def make_left():",
+                "    part = LeaderFollowersCuttersPart(create_box(10, 10, 2))",
+                "    part.add_named_non_production_part(",
+                "        translate(0, 0, 3)(create_box(1, 1, 1)),",
+                "        'left_marker',",
+                "    )",
+                "    return part",
+                "",
+                "def make_right():",
+                "    part = LeaderFollowersCuttersPart(translate(20, 0, 0)(create_box(8, 8, 2)))",
+                "    part.add_named_non_production_part(",
+                "        translate(20, 0, 3)(create_box(1, 1, 1)),",
+                "        'right_marker',",
+                "    )",
+                "    return part",
+                "",
+                "def join_pair(*, part_a, part_b, flange_thickness):",
+                "    JOIN_CALLS.append(flange_thickness)",
+                "    joined_a = part_a.copy()",
+                "    joined_b = part_b.copy()",
+                "    joined_a.add_named_follower(",
+                "        translate(0, 0, 4)(create_box(2, 2, flange_thickness)),",
+                "        'left_join_flange',",
+                "    )",
+                "    joined_b.add_named_follower(",
+                "        translate(20, 0, 4)(create_box(2, 2, flange_thickness)),",
+                "        'right_join_flange',",
+                "    )",
+                "    return {'part_a': joined_a, 'part_b': joined_b}",
+                "",
+                "def inspect_joined(*, left, right):",
+                "    return (",
+                '        f"left={sorted(left.follower_indices_by_name)};"',
+                '        f"right={sorted(right.follower_indices_by_name)}"',
+                "    )",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(
+        assemblies_dir / "left_source.yaml",
+        "\n".join(
+            [
+                "Parts:",
+                "  Left:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                f"      Generator: {package_name}.generators.make_left",
+            ]
+        ),
+    )
+    _write_file(
+        assemblies_dir / "right_source.yaml",
+        "\n".join(
+            [
+                "Parts:",
+                "  Right:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                f"      Generator: {package_name}.generators.make_right",
+            ]
+        ),
+    )
+    _write_file(
+        assemblies_dir / "pair_joiner.yaml",
+        "\n".join(
+            [
+                'ShellforgepyBuilderVersion: "2026-03-27"',
+                "Parameters:",
+                "  flange_thickness:",
+                "    Type: Float",
+                "    Default: 3.0",
+                "Parts:",
+                "  PairJoiner:",
+                "    Type: Shellforgepy::AssemblyJoiner",
+                "    Properties:",
+                f"      Joiner: {package_name}.generators.join_pair",
+                "      Properties:",
+                "        flange_thickness:",
+                "          $ref: flange_thickness",
+                "Builder:",
+                "  Outputs:",
+                "    part_a:",
+                "      Visualization:",
+                "        parts:",
+                "          - source: self",
+                "            artifact: followers",
+                "            name_template: 'self_{default_name}'",
+                "          - source: output",
+                "            assembly: part_b",
+                "            artifact: followers",
+                "            name_template: 'mate_{default_name}'",
+                "          - source: injected",
+                "            assembly: part_a",
+                "            artifact: non_production_parts",
+                "            name_template: 'source_{default_name}'",
+                "      Production:",
+                "        parts:",
+                "          - source: self",
+                "            artifact: leader",
+                "            name: left_prod",
+                "    part_b:",
+                "      Visualization:",
+                "        parts:",
+                "          - source: self",
+                "            artifact: followers",
+                "      Production:",
+                "        parts:",
+                "          - source: self",
+                "            artifact: leader",
+            ]
+        ),
+    )
+    _write_file(
+        assemblies_dir / "consumer.yaml",
+        "\n".join(
+            [
+                "Parts:",
+                "  Consumer:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                f"      Generator: {package_name}.generators.inspect_joined",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: left_source",
+                "  - name: right_source",
+                "  - name: pair_join",
+                "    kind: join",
+                "    resource_file: pair_joiner.yaml",
+                "    inject_parts:",
+                "      part_a: left_source",
+                "      part_b: right_source",
+                "    outputs:",
+                "      part_a: left_joined",
+                "      part_b: right_joined",
+                "  - name: consumer",
+                "    depends_on:",
+                "      - left_joined",
+                "      - right_joined",
+                "    inject_parts:",
+                "      left: left_joined",
+                "      right: right_joined",
+            ]
+        ),
+    )
+    return config_path
+
+
+def test_build_graph_model_adds_join_operation_nodes_and_public_outputs():
+    model = builder_graph_model.build_graph_model(
+        [
+            {"name": "left_source"},
+            {"name": "right_source"},
+            {
+                "name": "pair_join",
+                "kind": "join",
+                "resource_file": "pair_joiner.yaml",
+                "inject_parts": {
+                    "part_a": "left_source",
+                    "part_b": "right_source",
+                },
+                "outputs": {
+                    "part_a": "left_joined",
+                    "part_b": "right_joined",
+                },
+            },
+        ]
+    )
+
+    assert "pair_join" not in model.assemblies_by_name
+    assert sorted(model.assemblies_by_name) == [
+        "left_joined",
+        "left_source",
+        "right_joined",
+        "right_source",
+    ]
+    assert model.join_output_to_operation["left_joined"] == "pair_join"
+    assert builder_graph_model.resolve_build_generation_names(
+        model,
+        ["left_joined"],
+    ) == [
+        ["left_source", "right_source"],
+        ["join:pair_join"],
+        ["left_joined", "right_joined"],
+    ]
+
+
+def test_build_graph_model_rejects_join_inject_artifact_selector():
+    with pytest.raises(builder.BuilderError) as excinfo:
+        builder_graph_model.build_graph_model(
+            [
+                {"name": "left_source"},
+                {"name": "right_source"},
+                {
+                    "name": "pair_join",
+                    "kind": "join",
+                    "resource_file": "pair_joiner.yaml",
+                    "inject_parts": {
+                        "part_a": "left_source.leader",
+                        "part_b": "right_source",
+                    },
+                    "outputs": {
+                        "part_a": "left_joined",
+                        "part_b": "right_joined",
+                    },
+                },
+            ]
+        )
+
+    assert "inject_parts.part_a must inject the full assembly" in str(excinfo.value)
+
+
+def test_build_from_file_builds_join_outputs_and_downstream_injection(
+    monkeypatch, tmp_path
+):
+    package_name = "assembly_join_demo_pkg"
+    config_path = _write_join_demo_project(tmp_path, package_name=package_name)
+    _install_geometry_builder_io(monkeypatch)
+    _clear_demo_package(monkeypatch, package_name)
+
+    results = builder.build_from_file(config_path)
+    by_name = {result["assembly_name"]: result for result in results}
+
+    assert "pair_join" not in by_name
+    assert {"left_joined", "right_joined", "consumer"}.issubset(by_name)
+    assert (
+        by_name["left_joined"]["generator"] == builder._JOINED_ASSEMBLY_GENERATOR_PATH
+    )
+    assert by_name["left_joined"]["join_operation_name"] == "pair_join"
+    assert by_name["left_joined"]["join_output_alias"] == "part_a"
+    assert by_name["left_joined"]["join_output_assembly_names"] == {
+        "part_a": "left_joined",
+        "part_b": "right_joined",
+    }
+
+    consumer_payload = builder._import_dependency_part(
+        Path(by_name["consumer"]["artifacts"]["leader_step"])
+    )
+    assert consumer_payload == ("left=['left_join_flange'];right=['right_join_flange']")
+
+    resource_data = builder._load_yaml(Path(by_name["left_joined"]["resource_file"]))
+    scene_parts = builder._materialize_rule_parts(
+        by_name["left_joined"],
+        resource_data,
+        "visualization",
+        by_name,
+        Path(by_name["left_joined"]["repository_dir"]),
+    )
+    assert [part["name"] for part in scene_parts] == [
+        "self_left_join_flange",
+        "mate_right_join_flange",
+        "source_left_marker",
+    ]
+
+
+def test_build_from_file_selected_join_output_materializes_all_outputs_and_reuses_cache(
+    monkeypatch, tmp_path
+):
+    package_name = "assembly_join_cache_demo_pkg"
+    config_path = _write_join_demo_project(tmp_path, package_name=package_name)
+    _install_geometry_builder_io(monkeypatch)
+    _clear_demo_package(monkeypatch, package_name)
+
+    first_results = builder.build_from_file(config_path, assembly_names=["left_joined"])
+    first_by_name = {result["assembly_name"]: result for result in first_results}
+
+    assert set(first_by_name) == {
+        "left_source",
+        "right_source",
+        "left_joined",
+        "right_joined",
+    }
+    assert first_by_name["left_joined"]["cache_hit"] is False
+    assert first_by_name["right_joined"]["cache_hit"] is False
+
+    monkeypatch.setattr(
+        builder,
+        "_export_part_to_step",
+        lambda part, destination: pytest.fail(
+            f"cache hit should not export artifacts again: {destination}"
+        ),
+    )
+    cached_results = builder.build_from_file(
+        config_path,
+        assembly_names=["right_joined"],
+    )
+    cached_by_name = {result["assembly_name"]: result for result in cached_results}
+
+    assert cached_by_name["left_joined"]["cache_hit"] is True
+    assert cached_by_name["right_joined"]["cache_hit"] is True
+    assert (
+        cached_by_name["left_joined"]["join_operation_hash"]
+        == first_by_name["left_joined"]["join_operation_hash"]
+    )
 
 
 def test_build_from_file_rejects_injection_after_skipped_provider_post_translation(
