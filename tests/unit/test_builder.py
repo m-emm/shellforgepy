@@ -2428,6 +2428,47 @@ def test_dependency_step_path_supports_dotted_named_artifacts():
     )
 
 
+def test_consumed_part_metadata_marks_matching_scene_parts(tmp_path):
+    scene_parts = [
+        {
+            "assembly_name": "consumer_assembly",
+            "obj_metadata": {"builder_selector": "consumer_assembly.leader"},
+        },
+        {
+            "assembly_name": "provider_assembly",
+            "obj_metadata": {
+                "builder_selector": "provider_assembly.followers.mount_plate"
+            },
+        },
+        {
+            "assembly_name": "provider_assembly",
+            "obj_metadata": {"builder_selector": "provider_assembly.leader"},
+        },
+    ]
+    built_results_by_name = {
+        "consumer_assembly": {
+            "assembly_name": "consumer_assembly",
+            "additional_data": {
+                "consumed_part_refs": ["provider_assembly.followers.mount_plate"]
+            },
+        },
+        "provider_assembly": {
+            "assembly_name": "provider_assembly",
+            "additional_data": {},
+        },
+    }
+
+    builder._apply_consumed_part_metadata_to_scene_parts(
+        scene_parts,
+        built_results_by_name,
+        tmp_path,
+    )
+
+    assert scene_parts[0]["obj_metadata"].get("consumption") is None
+    assert scene_parts[1]["obj_metadata"]["consumption"] == {"is_consumed": True}
+    assert scene_parts[2]["obj_metadata"].get("consumption") is None
+
+
 def test_run_builder_invokes_build_from_file(monkeypatch, tmp_path):
     captured = {}
 

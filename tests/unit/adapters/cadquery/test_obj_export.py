@@ -430,3 +430,46 @@ def test_export_colored_meshes_to_obj_writes_builder_selector_comment():
             "print_bed_assembly.non_production_parts."
             "print_bed_undercarriage_belt_clamp_torsion_screw_back"
         ) < obj_content.index("o belt_clamp_screw")
+
+
+def test_export_colored_meshes_to_obj_writes_shellforgepy_metadata_comment():
+    from shellforgepy.produce.obj_file_export import export_colored_meshes_to_obj
+
+    vertices = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+        ],
+        dtype=float,
+    )
+    triangles = np.array([[0, 1, 2]], dtype=np.int32)
+    meshes = [
+        (
+            vertices,
+            triangles,
+            "consumed mount plate",
+            (0.5, 0.5, 0.5),
+            None,
+            {
+                "builder_selector": "fan_assembly.followers.mount_plate",
+                "consumption": {"is_consumed": True},
+            },
+        )
+    ]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        obj_path = os.path.join(tmpdir, "consumed.obj")
+
+        export_colored_meshes_to_obj(meshes, obj_path)
+
+        with open(obj_path) as f:
+            obj_content = f.read()
+
+        metadata_comment = (
+            '# shellforgepy_metadata {"consumption":{"is_consumed":true}}'
+        )
+        assert metadata_comment in obj_content
+        assert obj_content.index(metadata_comment) < obj_content.index(
+            "o consumed_mount_plate"
+        )

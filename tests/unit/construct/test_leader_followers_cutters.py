@@ -199,6 +199,46 @@ def test_leader_followers_fuse_and_non_production():
     assert combined.leader is not None
 
 
+def test_part_ref_api_uses_injected_origin_and_named_artifacts():
+    group = LeaderFollowersCuttersPart(
+        create_box(1, 1, 1),
+        followers=[create_box(2, 1, 1)],
+        cutters=[create_box(0.5, 0.5, 0.5)],
+        non_production_parts=[create_box(0.25, 0.25, 0.25)],
+        additional_data={"part_ref_origin": {"assembly_name": "demo_assembly"}},
+        follower_names=["mount_plate"],
+        cutter_names=["window"],
+        non_production_names=["hotend"],
+    )
+
+    assert group.part_ref_for_leader() == "demo_assembly.leader"
+    assert (
+        group.part_ref_for_named_follower("mount_plate")
+        == "demo_assembly.followers.mount_plate"
+    )
+    assert group.part_ref_for_named_cutter("window") == "demo_assembly.cutters.window"
+    assert (
+        group.part_ref_for_named_non_production_part("hotend")
+        == "demo_assembly.non_production_parts.hotend"
+    )
+
+    group.add_consumed_part_ref("demo_assembly.followers.mount_plate")
+
+    assert group.consumed_part_refs() == ["demo_assembly.followers.mount_plate"]
+    assert group.copy().consumed_part_refs() == ["demo_assembly.followers.mount_plate"]
+
+
+def test_part_ref_api_requires_origin_and_named_artifacts():
+    group = LeaderFollowersCuttersPart(create_box(1, 1, 1))
+
+    with pytest.raises(ValueError, match="part_ref_origin"):
+        group.part_ref_for_leader()
+
+    group.additional_data["part_ref_origin"] = {"assembly_name": "demo_assembly"}
+    with pytest.raises(KeyError, match="missing"):
+        group.part_ref_for_named_follower("missing")
+
+
 def test_merge_except_leader_merges_all_except_primary():
     base_leader = create_box(1, 1, 1)
     follower_named = NamedPart(

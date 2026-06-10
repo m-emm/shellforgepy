@@ -18,6 +18,7 @@ as new CAD backends are added to the framework.
 import copy
 import logging
 import math
+from collections.abc import Mapping
 from types import SimpleNamespace
 
 from shellforgepy.adapters._adapter import (
@@ -35,6 +36,10 @@ from shellforgepy.construct.named_part import NamedPart
 from shellforgepy.construct.part_collector import PartCollector
 
 _logger = logging.getLogger(__name__)
+
+PART_REF_ORIGIN_KEY = "part_ref_origin"
+LEGACY_ASSEMBLY_NAME_KEY = "assembly_name"
+CONSUMED_PART_REFS_KEY = "consumed_part_refs"
 
 
 def _ensure_list(items):
@@ -387,6 +392,79 @@ class LeaderFollowersCuttersPart:
         raise KeyError(
             f"Non-production part with name '{name}' not found. Available names: {sorted(self.non_production_indices_by_name.keys())}"
         )
+
+    def _part_ref_origin_assembly_name(self):
+        origin = self.additional_data.get(PART_REF_ORIGIN_KEY)
+        if isinstance(origin, Mapping):
+            assembly_name = str(origin.get("assembly_name") or "").strip()
+            if assembly_name:
+                return assembly_name
+
+        assembly_name = str(
+            self.additional_data.get(LEGACY_ASSEMBLY_NAME_KEY) or ""
+        ).strip()
+        if assembly_name:
+            return assembly_name
+
+        raise ValueError(
+            "Cannot create a part ref because this LeaderFollowersCuttersPart has "
+            "no builder-injected part_ref_origin assembly_name."
+        )
+
+    def _part_ref_for_named_artifact(self, artifact, name, names_by_index):
+        if not isinstance(name, str) or not name:
+            raise ValueError(f"{artifact} part refs require a non-empty name.")
+        if name not in names_by_index:
+            raise KeyError(
+                f"{artifact} part with name '{name}' not found. Available names: {sorted(names_by_index.keys())}"
+            )
+        return f"{self._part_ref_origin_assembly_name()}.{artifact}.{name}"
+
+    def part_ref_for_leader(self):
+        return f"{self._part_ref_origin_assembly_name()}.leader"
+
+    def part_ref_for_named_follower(self, name):
+        return self._part_ref_for_named_artifact(
+            "followers",
+            name,
+            self.follower_indices_by_name,
+        )
+
+    def part_ref_for_named_cutter(self, name):
+        return self._part_ref_for_named_artifact(
+            "cutters",
+            name,
+            self.cutter_indices_by_name,
+        )
+
+    def part_ref_for_named_non_production_part(self, name):
+        return self._part_ref_for_named_artifact(
+            "non_production_parts",
+            name,
+            self.non_production_indices_by_name,
+        )
+
+    def add_consumed_part_ref(self, part_ref):
+        normalized_part_ref = str(part_ref or "").strip()
+        if not normalized_part_ref:
+            raise ValueError("Consumed part ref must be a non-empty string.")
+        consumed_part_refs = self.additional_data.setdefault(
+            CONSUMED_PART_REFS_KEY,
+            [],
+        )
+        if not isinstance(consumed_part_refs, list):
+            raise ValueError(
+                f"additional_data['{CONSUMED_PART_REFS_KEY}'] must be a list."
+            )
+        consumed_part_refs.append(normalized_part_ref)
+
+    def consumed_part_refs(self):
+        consumed_part_refs = self.additional_data.get(CONSUMED_PART_REFS_KEY, [])
+        if not isinstance(consumed_part_refs, list):
+            raise ValueError(
+                f"additional_data['{CONSUMED_PART_REFS_KEY}'] must be a list."
+            )
+        return list(consumed_part_refs)
 
     def get_direction_vector_index_by_name(self, name):
         """Get the index of a named direction vector."""

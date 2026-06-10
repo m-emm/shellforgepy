@@ -27,6 +27,10 @@ import shellforgepy.builder.graph_model as builder_graph_model
 import yaml
 from shellforgepy.adapters._adapter import copy_part
 from shellforgepy.builder.errors import BuilderError
+from shellforgepy.construct.leader_followers_cutters_part import (
+    CONSUMED_PART_REFS_KEY,
+    PART_REF_ORIGIN_KEY,
+)
 from shellforgepy.construct.part_parameters import PartParameters
 from shellforgepy.metrics import (
     reset_metrics,
@@ -3211,6 +3215,9 @@ def _resolve_dependency_injections(
             and isinstance(getattr(imported_part, "additional_data"), dict)
         ):
             imported_part.additional_data.setdefault("assembly_name", assembly_name)
+            imported_part.additional_data[PART_REF_ORIGIN_KEY] = {
+                "assembly_name": assembly_name
+            }
         injections.append(
             _DependencyInjection(
                 kwarg_name=kwarg_name,
@@ -4583,6 +4590,80 @@ def _builder_selector_for_scene_entry(entry: Mapping[str, Any]) -> Optional[str]
         return f"{assembly_name}.{artifact}.{name}"
 
     return f"{assembly_name}.{artifact}"
+
+
+def _consumed_part_refs_from_metadata(metadata: Mapping[str, Any]) -> List[str]:
+    additional_data = metadata.get("additional_data")
+    if not isinstance(additional_data, Mapping):
+        return []
+
+    consumed_part_refs = additional_data.get(CONSUMED_PART_REFS_KEY, [])
+    if consumed_part_refs is None:
+        return []
+    if not isinstance(consumed_part_refs, Sequence) or isinstance(
+        consumed_part_refs,
+        (str, bytes),
+    ):
+        _logger.warning(
+            "Ignoring invalid %s metadata for assembly %s: expected list of strings",
+            CONSUMED_PART_REFS_KEY,
+            metadata.get("assembly_name"),
+        )
+        return []
+
+    refs: List[str] = []
+    for part_ref in consumed_part_refs:
+        normalized_ref = str(part_ref or "").strip()
+        if normalized_ref:
+            refs.append(normalized_ref)
+    return refs
+
+
+def _apply_consumed_part_metadata_to_scene_parts(
+    scene_parts: List[Dict[str, Any]],
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+    repository_dir: Path,
+) -> None:
+    scene_assembly_names = sorted(
+        {
+            str(item.get("assembly_name"))
+            for item in scene_parts
+            if item.get("assembly_name") is not None
+        }
+    )
+    consumed_part_refs: set[str] = set()
+    for assembly_name in scene_assembly_names:
+        metadata = built_results_by_name.get(assembly_name)
+        if metadata is None:
+            metadata = _dependency_metadata_for_assembly(
+                assembly_name,
+                built_results_by_name,
+                repository_dir,
+            )
+        consumed_part_refs.update(_consumed_part_refs_from_metadata(metadata))
+
+    if not consumed_part_refs:
+        return
+
+    for item in scene_parts:
+        obj_metadata = item.get("obj_metadata")
+        if not isinstance(obj_metadata, Mapping):
+            continue
+        builder_selector = str(obj_metadata.get("builder_selector") or "").strip()
+        if builder_selector not in consumed_part_refs:
+            continue
+
+        existing_consumption = obj_metadata.get("consumption")
+        consumption_metadata = (
+            dict(existing_consumption)
+            if isinstance(existing_consumption, Mapping)
+            else {}
+        )
+        consumption_metadata["is_consumed"] = True
+        item["obj_metadata"] = {
+            **dict(obj_metadata),
+            "consumption": consumption_metadata,
+        }
 
 
 def _scene_transform_record(
@@ -7792,6 +7873,13 @@ def _export_scene_for_assembly(
             repository_dir=repository_dir,
             placement_state=None,
             config_data=config_data,
+        )
+
+    if mode == "visualization":
+        _apply_consumed_part_metadata_to_scene_parts(
+            scene_parts,
+            built_results_by_name,
+            repository_dir,
         )
 
     if not scene_parts:

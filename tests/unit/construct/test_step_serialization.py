@@ -122,6 +122,23 @@ def test_serialize_deserialize_round_trip_with_names(tmp_path):
     )
 
 
+def test_serialize_deserialize_preserves_consumed_part_refs(tmp_path):
+    lfcp = LeaderFollowersCuttersPart(
+        leader=create_box(10, 10, 10),
+        followers=[create_box(2, 2, 2)],
+        additional_data={"part_ref_origin": {"assembly_name": "demo_assembly"}},
+        follower_names=["mount_plate"],
+    )
+    lfcp.add_consumed_part_ref(lfcp.part_ref_for_named_follower("mount_plate"))
+
+    step_file_path = tmp_path / "consumed_refs.step"
+    serialize_to_step(lfcp, str(step_file_path))
+
+    restored = deserialize_to_leader_followers_cutters_part(str(step_file_path))
+
+    assert restored.consumed_part_refs() == ["demo_assembly.followers.mount_plate"]
+
+
 def test_serialize_to_step_with_path_object(tmp_path):
     """Test serialization works when passing Path object instead of str.
 

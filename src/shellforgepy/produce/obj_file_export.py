@@ -221,6 +221,25 @@ def _write_builder_selector_comment(file_obj, metadata) -> None:
         file_obj.write(f"# shellforgepy_builder_selector {selector}\n")
 
 
+def _write_shellforgepy_metadata_comment(file_obj, metadata) -> None:
+    if not metadata or not isinstance(metadata, Mapping):
+        return
+
+    extra_metadata = {}
+    consumption = metadata.get("consumption")
+    if consumption:
+        extra_metadata["consumption"] = consumption
+
+    if not extra_metadata:
+        return
+
+    file_obj.write(
+        "# shellforgepy_metadata "
+        + json.dumps(extra_metadata, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    )
+
+
 def _write_mtl_file(
     path: str,
     materials: Dict[str, Tuple[float, float, float] | Mapping],
@@ -383,6 +402,7 @@ def export_colored_meshes_to_obj(
             f.write(f"# Object: {name}\n")
             _write_hierarchy_comments(f, metadata)
             _write_builder_selector_comment(f, metadata)
+            _write_shellforgepy_metadata_comment(f, metadata)
             f.write(f"o {object_name}\n")
             _write_animation_comments(f, animation)
 
