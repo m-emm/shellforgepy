@@ -947,6 +947,102 @@ def placement_dependency_closure(
     return sorted(needed)
 
 
+def _step_referenced_assemblies(step: PlacementStep) -> set[str]:
+    referenced: set[str] = set()
+    if step.is_rigid_group:
+        referenced.update(step.rigid_group_assembly_names)
+    elif step.moving_assembly_name is not None:
+        referenced.add(step.moving_assembly_name)
+    if step.target_assembly_name is not None:
+        referenced.add(step.target_assembly_name)
+    return referenced
+
+
+def _consumer_placement_boundary_index(
+    consumer_name: str,
+    entry: Mapping[str, Any],
+    placement_steps: Sequence[PlacementStep],
+    model: BuilderGraphModel,
+) -> Optional[int]:
+    if _is_join_entry(entry):
+        output_names: Sequence[str] = tuple(
+            str(name)
+            for name in model.join_outputs_by_operation.get(
+                str(entry["name"]),
+                {},
+            ).values()
+        )
+    else:
+        output_names = (consumer_name,)
+
+    boundary_candidates = [
+        index
+        for output_name in output_names
+        for index in (
+            model.first_moving_alignment_index.get(output_name),
+            model.first_involved_alignment_index.get(output_name),
+        )
+        if index is not None
+    ]
+    if boundary_candidates:
+        return min(boundary_candidates)
+    if _is_join_entry(entry):
+        return max((step.index for step in placement_steps), default=-1) + 1
+    return None
+
+
+def _required_injected_provider_placement_step_indices(
+    model: BuilderGraphModel,
+    consumer_name: str,
+    entry: Mapping[str, Any],
+    provider_assemblies: Iterable[str],
+) -> List[int]:
+    providers = {str(name) for name in provider_assemblies}
+    if not providers:
+        return []
+
+    boundary_index = _consumer_placement_boundary_index(
+        consumer_name,
+        entry,
+        model.placement_steps,
+        model,
+    )
+    if boundary_index is None:
+        return []
+
+    root_indices = {
+        step.index
+        for step in model.placement_steps
+        if step.index < boundary_index
+        and providers.intersection(step.affected_assembly_names)
+    }
+    if not root_indices:
+        return []
+
+    required_indices: set[int] = set(root_indices)
+    for step_index in root_indices:
+        required_indices.update(nx.ancestors(model.placement_execution_dag, step_index))
+    return sorted(
+        step_index for step_index in required_indices if step_index < boundary_index
+    )
+
+
+def required_injected_provider_placement_step_indices(
+    model: BuilderGraphModel,
+    consumer_name: str,
+    provider_assembly_name: str,
+) -> List[int]:
+    entry = model.build_items_by_name.get(str(consumer_name))
+    if entry is None:
+        return []
+    return _required_injected_provider_placement_step_indices(
+        model,
+        str(consumer_name),
+        entry,
+        [str(provider_assembly_name)],
+    )
+
+
 def _compute_placement_build_dependencies(
     assemblies: Mapping[str, Mapping[str, Any]],
     placement_steps: Sequence[PlacementStep],
@@ -955,20 +1051,8 @@ def _compute_placement_build_dependencies(
     if model is None:
         raise BuilderError("Builder graph model is required")
 
-    def step_referenced_assemblies(step: PlacementStep) -> set[str]:
-        referenced: set[str] = set()
-        if step.is_rigid_group:
-            referenced.update(step.rigid_group_assembly_names)
-        elif step.moving_assembly_name is not None:
-            referenced.add(step.moving_assembly_name)
-        if step.target_assembly_name is not None:
-            referenced.add(step.target_assembly_name)
-        return referenced
-
     implicit_dependencies: Dict[str, List[str]] = {name: [] for name in assemblies}
-    public_assembly_names = set(
-        model.assemblies_by_name if model is not None else assemblies
-    )
+    steps_by_index = {step.index: step for step in placement_steps}
     for assembly_name, entry in assemblies.items():
         injected_assemblies = {
             spec["assembly"]
@@ -978,68 +1062,18 @@ def _compute_placement_build_dependencies(
         if not injected_assemblies:
             continue
 
-        output_names: Sequence[str] = ()
-        if _is_join_entry(entry):
-            output_names = tuple(
-                str(name)
-                for name in model.join_outputs_by_operation.get(
-                    str(entry["name"]),
-                    {},
-                ).values()
-            )
-        else:
-            output_names = (assembly_name,)
-
-        boundary_candidates = [
-            index
-            for output_name in output_names
-            for index in (
-                model.first_moving_alignment_index.get(output_name),
-                model.first_involved_alignment_index.get(output_name),
-            )
-            if index is not None
-        ]
-        boundary_index = min(boundary_candidates) if boundary_candidates else None
-        if boundary_index is None and _is_join_entry(entry):
-            boundary_index = (
-                max((step.index for step in placement_steps), default=-1) + 1
-            )
-        if boundary_index is None:
-            continue
-
-        required_prefix_index: Optional[int] = None
-        rigidity_graph = nx.Graph()
-        rigidity_graph.add_nodes_from(public_assembly_names)
-
-        for step in placement_steps:
-            if step.index >= boundary_index:
-                break
-
-            if step.is_rigid_group:
-                if step.target_assembly_name is None:
-                    raise BuilderError(
-                        "Placement steps with 'rigid_group' also require 'to'"
-                    )
-                for source in step.rigid_group_assembly_names:
-                    rigidity_graph.add_edge(source, step.target_assembly_name)
-                continue
-
-            if step.moving_assembly_name is None:
-                continue
-            moving_group = _rigid_group_members(
-                rigidity_graph, step.moving_assembly_name
-            )
-            if moving_group.intersection(injected_assemblies):
-                required_prefix_index = step.index
-
-        if required_prefix_index is None:
+        required_indices = _required_injected_provider_placement_step_indices(
+            model,
+            assembly_name,
+            entry,
+            injected_assemblies,
+        )
+        if not required_indices:
             continue
 
         required: set[str] = set()
-        for step in placement_steps:
-            if step.index > required_prefix_index:
-                break
-            required.update(step_referenced_assemblies(step))
+        for step_index in required_indices:
+            required.update(_step_referenced_assemblies(steps_by_index[step_index]))
         required.discard(assembly_name)
         implicit_dependencies[assembly_name] = sorted(required)
 
@@ -1274,21 +1308,30 @@ def restrict_to_active_assemblies(
     model: BuilderGraphModel,
     active_assemblies: Iterable[str],
 ) -> BuilderGraphModel:
-    active_names = {
-        str(name) for name in active_assemblies if str(name) in model.assemblies_by_name
+    requested_names = {str(name) for name in active_assemblies}
+    active_build_item_names = {
+        name for name in requested_names if name in model.build_items_by_name
     }
-    if active_names == set(model.assemblies_by_name):
+    active_public_names = {
+        name for name in active_build_item_names if name in model.assemblies_by_name
+    }
+    for output_name in tuple(active_public_names):
+        operation_name = model.join_output_to_operation.get(output_name)
+        if operation_name is not None:
+            active_build_item_names.add(join_node_name(operation_name))
+
+    if active_build_item_names == set(model.build_items_by_name):
         return model
 
     filtered_steps = []
     for step in model.placement_steps:
         if step.is_rigid_group:
-            if step.target_assembly_name not in active_names:
+            if step.target_assembly_name not in active_public_names:
                 continue
             active_group = tuple(
                 assembly_name
                 for assembly_name in step.rigid_group_assembly_names
-                if assembly_name in active_names
+                if assembly_name in active_public_names
             )
             if len(active_group) < 1:
                 continue
@@ -1307,11 +1350,11 @@ def restrict_to_active_assemblies(
                 )
             )
             continue
-        if step.moving_assembly_name not in active_names:
+        if step.moving_assembly_name not in active_public_names:
             continue
         if (
             step.target_assembly_name is not None
-            and step.target_assembly_name not in active_names
+            and step.target_assembly_name not in active_public_names
         ):
             continue
         filtered_steps.append(step)
@@ -1321,10 +1364,47 @@ def restrict_to_active_assemblies(
         first_involved_alignment_index,
         placement_steps,
     ) = _build_placement_execution_dag(filtered_steps)
+    partial_model = BuilderGraphModel(
+        assemblies=[dict(item) for item in model.assemblies],
+        assemblies_by_name={
+            name: dict(entry) for name, entry in model.assemblies_by_name.items()
+        },
+        assembly_dependency_graph=model.assembly_dependency_graph.copy(),
+        injection_graph=model.injection_graph.copy(),
+        placement_steps=placement_steps,
+        placement_execution_dag=placement_execution_dag,
+        first_moving_alignment_index=first_moving_alignment_index,
+        first_involved_alignment_index=first_involved_alignment_index,
+        placement_build_dependencies={},
+        build_items_by_name={
+            name: dict(entry)
+            for name, entry in model.build_items_by_name.items()
+            if name in active_build_item_names
+        },
+        join_operations_by_name={
+            name: dict(entry)
+            for name, entry in model.join_operations_by_name.items()
+            if join_node_name(name) in active_build_item_names
+        },
+        join_output_to_operation=dict(model.join_output_to_operation),
+        join_outputs_by_operation={
+            name: dict(outputs)
+            for name, outputs in model.join_outputs_by_operation.items()
+        },
+    )
+    recomputed_placement_build_dependencies = _compute_placement_build_dependencies(
+        partial_model.build_items_by_name,
+        placement_steps,
+        model=partial_model,
+    )
     filtered_placement_build_dependencies = {
-        name: [dependency for dependency in dependencies if dependency in active_names]
-        for name, dependencies in model.placement_build_dependencies.items()
-        if name in active_names
+        name: [
+            dependency
+            for dependency in dependencies
+            if dependency in active_public_names
+        ]
+        for name, dependencies in recomputed_placement_build_dependencies.items()
+        if name in active_build_item_names
     }
 
     return BuilderGraphModel(

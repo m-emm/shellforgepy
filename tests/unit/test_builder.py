@@ -3922,6 +3922,73 @@ def test_build_graph_model_uses_first_rigid_group_as_injected_part_boundary():
     assert model.placement_build_dependencies["mount"] == ["frame", "profile"]
 
 
+def test_focused_join_graph_preserves_join_placement_dependencies_without_prefix():
+    assemblies = [
+        {"name": "frame"},
+        {"name": "unrelated"},
+        {"name": "holder"},
+        {"name": "fan"},
+        {
+            "name": "x_join",
+            "kind": "join",
+            "resource_file": "joiner.yaml",
+            "inject_parts": {
+                "holder": "holder",
+                "fan": "fan",
+            },
+            "outputs": {
+                "holder": "holder_joined",
+                "fan": "fan_joined",
+            },
+        },
+    ]
+    config_data = {
+        "placement": {
+            "alignments": [
+                {
+                    "part": "unrelated",
+                    "to": "frame",
+                    "alignment": "CENTER",
+                },
+                {
+                    "part": "fan",
+                    "to": "holder",
+                    "alignment": "CENTER",
+                },
+            ]
+        }
+    }
+    full_model = builder_graph_model.build_graph_model(assemblies, config_data)
+    join_node = builder_graph_model.join_node_name("x_join")
+    active_placement_assemblies = {"holder_joined", "holder", "fan", join_node}
+    active_placement_assemblies.update(
+        full_model.join_outputs_by_operation["x_join"].values()
+    )
+
+    focused_model = builder._restrict_placement_model_to_active_assemblies(
+        full_model,
+        active_placement_assemblies,
+    )
+
+    assert [step.index for step in focused_model.placement_steps] == [1]
+    assert focused_model.placement_build_dependencies[join_node] == [
+        "fan",
+        "holder",
+    ]
+    assert "unrelated" not in focused_model.placement_build_dependencies[join_node]
+    generations = builder._resolve_build_generations(
+        assemblies,
+        ["holder_joined"],
+        config_data,
+        graph_model=focused_model,
+    )
+    assert [[entry["name"] for entry in generation] for generation in generations] == [
+        ["fan", "holder"],
+        ["x_join"],
+        ["fan_joined", "holder_joined"],
+    ]
+
+
 def test_resolve_build_generations_uses_sequential_prefix_for_injected_rigid_group_parts():
     generations = builder._resolve_build_generations(
         [
@@ -8626,7 +8693,7 @@ def test_build_from_file_allows_injection_after_active_provider_post_translation
     ]
 
 
-def test_advance_placement_execution_stops_at_missing_prefix_even_when_later_step_is_ready(
+def test_advance_placement_execution_runs_ready_step_after_blocked_unrelated_prefix(
     monkeypatch, tmp_path
 ):
     profile_a_leader = tmp_path / "profile_a.step"
@@ -8698,9 +8765,11 @@ def test_advance_placement_execution_stops_at_missing_prefix_even_when_later_ste
         repository_dir=tmp_path,
     )
 
-    assert placement_state.cursor == 0
-    assert placement_state.executed_alignment_indices == set()
-    assert placement_state.placement_offsets == {}
+    assert placement_state.cursor == 1
+    assert placement_state.executed_alignment_indices == {1}
+    assert placement_state.placement_offsets == {
+        "profile_b": (-10.0, 0.0, 0.0),
+    }
 
 
 def test_advance_placement_execution_supports_post_translation(monkeypatch, tmp_path):
@@ -9555,6 +9624,193 @@ def test_build_from_file_injects_dependencies_after_eager_placement(
                 }
             ],
         },
+    ]
+
+
+def test_build_from_file_join_injects_provider_after_later_ready_placement(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "project"
+    src_dir = project_root / "src" / "demo_pkg"
+    _write_file(project_root / "pyproject.toml", "[build-system]\nrequires=[]\n")
+    _write_file(src_dir / "__init__.py", "")
+    _write_file(
+        src_dir / "placement_generators.py",
+        "\n".join(
+            [
+                "def make_profile(*, label):",
+                "    return label",
+                "def join_holder_fan(*, holder, fan):",
+                "    return {",
+                "        'holder': f'holder_joined:{holder.leader}:{fan.leader}',",
+                "        'fan': f'fan_joined:{fan.leader}',",
+                "    }",
+            ]
+        ),
+    )
+
+    assemblies_dir = project_root / "assembling" / "assemblies"
+    _write_file(
+        assemblies_dir / "profile.yaml",
+        "\n".join(
+            [
+                "Parameters:",
+                "  label:",
+                "    Type: String",
+                "Parts:",
+                "  Profile:",
+                "    Type: Shellforgepy::Assembly",
+                "    Properties:",
+                "      Generator: demo_pkg.placement_generators.make_profile",
+                "      Properties:",
+                "        label:",
+                "          $ref: label",
+            ]
+        ),
+    )
+    _write_file(
+        assemblies_dir / "x_join.yaml",
+        "\n".join(
+            [
+                "Parts:",
+                "  Joiner:",
+                "    Type: Shellforgepy::AssemblyJoiner",
+                "    Properties:",
+                "      Joiner: demo_pkg.placement_generators.join_holder_fan",
+            ]
+        ),
+    )
+    config_path = assemblies_dir / "assemblies.yaml"
+    _write_file(
+        config_path,
+        "\n".join(
+            [
+                "assemblies:",
+                "  - name: unrelated",
+                "    resource_file: profile.yaml",
+                "    parameters:",
+                "      label: unrelated",
+                "  - name: holder",
+                "    resource_file: profile.yaml",
+                "    parameters:",
+                "      label: holder",
+                "  - name: fan",
+                "    resource_file: profile.yaml",
+                "    parameters:",
+                "      label: fan",
+                "  - name: x_join",
+                "    kind: join",
+                "    resource_file: x_join.yaml",
+                "    inject_parts:",
+                "      holder: holder",
+                "      fan: fan",
+                "    outputs:",
+                "      holder: holder_joined",
+                "      fan: fan_joined",
+                "  - name: late_anchor",
+                "    resource_file: profile.yaml",
+                "    depends_on:",
+                "      - holder_joined",
+                "    parameters:",
+                "      label: late-anchor",
+                "  - name: unrelated_consumer",
+                "    resource_file: profile.yaml",
+                "    depends_on:",
+                "      - unrelated",
+                "      - late_anchor",
+                "    parameters:",
+                "      label: unrelated-consumer",
+                "placement:",
+                "  alignments:",
+                "    - part: unrelated",
+                "      to: late_anchor",
+                "      alignment: CENTER",
+                "    - part: fan",
+                "      to: holder",
+                "      alignment: CENTER",
+            ]
+        ),
+    )
+
+    def fake_export(part, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(str(part), encoding="utf-8")
+
+    def fake_translation(
+        moving_anchor, target_anchor, *, alignment, axes=None, stack_gap=0
+    ):
+        suffix = f"|{alignment.name}:{moving_anchor}->{target_anchor}"
+
+        def transform(part):
+            if isinstance(part, LeaderFollowersCuttersPart):
+                return LeaderFollowersCuttersPart(
+                    f"{part.leader}{suffix}",
+                    additional_data=dict(part.additional_data),
+                )
+            return f"{part}{suffix}"
+
+        return transform
+
+    monkeypatch.setattr(builder, "_export_part_to_step", fake_export)
+    monkeypatch.setattr(
+        builder,
+        "_import_dependency_part",
+        lambda path: Path(path).read_text(encoding="utf-8"),
+    )
+    monkeypatch.setattr(
+        builder,
+        "_part_center",
+        lambda part: {
+            "holder": (0.0, 0.0, 0.0),
+            "fan": (10.0, 0.0, 0.0),
+            "fan|CENTER:fan->holder": (0.0, 0.0, 0.0),
+            "unrelated": (100.0, 0.0, 0.0),
+            "late-anchor": (200.0, 0.0, 0.0),
+            "unrelated|CENTER:unrelated->late-anchor": (200.0, 0.0, 0.0),
+        }[part],
+    )
+    monkeypatch.setattr(
+        builder,
+        "_make_placement_translation",
+        fake_translation,
+    )
+    monkeypatch.delitem(sys.modules, "demo_pkg", raising=False)
+    monkeypatch.delitem(sys.modules, "demo_pkg.placement_generators", raising=False)
+
+    results = builder.build_from_file(
+        config_path,
+        assembly_names=["holder_joined", "unrelated_consumer"],
+        repository_dir=tmp_path / "repository",
+    )
+
+    assert [result["assembly_name"] for result in results] == [
+        "fan",
+        "holder",
+        "unrelated",
+        "holder_joined",
+        "fan_joined",
+        "late_anchor",
+        "unrelated_consumer",
+    ]
+    holder_joined = next(
+        result for result in results if result["assembly_name"] == "holder_joined"
+    )
+    assert (
+        Path(holder_joined["artifacts"]["leader_step"]).read_text(encoding="utf-8")
+        == "holder_joined:holder:fan|CENTER:fan->holder"
+    )
+    fan_dependency = next(
+        dependency
+        for dependency in holder_joined["dependencies"]
+        if dependency["assembly_name"] == "fan"
+    )
+    assert fan_dependency["source_placement_offset"] == [-10.0, 0.0, 0.0]
+    assert fan_dependency["source_placement_transforms"] == [
+        {
+            "kind": "translate",
+            "vector": [-10.0, 0.0, 0.0],
+            "placement_step": 1,
+        }
     ]
 
 

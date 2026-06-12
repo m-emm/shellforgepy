@@ -877,25 +877,49 @@ def create_rounded_slab(
     return retval
 
 
+def _are_coplanar_quad_vertices(vertices, face_indices, tolerance=1e-8):
+    points = [np.asarray(vertices[index], dtype=np.float64) for index in face_indices]
+
+    for a, b, c in ((0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)):
+        normal = np.cross(points[b] - points[a], points[c] - points[a])
+        normal_length = np.linalg.norm(normal)
+        if normal_length <= tolerance:
+            continue
+
+        unit_normal = normal / normal_length
+        return all(
+            abs(np.dot(point - points[a], unit_normal)) <= tolerance for point in points
+        )
+
+    return False
+
+
 def create_distorted_cube(corners):
     if len(corners) != 8:
         raise ValueError("Distorted cube requires exactly 8 corners")
+
+    vertexes = {i: tuple(map(float, corners[i])) for i in range(8)}
+    face_specs = [
+        ([0, 3, 2, 1], ([0, 2, 1], [0, 3, 2])),
+        ([4, 5, 6, 7], ([4, 5, 6], [4, 6, 7])),
+        ([0, 1, 5, 4], ([0, 1, 5], [0, 5, 4])),
+        ([2, 3, 7, 6], ([2, 3, 6], [3, 7, 6])),
+        ([1, 2, 6, 5], ([1, 2, 5], [2, 6, 5])),
+        ([0, 4, 7, 3], ([0, 4, 3], [3, 4, 7])),
+    ]
+
+    faces = {}
+    for quad, triangles in face_specs:
+        if _are_coplanar_quad_vertices(vertexes, quad):
+            faces[len(faces)] = quad
+            continue
+
+        for triangle in triangles:
+            faces[len(faces)] = triangle
+
     maps = {
-        "vertexes": {i: tuple(map(float, corners[i])) for i in range(8)},
-        "faces": {
-            0: [0, 2, 1],
-            1: [0, 3, 2],
-            2: [4, 5, 6],
-            3: [4, 6, 7],
-            4: [0, 1, 5],
-            5: [0, 5, 4],
-            6: [2, 3, 6],
-            7: [3, 7, 6],
-            8: [1, 2, 5],
-            9: [2, 6, 5],
-            10: [0, 4, 3],
-            11: [3, 4, 7],
-        },
+        "vertexes": vertexes,
+        "faces": faces,
     }
     return create_solid_from_traditional_face_vertex_maps(maps)
 

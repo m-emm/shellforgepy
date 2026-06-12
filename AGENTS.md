@@ -39,6 +39,11 @@ This repository (`shellforgepy`) hosts the Python runtime for the ShellForge too
 - Verify functionality: run examples as documented in README.md: `python examples/filleted_boxes_example.py`
 - Export example: use helpers in `produce/arrange_and_export.py` together with primitives from `construct` and `geometry`.
 
+## Builder Cache Boundaries
+- In builder-based downstream projects, keep resource YAMLs cache-isolated: one `*_assembly.yaml` should normally point to one dedicated generator module.
+- The builder hashes the generator source file for cache invalidation, so two resource YAMLs sharing one module will invalidate each other's cached CAD artifacts when either generator changes.
+- During staged refactors of expensive CAD assemblies, intentional short-lived duplication in separate generator modules is preferable to sharing assembly generator modules. Remove the legacy copy once migration is complete.
+
 ## Integration Points
 - Geometry routines reuse utilities mirrored from `py_3d_construct_lib`. Keep shared logic consistent across repositories.
 - Adapters rely on CadQuery/FreeCAD APIs; when updating them, check `tests/unit/adapters/*` for coverage and update both adapters for feature parity when possible.

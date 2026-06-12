@@ -3166,6 +3166,87 @@ def _dependency_artifact_entry(
     return dict(entries[0])
 
 
+def _build_item_name_for_entry(entry: Mapping[str, Any]) -> str:
+    name = str(entry.get("name") or "<unknown>")
+    if _is_join_entry(entry):
+        return builder_graph_model.join_node_name(name)
+    return name
+
+
+def _require_injected_provider_placement_ready(
+    entry: Mapping[str, Any],
+    provider_assembly_name: str,
+    *,
+    placement_state: Optional[_PlacementExecutionState],
+    build_pool: Optional[_BuildArtifactPool],
+) -> None:
+    if placement_state is None or placement_state.graph_model is None:
+        return
+    if build_pool is None:
+        build_pool = placement_state.build_pool
+    if build_pool is None:
+        return
+
+    active_graph_model = _restrict_placement_model_to_active_assemblies(
+        placement_state.graph_model,
+        placement_state.active_assembly_names or build_pool.planned_names,
+    )
+    consumer_name = _build_item_name_for_entry(entry)
+    required_step_indices = (
+        builder_graph_model.required_injected_provider_placement_step_indices(
+            active_graph_model,
+            consumer_name,
+            provider_assembly_name,
+        )
+    )
+    unexecuted_step_indices = [
+        step_index
+        for step_index in required_step_indices
+        if step_index not in placement_state.executed_alignment_indices
+    ]
+    if not unexecuted_step_indices:
+        return
+
+    steps_by_index = {step.index: step for step in active_graph_model.placement_steps}
+    details: List[str] = []
+    for step_index in unexecuted_step_indices:
+        placement_step = steps_by_index.get(step_index)
+        if placement_step is None:
+            details.append(f"source_step={step_index} is not active")
+            continue
+        required_assemblies = _placement_step_required_assemblies(
+            placement_step,
+            placement_state.rigidity_graph,
+        )
+        missing_assemblies = [
+            name
+            for name in required_assemblies
+            if name not in build_pool.available_names
+        ]
+        pending_predecessors = sorted(
+            predecessor
+            for predecessor in active_graph_model.placement_execution_dag.predecessors(
+                placement_step.index
+            )
+            if predecessor not in placement_state.executed_alignment_indices
+        )
+        detail = (
+            f"source_step={placement_step.index} "
+            f"({_placement_step_description(placement_step)})"
+        )
+        if missing_assemblies:
+            detail += f"; missing_assemblies={missing_assemblies}"
+        if pending_predecessors:
+            detail += f"; pending_source_steps={pending_predecessors}"
+        details.append(detail)
+
+    raise BuilderError(
+        "Cannot inject assembly "
+        f"'{provider_assembly_name}' into '{entry.get('name')}' before required "
+        "placement steps have executed: " + "; ".join(details)
+    )
+
+
 def _resolve_dependency_injections(
     entry: Mapping[str, Any],
     built_results_by_name: Mapping[str, Dict[str, Any]],
@@ -3184,6 +3265,12 @@ def _resolve_dependency_injections(
                 consumer_assembly_name=str(entry.get("name") or "<unknown>"),
                 kwarg_name=kwarg_name,
                 artifact=spec["artifact"],
+            )
+            _require_injected_provider_placement_ready(
+                entry,
+                assembly_name,
+                placement_state=placement_state,
+                build_pool=build_pool,
             )
             metadata = build_pool.metadata_for(assembly_name)
         else:
@@ -5439,38 +5526,82 @@ def _advance_placement_execution(
         sorted(available_metadata_by_name),
     )
 
+    placement_state.cursor = sum(
+        1
+        for step in placement_steps
+        if step.index in placement_state.executed_alignment_indices
+    )
+
     while placement_state.cursor < len(placement_steps):
-        placement_step_nr = placement_state.cursor
-        placement_step = placement_steps[placement_step_nr]
+        ready_step: Optional[
+            tuple[int, builder_graph_model.PlacementStep, List[str]]
+        ] = None
+        pending_steps = [
+            (step_nr, step)
+            for step_nr, step in enumerate(placement_steps)
+            if step.index not in placement_state.executed_alignment_indices
+        ]
+        for placement_step_nr, placement_step in pending_steps:
+            pending_predecessors = sorted(
+                predecessor
+                for predecessor in active_graph_model.placement_execution_dag.predecessors(
+                    placement_step.index
+                )
+                if predecessor not in placement_state.executed_alignment_indices
+            )
+            if pending_predecessors:
+                continue
+
+            required_assemblies = _placement_step_required_assemblies(
+                placement_step,
+                placement_state.rigidity_graph,
+            )
+            missing_assemblies = [
+                name
+                for name in required_assemblies
+                if name not in build_pool.available_names
+            ]
+            if missing_assemblies:
+                _logger.info(
+                    "Placement cursor blocked: active_step=%s/%s; source_step=%s; step=%s; waiting_for=%s",
+                    placement_step_nr,
+                    len(placement_steps),
+                    placement_step.index,
+                    _placement_step_description(placement_step),
+                    missing_assemblies,
+                )
+                continue
+
+            ready_step = (placement_step_nr, placement_step, required_assemblies)
+            break
+
+        if ready_step is None:
+            for placement_step_nr, placement_step in pending_steps:
+                pending_predecessors = sorted(
+                    predecessor
+                    for predecessor in active_graph_model.placement_execution_dag.predecessors(
+                        placement_step.index
+                    )
+                    if predecessor not in placement_state.executed_alignment_indices
+                )
+                if pending_predecessors:
+                    _logger.debug(
+                        "Placement cursor waiting: active_step=%s/%s; source_step=%s; step=%s; waiting_for_source_steps=%s",
+                        placement_step_nr,
+                        len(placement_steps),
+                        placement_step.index,
+                        _placement_step_description(placement_step),
+                        pending_predecessors,
+                    )
+            break
+
+        placement_step_nr, placement_step, required_assemblies = ready_step
         _mark_skipped_post_transform_steps_dirty(
             placement_state,
             active_graph_model=active_graph_model,
             build_pool=build_pool,
             before_source_step=placement_step.index,
         )
-        if placement_step.index in placement_state.executed_alignment_indices:
-            placement_state.cursor += 1
-            continue
-
-        required_assemblies = _placement_step_required_assemblies(
-            placement_step,
-            placement_state.rigidity_graph,
-        )
-        missing_assemblies = [
-            name
-            for name in required_assemblies
-            if name not in build_pool.available_names
-        ]
-        if missing_assemblies:
-            _logger.info(
-                "Placement cursor blocked: active_step=%s/%s; source_step=%s; step=%s; waiting_for=%s",
-                placement_step_nr,
-                len(placement_steps),
-                placement_step.index,
-                _placement_step_description(placement_step),
-                missing_assemblies,
-            )
-            break
 
         if placement_step.is_rigid_group:
             rigid_group_assembly_names = placement_step.rigid_group_assembly_names
