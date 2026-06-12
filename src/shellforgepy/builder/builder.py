@@ -5576,6 +5576,15 @@ def _advance_placement_execution(
             break
 
         if ready_step is None:
+            if pending_steps:
+                _mark_skipped_post_transform_steps_dirty(
+                    placement_state,
+                    active_graph_model=active_graph_model,
+                    build_pool=build_pool,
+                    before_source_step=min(
+                        placement_step.index for _, placement_step in pending_steps
+                    ),
+                )
             for placement_step_nr, placement_step in pending_steps:
                 pending_predecessors = sorted(
                     predecessor
