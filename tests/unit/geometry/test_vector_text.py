@@ -50,14 +50,20 @@ def test_vector_text_layout_supports_all_punctuation():
 
 
 def test_vector_text_decimal_point_is_two_strokes_tall():
-    layout = layout_vector_text(".", 10.0)
+    layout = layout_vector_text(".", 4.5, stroke_width=0.6)
+    dot_points = [
+        point
+        for segment in layout.segments
+        for polygon in (segment_stroke_polygon(segment, layout.stroke_width),)
+        for point in polygon
+    ]
+    dot_xs = [point[0] for point in dot_points]
+    dot_ys = [point[1] for point in dot_points]
 
     assert len(layout.segments) == 2
-    assert layout.stroke_width == pytest.approx(0.8)
-    assert [segment.start[1] for segment in layout.segments] == pytest.approx(
-        [0.4, 1.2]
-    )
-    assert [segment.end[1] for segment in layout.segments] == pytest.approx([0.4, 1.2])
+    assert layout.stroke_width == pytest.approx(0.6)
+    assert max(dot_xs) - min(dot_xs) == pytest.approx(1.2)
+    assert max(dot_ys) - min(dot_ys) == pytest.approx(1.2)
 
 
 def test_vector_text_layout_rejects_unsupported_characters():

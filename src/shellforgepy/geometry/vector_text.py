@@ -692,6 +692,34 @@ def resolve_stroke_width(size, stroke_width=None) -> float:
     return stroke_value
 
 
+def _append_decimal_point_segments(
+    segments: list[VectorTextSegment],
+    cursor_x: float,
+    cursor_y: float,
+    size_value: float,
+    stroke_value: float,
+) -> float:
+    """Append a decimal point whose materialized dot is two stroke widths square."""
+
+    glyph = VECTOR_GLYPHS["."]
+    advance = max(glyph.advance * size_value, 2.0 * stroke_value + 0.10 * size_value)
+    center_x = cursor_x + advance / 2.0
+    half_centerline_length = stroke_value
+
+    for center_y in (
+        cursor_y + stroke_value / 2.0,
+        cursor_y + 1.5 * stroke_value,
+    ):
+        segments.append(
+            VectorTextSegment(
+                (center_x - half_centerline_length, center_y),
+                (center_x + half_centerline_length, center_y),
+            )
+        )
+
+    return advance
+
+
 def layout_vector_text(text: str, size, *, stroke_width=None) -> VectorTextLayout:
     """Layout text as scaled centerline stroke segments.
 
@@ -723,20 +751,29 @@ def layout_vector_text(text: str, size, *, stroke_width=None) -> VectorTextLayou
         if glyph is None:
             raise ValueError(f"Unsupported vector text character: {char!r}")
 
-        for start, end in glyph.strokes:
-            segments.append(
-                VectorTextSegment(
-                    (
-                        cursor_x + start[0] * size_value,
-                        cursor_y + start[1] * size_value,
-                    ),
-                    (
-                        cursor_x + end[0] * size_value,
-                        cursor_y + end[1] * size_value,
-                    ),
-                )
+        if char == ".":
+            cursor_x += _append_decimal_point_segments(
+                segments,
+                cursor_x,
+                cursor_y,
+                size_value,
+                stroke_value,
             )
-        cursor_x += glyph.advance * size_value
+        else:
+            for start, end in glyph.strokes:
+                segments.append(
+                    VectorTextSegment(
+                        (
+                            cursor_x + start[0] * size_value,
+                            cursor_y + start[1] * size_value,
+                        ),
+                        (
+                            cursor_x + end[0] * size_value,
+                            cursor_y + end[1] * size_value,
+                        ),
+                    )
+                )
+            cursor_x += glyph.advance * size_value
 
     if not segments:
         raise ValueError("Text contains no renderable vector glyphs")
