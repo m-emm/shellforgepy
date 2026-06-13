@@ -595,6 +595,80 @@ def test_arrange_and_export_manifest_records_plate_local_part_files(
     assert all(Path(entry["path"]).exists() for entry in plate_part_files)
 
 
+def test_arrange_and_export_preserves_model_coordinates_in_production(
+    monkeypatch, tmp_path
+):
+    import shellforgepy.produce.arrange_and_export as arrange_and_export_module
+
+    exported_bboxes = {}
+
+    def fake_export_solid_to_stl(part, destination):
+        destination_path = Path(destination)
+        if "anchored_box" in destination_path.name:
+            exported_bboxes["anchored_box"] = get_bounding_box(part)
+        if "preview_box" in destination_path.name:
+            exported_bboxes["preview_box"] = get_bounding_box(part)
+        destination_path.write_text("solid test\nendsolid test\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        arrange_and_export_module,
+        "export_solid_to_stl",
+        fake_export_solid_to_stl,
+    )
+
+    anchored_box = translate(25, 35, 0)(create_box(8, 6, 2))
+    original_bbox = get_bounding_box(anchored_box)
+    preview_box = translate(60, 60, 0)(create_box(10, 10, 1))
+
+    arrange_and_export_parts(
+        [
+            {
+                "name": "anchored_box",
+                "part": anchored_box,
+                "flip": True,
+            },
+            {
+                "name": "preview_box",
+                "part": preview_box,
+                "skip_in_production": True,
+            },
+        ],
+        prod_gap=2.0,
+        bed_width=100.0,
+        bed_depth=100.0,
+        script_file="test_absolute.py",
+        export_directory=tmp_path,
+        prod=True,
+        preserve_model_coordinates=True,
+        export_stl=True,
+        export_step=False,
+        export_obj=False,
+    )
+
+    assert "preview_box" not in exported_bboxes
+    assert exported_bboxes["anchored_box"][0] == pytest.approx(original_bbox[0])
+    assert exported_bboxes["anchored_box"][1] == pytest.approx(original_bbox[1])
+
+
+def test_arrange_and_export_preserved_coordinates_validate_bed_bounds(tmp_path):
+    outside_box = translate(-2, 10, 0)(create_box(8, 6, 2))
+
+    with pytest.raises(ValueError, match="outside preserved production bed bounds"):
+        arrange_and_export_parts(
+            [{"name": "outside_box", "part": outside_box}],
+            prod_gap=2.0,
+            bed_width=100.0,
+            bed_depth=100.0,
+            script_file="test_absolute.py",
+            export_directory=tmp_path,
+            prod=True,
+            preserve_model_coordinates=True,
+            export_stl=False,
+            export_step=False,
+            export_obj=True,
+        )
+
+
 def test_arrange_and_export_manifest_records_plate_step_files(monkeypatch, tmp_path):
     import shellforgepy.produce.arrange_and_export as arrange_and_export_module
 

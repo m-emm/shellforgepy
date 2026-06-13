@@ -50,3 +50,7 @@ This repository (`shellforgepy`) hosts the Python runtime for the ShellForge too
 - `shellforgepy.simple` is the public entry point; ensure new capabilities surface there with clean imports. Users should import specific functions they need rather than accessing internal adapter details.
 
 Keep this guide current as the ShellForge pipeline evolves.
+
+## New Geometric Features
+
+- Whenever implementing new geometric features, try to first implement it backend-agnostic. If something can be implemented using the primitives we already have, use them only. Only for very new special geometric operations, add adapter code which uses new backend features.

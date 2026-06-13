@@ -31,6 +31,7 @@ from shellforgepy.adapters._adapter import (
 )
 from shellforgepy.adapters.font_resolver import resolve_font
 from shellforgepy.construct.alignment import Alignment
+from shellforgepy.geometry.vector_text import create_vector_text_object
 
 # These tests are on a generic adapter level and do not depend on a specific CAD backend
 # like FreeCAD or CadQuery.
@@ -151,6 +152,44 @@ def test_text_object_bounding_box_dimensions():
     assert width >= glyph_height * 1.2
     aspect_ratio = width / max(height, 1e-6)
     assert 1.0 <= aspect_ratio <= 8.0
+
+
+def test_vector_text_object_padding_and_dimensions():
+    text = create_vector_text_object(
+        "A1?",
+        size=4.0,
+        thickness=1.25,
+        stroke_width=0.35,
+        padding=1.5,
+    )
+
+    min_point, _ = get_bounding_box(text)
+    width, height, thickness = _bbox_size_tuple(text)
+
+    assert min_point[0] == pytest.approx(1.5, abs=1e-3)
+    assert min_point[1] == pytest.approx(1.5, abs=1e-3)
+    assert min_point[2] >= -1e-6
+    assert width > 4.0
+    assert height > 3.0
+    assert thickness == pytest.approx(1.25, abs=1e-6)
+    assert get_volume(text) > 0.0
+
+
+def test_vector_text_object_validation_errors():
+    with pytest.raises(ValueError, match="non-empty"):
+        create_vector_text_object("", size=4.0, thickness=1.0)
+
+    with pytest.raises(ValueError, match="Size must be positive"):
+        create_vector_text_object("A", size=0.0, thickness=1.0)
+
+    with pytest.raises(ValueError, match="Thickness must be positive"):
+        create_vector_text_object("A", size=4.0, thickness=0.0)
+
+    with pytest.raises(ValueError, match="Padding cannot be negative"):
+        create_vector_text_object("A", size=4.0, thickness=1.0, padding=-0.1)
+
+    with pytest.raises(ValueError, match="Stroke width"):
+        create_vector_text_object("A", size=4.0, thickness=1.0, stroke_width=4.0)
 
 
 def test_cylinder_cone_and_sphere_creation():

@@ -1404,6 +1404,61 @@ def _arrange_plate_parts_for_bed(
     )
 
 
+def _copy_part_entry_for_export(entry):
+    if "name" not in entry or "part" not in entry:
+        raise KeyError("Each part mapping must include 'name' and 'part'")
+    return {
+        "name": str(entry["name"]),
+        "part": entry["part"],
+        "color": entry.get("color"),
+        "animation": entry.get("animation"),
+        "source_path": entry.get("source_path"),
+        "source_parameter_hash": entry.get("source_parameter_hash"),
+        "source_version_inputs": deepcopy(entry.get("source_version_inputs", {})),
+        "transform_history": _copy_transform_history(entry),
+        "obj_metadata": deepcopy(entry.get("obj_metadata")),
+    }
+
+
+def _validate_preserved_part_bounds(
+    parts_list,
+    *,
+    bed_width,
+    bed_depth,
+    prod_origin,
+    max_build_height=None,
+):
+    min_bed_x = float(prod_origin[0])
+    min_bed_y = float(prod_origin[1])
+    max_bed_x = min_bed_x + float(bed_width)
+    max_bed_y = min_bed_y + float(bed_depth)
+    tolerance = 1e-9
+
+    for entry in parts_list:
+        min_point, max_point = get_bounding_box(entry["part"])
+        if (
+            min_point[0] < min_bed_x - tolerance
+            or max_point[0] > max_bed_x + tolerance
+            or min_point[1] < min_bed_y - tolerance
+            or max_point[1] > max_bed_y + tolerance
+        ):
+            raise ValueError(
+                f"Part '{entry['name']}' outside preserved production bed bounds: "
+                f"part=(({min_point[0]:.3f}, {min_point[1]:.3f}), "
+                f"({max_point[0]:.3f}, {max_point[1]:.3f})), "
+                f"bed=(({min_bed_x:.3f}, {min_bed_y:.3f}), "
+                f"({max_bed_x:.3f}, {max_bed_y:.3f}))"
+            )
+
+        if max_build_height is not None:
+            depth = max_point[2] - min_point[2]
+            if depth > max_build_height:
+                raise ValueError(
+                    f"Part {entry['name']} exceeds max_build_height "
+                    f"({max_build_height} mm)"
+                )
+
+
 def arrange_and_export_parts(
     parts,
     prod_gap,
@@ -1431,6 +1486,7 @@ def arrange_and_export_parts(
     enforce_bed_size=True,
     plate_scene_gap=20.0,
     visualize_plate_boundaries=True,
+    preserve_model_coordinates=False,
 ):
     """Arrange named parts with production support and export requested formats.
 
@@ -1481,9 +1537,17 @@ def arrange_and_export_parts(
     parts_list = [dict(item) for item in parts_iterable]
 
     # Filter out parts that should be skipped in production
+    original_part_count = len(parts_list)
     if prod:
         parts_list = [p for p in parts_list if not p.get("skip_in_production", False)]
-        print(f"Arranging for production; skipped {len(parts) - len(parts_list)} parts")
+        skipped_count = original_part_count - len(parts_list)
+        if preserve_model_coordinates:
+            print(
+                "Preserving model coordinates for production; "
+                f"skipped {skipped_count} parts"
+            )
+        else:
+            print(f"Arranging for production; skipped {skipped_count} parts")
     else:
         print("Leaving parts where they are")
 
@@ -1511,32 +1575,14 @@ def arrange_and_export_parts(
                 f"used with prod=True: {', '.join(obj_mesh_names)}"
             )
 
-    # Use production arrangement or simple positioning
-    if prod:
+    # Use production arrangement, preserved model coordinates, or simple positioning.
+    if prod and not preserve_model_coordinates:
         arranged_parts = apply_production_orientation_to_part_entries(
             parts_list,
             max_build_height=max_build_height,
         )
     else:
-        arranged_parts = []
-        for entry in parts_list:
-            if "name" not in entry or "part" not in entry:
-                raise KeyError("Each part mapping must include 'name' and 'part'")
-            arranged_parts.append(
-                {
-                    "name": str(entry["name"]),
-                    "part": entry["part"],
-                    "color": entry.get("color"),
-                    "animation": entry.get("animation"),
-                    "source_path": entry.get("source_path"),
-                    "source_parameter_hash": entry.get("source_parameter_hash"),
-                    "source_version_inputs": deepcopy(
-                        entry.get("source_version_inputs", {})
-                    ),
-                    "transform_history": _copy_transform_history(entry),
-                    "obj_metadata": deepcopy(entry.get("obj_metadata")),
-                }
-            )
+        arranged_parts = [_copy_part_entry_for_export(entry) for entry in parts_list]
 
     plate_groups = _split_parts_into_plates(
         arranged_parts,
@@ -1553,6 +1599,14 @@ def arrange_and_export_parts(
     arranged_parts = [
         entry for entry in arranged_parts if entry["name"] in selected_part_names
     ]
+    if prod and preserve_model_coordinates:
+        _validate_preserved_part_bounds(
+            arranged_parts,
+            bed_width=bed_width,
+            bed_depth=bed_depth,
+            prod_origin=prod_origin,
+            max_build_height=max_build_height,
+        )
     prepared_plate_groups = []
     for plate_name, plate_parts in plate_groups:
         prepared_plate_groups.append(
@@ -1566,7 +1620,7 @@ def arrange_and_export_parts(
                         gap=prod_gap,
                         prod_origin=prod_origin,
                     )
-                    if prod
+                    if prod and not preserve_model_coordinates
                     else list(plate_parts)
                 ),
             )
@@ -1868,6 +1922,7 @@ def arrange_and_export(
     plates=None,
     plate_process_data_map=None,
     auto_assign_plates=False,
+    preserve_model_coordinates=False,
 ):
     """Arrange and export a single part with production support.
 
@@ -1915,4 +1970,5 @@ def arrange_and_export(
         plates=plates,
         plate_process_data_map=plate_process_data_map,
         auto_assign_plates=auto_assign_plates,
+        preserve_model_coordinates=preserve_model_coordinates,
     )

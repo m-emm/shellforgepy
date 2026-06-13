@@ -151,6 +151,7 @@ from shellforgepy.geometry.treapezoidal_snake_geometry import (
     create_bezier_snake_geometry,
     create_trapezoidal_snake_geometry,
 )
+from shellforgepy.geometry.vector_text import create_vector_text_object
 from shellforgepy.produce.arrange_and_export import (
     arrange_and_export,
     arrange_and_export_parts,
@@ -227,6 +228,7 @@ __all__ = [
     "create_sphere",
     "create_tetrahedron_geometry",
     "create_text_object",
+    "create_vector_text_object",
     "create_trapezoid",
     "create_trapezoidal_snake_geometry",
     "create_triangular_prism_geometry",
