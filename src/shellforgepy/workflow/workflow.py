@@ -31,6 +31,7 @@ EXPORT_DIR_ENV = "SHELLFORGEPY_EXPORT_DIR"
 MANIFEST_ENV = "SHELLFORGEPY_WORKFLOW_MANIFEST"
 RUN_ID_ENV = "SHELLFORGEPY_RUN_ID"
 RUN_DIR_ENV = "SHELLFORGEPY_RUN_DIRECTORY"
+SELECTED_PLATES_ENV = "SHELLFORGEPY_SELECTED_PLATES"
 MANIFEST_FILENAME = "workflow_manifest.json"
 
 CONFIG_KEYS = {
@@ -1473,6 +1474,8 @@ def run_workflow(args: argparse.Namespace) -> int:
     env[RUN_DIR_ENV] = str(run_directory)
     env[EXPORT_DIR_ENV] = str(run_directory)
     env[MANIFEST_ENV] = str(manifest_path)
+    if getattr(args, "plate", None):
+        env[SELECTED_PLATES_ENV] = json.dumps(list(args.plate))
 
     # Set viewer base URL if configured
     viewer_base_url = _resolve_config_key_value(config, "viewer_base_url")
@@ -1586,6 +1589,7 @@ def _normalize_run_argv(argv: Sequence[str]) -> List[str]:
         "--process-file",
         "--printer",
         "--open",
+        "--plate",
     }
     option_flags_with_values = {
         "--run-id",
@@ -1597,6 +1601,7 @@ def _normalize_run_argv(argv: Sequence[str]) -> List[str]:
         "--part-file",
         "--process-file",
         "--printer",
+        "--plate",
     }
 
     workflow_args: List[str] = []
@@ -1733,6 +1738,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--open",
         action="store_true",
         help="Open the generated 3MF file in OrcaSlicer GUI after slicing",
+    )
+    run_parser.add_argument(
+        "--plate",
+        action="append",
+        help="Export, slice, upload, and open only the named plate. Repeatable.",
     )
     run_parser.add_argument(
         "target_args",

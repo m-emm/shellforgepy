@@ -5,6 +5,7 @@ from shellforgepy.geometry.vector_text import (
     layout_vector_text,
     segment_stroke_polygon,
     supported_vector_text_characters,
+    vector_text_stroke_polygons,
 )
 
 
@@ -22,6 +23,34 @@ def test_vector_text_layout_normalizes_lowercase():
     assert layout.size == 10.0
     assert layout.stroke_width == pytest.approx(0.8)
     assert len(layout.segments) > 0
+
+
+def test_vector_text_digit_four_uses_open_technical_shape():
+    layout = layout_vector_text("4", 10.0)
+
+    coordinates = [
+        coordinate
+        for segment in layout.segments
+        for point in (segment.start, segment.end)
+        for coordinate in point
+    ]
+
+    assert coordinates == pytest.approx(
+        [
+            6.2,
+            10.0,
+            6.2,
+            0.0,
+            0.8,
+            4.2,
+            7.2,
+            4.2,
+            0.8,
+            4.2,
+            6.2,
+            10.0,
+        ]
+    )
 
 
 def test_vector_text_layout_handles_spaces_and_newlines():
@@ -51,16 +80,13 @@ def test_vector_text_layout_supports_all_punctuation():
 
 def test_vector_text_decimal_point_is_two_strokes_tall():
     layout = layout_vector_text(".", 4.5, stroke_width=0.6)
-    dot_points = [
-        point
-        for segment in layout.segments
-        for polygon in (segment_stroke_polygon(segment, layout.stroke_width),)
-        for point in polygon
-    ]
+    polygons = vector_text_stroke_polygons(layout.segments, layout.stroke_width)
+    dot_points = [point for polygon in polygons for point in polygon]
     dot_xs = [point[0] for point in dot_points]
     dot_ys = [point[1] for point in dot_points]
 
     assert len(layout.segments) == 2
+    assert len(polygons) == 2
     assert layout.stroke_width == pytest.approx(0.6)
     assert max(dot_xs) - min(dot_xs) == pytest.approx(1.2)
     assert max(dot_ys) - min(dot_ys) == pytest.approx(1.2)
@@ -93,3 +119,19 @@ def test_segment_stroke_polygon_wraps_centerline():
     coordinates = [coordinate for point in polygon for coordinate in point]
 
     assert coordinates == pytest.approx([0.0, 0.2, 2.0, 0.2, 2.0, -0.2, 0.0, -0.2])
+
+
+def test_vector_text_stroke_polygons_caps_only_touching_joins():
+    polygons = vector_text_stroke_polygons(
+        (
+            VectorTextSegment((0.0, 0.0), (10.0, 0.0)),
+            VectorTextSegment((10.0, 0.0), (10.0, 10.0)),
+            VectorTextSegment((20.0, 0.0), (30.0, 0.0)),
+        ),
+        stroke_width=2.0,
+    )
+
+    assert len(polygons) == 5
+    assert max(point[0] for point in polygons[1]) > 10.0
+    assert min(point[1] for point in polygons[3]) < 0.0
+    assert max(point[0] for point in polygons[4]) == pytest.approx(30.0)

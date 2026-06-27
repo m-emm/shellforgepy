@@ -12,6 +12,7 @@ import shellforgepy.workflow.upload_to_printer as upload_to_printer_module
 import shellforgepy.workflow.workflow as workflow_module
 from shellforgepy.workflow.workflow import (
     MANIFEST_ENV,
+    SELECTED_PLATES_ENV,
     SubprocessResult,
     WorkflowError,
     _normalize_run_argv,
@@ -39,6 +40,7 @@ def _make_args(target: Path, runs_dir: Path, **overrides):
         "process_file": None,
         "printer": None,
         "open": False,
+        "plate": None,
         "target_args": [],
     }
     values.update(overrides)
@@ -85,6 +87,31 @@ def test_run_workflow_allows_obj_only_geometry_runs(monkeypatch, tmp_path):
     result = run_workflow(_make_args(target, tmp_path))
 
     assert result == 0
+
+
+def test_run_workflow_passes_selected_plates_to_target_env(monkeypatch, tmp_path):
+    target = tmp_path / "design.py"
+    target.write_text("print('hello')\n", encoding="utf-8")
+    captured = {}
+
+    def fake_execute_subprocess(cmd, *, env=None, cwd=None, stdin_data=None):
+        captured["selected_plates"] = env[SELECTED_PLATES_ENV]
+        manifest_path = Path(env[MANIFEST_ENV])
+        run_directory = manifest_path.parent
+        obj_path = run_directory / "design.obj"
+        obj_path.write_text("# obj\n", encoding="utf-8")
+        manifest_path.write_text(
+            json.dumps({"obj_path": str(obj_path)}),
+            encoding="utf-8",
+        )
+        return SubprocessResult(0, [], [])
+
+    monkeypatch.setattr(workflow_module, "execute_subprocess", fake_execute_subprocess)
+
+    result = run_workflow(_make_args(target, tmp_path, plate=["left", "right"]))
+
+    assert result == 0
+    assert json.loads(captured["selected_plates"]) == ["left", "right"]
 
 
 def test_viewer_model_upload_files_include_mtl_texture_dependencies(tmp_path):
@@ -1295,9 +1322,16 @@ def test_complete_workflow_run_uses_plate_obj_for_multi_plate_gcode_previews(
 
 
 def test_normalize_run_argv_moves_workflow_flags_before_target():
-    argv = ["run", "design.py", "--slice", "--open"]
+    argv = ["run", "design.py", "--slice", "--plate", "left", "--open"]
 
-    assert _normalize_run_argv(argv) == ["run", "--slice", "--open", "design.py"]
+    assert _normalize_run_argv(argv) == [
+        "run",
+        "--slice",
+        "--plate",
+        "left",
+        "--open",
+        "design.py",
+    ]
 
 
 def test_normalize_run_argv_preserves_target_args_after_separator():
@@ -1321,18 +1355,20 @@ def test_main_accepts_workflow_flags_after_target(monkeypatch, tmp_path):
     def fake_run_workflow(args):
         captured["slice"] = args.slice
         captured["open"] = args.open
+        captured["plate"] = args.plate
         captured["target"] = args.target
         captured["target_args"] = list(args.target_args)
         return 0
 
     monkeypatch.setattr(workflow_module, "run_workflow", fake_run_workflow)
 
-    result = main(["run", str(target), "--slice", "--open"])
+    result = main(["run", str(target), "--slice", "--plate", "left", "--open"])
 
     assert result == 0
     assert captured == {
         "slice": True,
         "open": True,
+        "plate": ["left"],
         "target": str(target),
         "target_args": [],
     }

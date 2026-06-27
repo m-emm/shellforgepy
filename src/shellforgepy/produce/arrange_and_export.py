@@ -37,6 +37,8 @@ from shellforgepy.produce.production_parts_model import PartList
 
 _logger = logging.getLogger(__name__)
 
+SELECTED_PLATES_ENV = "SHELLFORGEPY_SELECTED_PLATES"
+
 # Default colors for parts when not specified.
 # Uses standard ColorBrewer qualitative palettes from matplotlib
 # (Set2, Set3, Pastel2). All colors are in the lighter half of HLS
@@ -927,6 +929,21 @@ def _filter_plate_groups(plate_groups, selected_plate_names):
     return filtered_groups
 
 
+def _selected_plates_from_env():
+    raw_value = os.environ.get(SELECTED_PLATES_ENV)
+    if not raw_value:
+        return None
+    try:
+        parsed_value = json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{SELECTED_PLATES_ENV} must contain a JSON list") from exc
+    if not isinstance(parsed_value, list) or not all(
+        isinstance(item, str) for item in parsed_value
+    ):
+        raise ValueError(f"{SELECTED_PLATES_ENV} must contain a JSON list of strings")
+    return parsed_value
+
+
 def _center_plate_parts_on_bed(
     plate_parts,
     *,
@@ -1563,6 +1580,9 @@ def arrange_and_export_parts(
             "need a generated STL part_file"
         )
 
+    if selected_plates is None:
+        selected_plates = _selected_plates_from_env()
+
     if prod:
         obj_mesh_names = [
             str(entry.get("name", "<unnamed>"))
@@ -1921,6 +1941,7 @@ def arrange_and_export(
     mesh_cache_dir=None,
     plates=None,
     plate_process_data_map=None,
+    selected_plates=None,
     auto_assign_plates=False,
     preserve_model_coordinates=False,
 ):
@@ -1969,6 +1990,7 @@ def arrange_and_export(
         mesh_cache_dir=mesh_cache_dir,
         plates=plates,
         plate_process_data_map=plate_process_data_map,
+        selected_plates=selected_plates,
         auto_assign_plates=auto_assign_plates,
         preserve_model_coordinates=preserve_model_coordinates,
     )

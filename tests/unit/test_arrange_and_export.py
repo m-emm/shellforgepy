@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from shellforgepy.produce.arrange_and_export import (
+    SELECTED_PLATES_ENV,
     _arrange_parts_for_production,
     _arrange_plate_parts_for_bed,
     _build_colored_meshes,
@@ -833,6 +834,107 @@ def test_arrange_and_export_uses_single_selected_plate_name_for_primary_obj(
     assert manifest["mtl_path"].endswith("test_multi_plate_left_plate.mtl")
     assert manifest["plates"][0]["obj_path"].endswith("test_multi_plate_left_plate.obj")
     assert manifest["plates"][0]["mtl_path"].endswith("test_multi_plate_left_plate.mtl")
+
+
+def test_arrange_and_export_uses_selected_plates_from_env(monkeypatch, tmp_path):
+    import shellforgepy.produce.arrange_and_export as arrange_and_export_module
+
+    export_calls = []
+    manifest_path = tmp_path / "workflow_manifest.json"
+
+    def fake_build_colored_meshes(parts, **kwargs):
+        return [{"parts": [entry["name"] for entry in parts]}]
+
+    def fake_export_colored_meshes_to_obj(meshes, destination):
+        destination_path = Path(destination)
+        export_calls.append(destination_path.name)
+        destination_path.write_text("obj", encoding="utf-8")
+        destination_path.with_suffix(".mtl").write_text("mtl", encoding="utf-8")
+
+    monkeypatch.setattr(
+        arrange_and_export_module,
+        "_build_colored_meshes",
+        fake_build_colored_meshes,
+    )
+    monkeypatch.setattr(
+        arrange_and_export_module,
+        "export_colored_meshes_to_obj",
+        fake_export_colored_meshes_to_obj,
+    )
+    monkeypatch.setenv("SHELLFORGEPY_WORKFLOW_MANIFEST", str(manifest_path))
+    monkeypatch.setenv(SELECTED_PLATES_ENV, json.dumps(["left_plate"]))
+
+    result = arrange_and_export_parts(
+        [
+            {"name": "left_box", "part": create_box(10, 10, 10)},
+            {"name": "right_box", "part": create_box(10, 10, 10)},
+        ],
+        prod_gap=2.0,
+        bed_width=100.0,
+        script_file="test_multi_plate.py",
+        export_directory=tmp_path,
+        prod=True,
+        export_stl=False,
+        export_step=False,
+        export_obj=True,
+        plates=[
+            {"name": "left_plate", "parts": ["left_box"]},
+            {"name": "right_plate", "parts": ["right_box"]},
+        ],
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert export_calls == ["test_multi_plate_left_plate.obj"]
+    assert result == tmp_path / "test_multi_plate_left_plate.obj"
+    assert [plate["name"] for plate in manifest["plates"]] == ["left_plate"]
+
+
+def test_arrange_and_export_env_selected_plate_rejects_unknown_name(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv(SELECTED_PLATES_ENV, json.dumps(["missing_plate"]))
+
+    with pytest.raises(ValueError, match="Unknown plate selection"):
+        arrange_and_export_parts(
+            [{"name": "left_box", "part": create_box(10, 10, 10)}],
+            prod_gap=2.0,
+            bed_width=100.0,
+            script_file="test_multi_plate.py",
+            export_directory=tmp_path,
+            prod=True,
+            export_stl=False,
+            export_step=False,
+            export_obj=True,
+            plates=[{"name": "left_plate", "parts": ["left_box"]}],
+        )
+
+
+def test_arrange_and_export_wrapper_forwards_selected_plates(monkeypatch):
+    import shellforgepy.produce.arrange_and_export as arrange_and_export_module
+
+    captured = {}
+
+    def fake_arrange_and_export_parts(
+        parts, prod_gap, bed_width, script_file, **kwargs
+    ):
+        captured["kwargs"] = kwargs
+        return "ok"
+
+    monkeypatch.setattr(
+        arrange_and_export_module,
+        "arrange_and_export_parts",
+        fake_arrange_and_export_parts,
+    )
+
+    result = arrange_and_export(
+        [],
+        script_file="demo.py",
+        selected_plates=["left_plate"],
+    )
+
+    assert result == "ok"
+    assert captured["kwargs"]["selected_plates"] == ["left_plate"]
 
 
 def test_arrange_and_export_uses_four_millimeter_default_gap(monkeypatch):

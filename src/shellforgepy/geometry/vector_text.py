@@ -1,12 +1,15 @@
 """Dependency-free straight-line glyphs for fast vector text creation."""
 
 import math
+from collections import Counter
 from dataclasses import dataclass
 
 Point2D = tuple[float, float]
 Segment2D = tuple[Point2D, Point2D]
+StrokePolygon2D = tuple[Point2D, ...]
 
 DEFAULT_STROKE_WIDTH_RATIO = 0.08
+STROKE_CAP_ARC_SEGMENTS = 8
 SPACE_ADVANCE = 0.55
 LINE_ADVANCE = 1.25
 PUNCTUATION_CHARACTERS = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
@@ -340,9 +343,9 @@ VECTOR_GLYPHS: dict[str, VectorGlyph] = {
     "4": VectorGlyph(
         0.90,
         (
-            ((0.60, 1.00), (0.60, 0.00)),
-            ((0.00, 0.65), (0.60, 0.65)),
-            ((0.00, 0.65), (0.45, 1.00)),
+            ((0.62, 1.00), (0.62, 0.00)),
+            ((0.08, 0.42), (0.72, 0.42)),
+            ((0.08, 0.42), (0.62, 1.00)),
         ),
     ),
     "5": VectorGlyph(
@@ -812,6 +815,81 @@ def segment_stroke_polygon(
     )
 
 
+def vector_text_stroke_polygons(
+    segments: tuple[VectorTextSegment, ...],
+    stroke_width: float,
+) -> tuple[StrokePolygon2D, ...]:
+    """Return stroke rectangles plus rounded overlap caps at shared endpoints."""
+
+    touching_endpoints = _touching_endpoint_keys(segments)
+    polygons: list[StrokePolygon2D] = []
+
+    for segment in segments:
+        polygons.append(segment_stroke_polygon(segment, stroke_width))
+        if _endpoint_key(segment.start) in touching_endpoints:
+            polygons.append(
+                _segment_stroke_cap_polygon(segment, stroke_width, at_start=True)
+            )
+        if _endpoint_key(segment.end) in touching_endpoints:
+            polygons.append(
+                _segment_stroke_cap_polygon(segment, stroke_width, at_start=False)
+            )
+
+    return tuple(polygons)
+
+
+def _segment_stroke_cap_polygon(
+    segment: VectorTextSegment,
+    stroke_width: float,
+    *,
+    at_start: bool,
+) -> StrokePolygon2D:
+    x1, y1 = segment.start
+    x2, y2 = segment.end
+    dx = x2 - x1
+    dy = y2 - y1
+    length = math.hypot(dx, dy)
+    if length <= 1e-12:
+        raise ValueError("Cannot materialize a zero-length vector text stroke")
+
+    radius = stroke_width / 2.0
+    tangent_x = dx / length
+    tangent_y = dy / length
+    normal_x = -dy / length
+    normal_y = dx / length
+    center_x, center_y = segment.start if at_start else segment.end
+    outward_x = -tangent_x if at_start else tangent_x
+    outward_y = -tangent_y if at_start else tangent_y
+
+    return tuple(
+        (
+            center_x
+            + (outward_x * math.cos(angle) + normal_x * math.sin(angle)) * radius,
+            center_y
+            + (outward_y * math.cos(angle) + normal_y * math.sin(angle)) * radius,
+        )
+        for angle in (
+            math.pi / 2.0 - math.pi * index / STROKE_CAP_ARC_SEGMENTS
+            for index in range(STROKE_CAP_ARC_SEGMENTS + 1)
+        )
+    )
+
+
+def _touching_endpoint_keys(
+    segments: tuple[VectorTextSegment, ...],
+) -> set[tuple[float, float]]:
+    endpoint_counts = Counter(
+        _endpoint_key(point)
+        for segment in segments
+        for point in (segment.start, segment.end)
+    )
+    return {key for key, count in endpoint_counts.items() if count > 1}
+
+
+def _endpoint_key(point: Point2D) -> tuple[float, float]:
+    return (round(point[0], 9), round(point[1], 9))
+
+
 def create_vector_text_object(
     text: str,
     size,
@@ -839,11 +917,8 @@ def create_vector_text_object(
     layout = layout_vector_text(text, size, stroke_width=stroke_width)
 
     solids = [
-        create_extruded_polygon(
-            segment_stroke_polygon(segment, layout.stroke_width),
-            thickness_value,
-        )
-        for segment in layout.segments
+        create_extruded_polygon(polygon, thickness_value)
+        for polygon in vector_text_stroke_polygons(layout.segments, layout.stroke_width)
     ]
     if not solids:
         raise RuntimeError("Vector text layout produced no solids")
@@ -899,4 +974,5 @@ __all__ = [
     "resolve_stroke_width",
     "segment_stroke_polygon",
     "supported_vector_text_characters",
+    "vector_text_stroke_polygons",
 ]
