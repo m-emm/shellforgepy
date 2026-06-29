@@ -11,7 +11,7 @@ is computationally expensive. Run these with: pytest -m slow
 import math
 
 import pytest
-from shellforgepy.adapters._adapter import get_bounding_box
+from shellforgepy.adapters._adapter import create_cylinder, get_bounding_box, get_volume
 from shellforgepy.construct.bounding_box_helpers import get_zlen, get_zmax, get_zmin
 from shellforgepy.construct.leader_followers_cutters_part import (
     LeaderFollowersCuttersPart,
@@ -23,6 +23,7 @@ from shellforgepy.geometry.m_screws import (
     create_cylinder_screw,
     create_hidden_nut_pocket_cutter,
     create_nut,
+    create_self_threading_hole_cutter,
     get_clearance_hole_diameter,
     get_core_hole_diameter,
     get_nut_outer_diameter,
@@ -205,6 +206,45 @@ def test_create_hidden_nut_pocket_cutter_with_bottom():
     assert math.isclose(
         get_zmax(cutter_bb), expected_nut_height + top_length, abs_tol=1e-6
     )
+
+
+def test_create_self_threading_hole_cutter_volume_and_height():
+    """Self-threading cutter should sit between core and clearance cylinder volumes."""
+    length = 8.0
+    cutter = create_self_threading_hole_cutter("M3", length)
+
+    assert cutter is not None
+
+    cutter_bb = get_bounding_box(cutter)
+    assert math.isclose(get_zlen(cutter_bb), length, rel_tol=1e-6, abs_tol=1e-6)
+
+    core_cylinder = create_cylinder(get_core_hole_diameter("M3") / 2, length)
+    clearance_cylinder = create_cylinder(
+        get_clearance_hole_diameter("M3", "close") / 2, length
+    )
+
+    cutter_volume = get_volume(cutter)
+    assert get_volume(core_cylinder) < cutter_volume
+    assert cutter_volume < get_volume(clearance_cylinder)
+
+
+def test_create_self_threading_hole_cutter_preserves_lookup_errors():
+    """Self-threading cutter should use the same size and clearance validation."""
+    with pytest.raises(KeyError, match="Unsupported screw size"):
+        create_self_threading_hole_cutter("M999", 8)
+
+    with pytest.raises(ValueError, match="Invalid clearance type"):
+        create_self_threading_hole_cutter("M3", 8, clearance_type="invalid")
+
+
+def test_create_self_threading_hole_cutter_is_exported_from_simple():
+    """The convenience facade should expose the public cutter helper."""
+    from shellforgepy.simple import (
+        create_self_threading_hole_cutter as simple_self_threading_hole_cutter,
+    )
+
+    cutter = simple_self_threading_hole_cutter("M3", 2)
+    assert cutter is not None
 
 
 @pytest.mark.slow

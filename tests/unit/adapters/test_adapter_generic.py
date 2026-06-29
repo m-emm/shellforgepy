@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import shellforgepy.geometry.vector_text as vector_text_module
 from shellforgepy.adapters._adapter import (
     apply_fillet_by_alignment,
     apply_fillet_to_edges,
@@ -173,6 +174,53 @@ def test_vector_text_object_padding_and_dimensions():
     assert height > 3.0
     assert thickness == pytest.approx(1.25, abs=1e-6)
     assert get_volume(text) > 0.0
+
+
+def test_vector_text_object_reuses_cached_glyph_solids(monkeypatch):
+    import shellforgepy.adapters._adapter as adapter_module
+
+    vector_text_module._scaled_vector_glyph_segments.cache_clear()
+    vector_text_module._materialized_vector_glyph_solid.cache_clear()
+
+    original_create_extruded_polygon = adapter_module.create_extruded_polygon
+    extrusion_calls = []
+
+    def counting_create_extruded_polygon(points, thickness):
+        extrusion_calls.append((tuple(points), thickness))
+        return original_create_extruded_polygon(points, thickness)
+
+    monkeypatch.setattr(
+        adapter_module,
+        "create_extruded_polygon",
+        counting_create_extruded_polygon,
+    )
+
+    try:
+        create_vector_text_object("AAAA", size=4.0, thickness=1.0, stroke_width=0.35)
+        first_call_count = len(extrusion_calls)
+        expected_a_polygons = len(
+            vector_text_module.vector_text_stroke_polygons(
+                vector_text_module._scaled_vector_glyph_segments("A", 4.0, 0.35),
+                0.35,
+            )
+        )
+
+        create_vector_text_object("AA", size=4.0, thickness=1.0, stroke_width=0.35)
+        repeated_call_count = len(extrusion_calls)
+
+        create_vector_text_object("AB", size=4.0, thickness=1.0, stroke_width=0.35)
+        different_glyph_call_count = len(extrusion_calls)
+
+        create_vector_text_object("A", size=5.0, thickness=1.0, stroke_width=0.35)
+        different_size_call_count = len(extrusion_calls)
+    finally:
+        vector_text_module._scaled_vector_glyph_segments.cache_clear()
+        vector_text_module._materialized_vector_glyph_solid.cache_clear()
+
+    assert first_call_count == expected_a_polygons
+    assert repeated_call_count == first_call_count
+    assert different_glyph_call_count > repeated_call_count
+    assert different_size_call_count > different_glyph_call_count
 
 
 def test_vector_text_object_validation_errors():

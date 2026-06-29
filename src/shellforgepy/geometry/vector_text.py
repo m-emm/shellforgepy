@@ -3,6 +3,7 @@
 import math
 from collections import Counter
 from dataclasses import dataclass
+from functools import lru_cache
 
 Point2D = tuple[float, float]
 Segment2D = tuple[Point2D, Point2D]
@@ -39,6 +40,12 @@ class VectorTextLayout:
     size: float
     stroke_width: float
     segments: tuple[VectorTextSegment, ...]
+
+
+@dataclass(frozen=True)
+class _VectorGlyphPlacement:
+    char: str
+    origin: Point2D
 
 
 VECTOR_GLYPHS: dict[str, VectorGlyph] = {
@@ -695,49 +702,62 @@ def resolve_stroke_width(size, stroke_width=None) -> float:
     return stroke_value
 
 
-def _append_decimal_point_segments(
-    segments: list[VectorTextSegment],
-    cursor_x: float,
-    cursor_y: float,
+def _decimal_point_advance(size_value: float, stroke_value: float) -> float:
+    glyph = VECTOR_GLYPHS["."]
+    return max(glyph.advance * size_value, 2.0 * stroke_value + 0.10 * size_value)
+
+
+@lru_cache(maxsize=512)
+def _scaled_vector_glyph_segments(
+    char: str,
     size_value: float,
     stroke_value: float,
-) -> float:
-    """Append a decimal point whose materialized dot is two stroke widths square."""
+) -> tuple[VectorTextSegment, ...]:
+    """Return origin-local scaled centerline segments for one glyph."""
 
-    glyph = VECTOR_GLYPHS["."]
-    advance = max(glyph.advance * size_value, 2.0 * stroke_value + 0.10 * size_value)
-    center_x = cursor_x + advance / 2.0
-    half_centerline_length = stroke_value
+    if char == ".":
+        advance = _decimal_point_advance(size_value, stroke_value)
+        center_x = advance / 2.0
+        half_centerline_length = stroke_value
 
-    for center_y in (
-        cursor_y + stroke_value / 2.0,
-        cursor_y + 1.5 * stroke_value,
-    ):
-        segments.append(
+        return tuple(
             VectorTextSegment(
                 (center_x - half_centerline_length, center_y),
                 (center_x + half_centerline_length, center_y),
             )
+            for center_y in (
+                stroke_value / 2.0,
+                1.5 * stroke_value,
+            )
         )
 
-    return advance
+    glyph = VECTOR_GLYPHS[char]
+    return tuple(
+        VectorTextSegment(
+            (start[0] * size_value, start[1] * size_value),
+            (end[0] * size_value, end[1] * size_value),
+        )
+        for start, end in glyph.strokes
+    )
 
 
-def layout_vector_text(text: str, size, *, stroke_width=None) -> VectorTextLayout:
-    """Layout text as scaled centerline stroke segments.
+def _translate_segment(
+    segment: VectorTextSegment, origin: Point2D
+) -> VectorTextSegment:
+    origin_x, origin_y = origin
+    return VectorTextSegment(
+        (segment.start[0] + origin_x, segment.start[1] + origin_y),
+        (segment.end[0] + origin_x, segment.end[1] + origin_y),
+    )
 
-    Lowercase ASCII input is normalized to uppercase. Spaces and newlines
-    advance the cursor but do not produce strokes.
-    """
 
-    if not isinstance(text, str) or text == "":
-        raise ValueError("Text must be a non-empty string")
-
-    size_value = _positive_float(size, "Size")
-    stroke_value = resolve_stroke_width(size_value, stroke_width)
-
+def _vector_text_glyph_placements(
+    text: str,
+    size_value: float,
+    stroke_value: float,
+) -> tuple[str, tuple[_VectorGlyphPlacement, ...]]:
     normalized_text = text.upper()
-    segments: list[VectorTextSegment] = []
+    placements: list[_VectorGlyphPlacement] = []
     cursor_x = 0.0
     cursor_y = 0.0
 
@@ -754,32 +774,46 @@ def layout_vector_text(text: str, size, *, stroke_width=None) -> VectorTextLayou
         if glyph is None:
             raise ValueError(f"Unsupported vector text character: {char!r}")
 
+        placements.append(_VectorGlyphPlacement(char, (cursor_x, cursor_y)))
         if char == ".":
-            cursor_x += _append_decimal_point_segments(
-                segments,
-                cursor_x,
-                cursor_y,
+            cursor_x += _decimal_point_advance(size_value, stroke_value)
+        else:
+            cursor_x += glyph.advance * size_value
+
+    if not placements:
+        raise ValueError("Text contains no renderable vector glyphs")
+
+    return normalized_text, tuple(placements)
+
+
+def layout_vector_text(text: str, size, *, stroke_width=None) -> VectorTextLayout:
+    """Layout text as scaled centerline stroke segments.
+
+    Lowercase ASCII input is normalized to uppercase. Spaces and newlines
+    advance the cursor but do not produce strokes.
+    """
+
+    if not isinstance(text, str) or text == "":
+        raise ValueError("Text must be a non-empty string")
+
+    size_value = _positive_float(size, "Size")
+    stroke_value = resolve_stroke_width(size_value, stroke_width)
+
+    segments: list[VectorTextSegment] = []
+    normalized_text, placements = _vector_text_glyph_placements(
+        text,
+        size_value,
+        stroke_value,
+    )
+    for placement in placements:
+        segments.extend(
+            _translate_segment(segment, placement.origin)
+            for segment in _scaled_vector_glyph_segments(
+                placement.char,
                 size_value,
                 stroke_value,
             )
-        else:
-            for start, end in glyph.strokes:
-                segments.append(
-                    VectorTextSegment(
-                        (
-                            cursor_x + start[0] * size_value,
-                            cursor_y + start[1] * size_value,
-                        ),
-                        (
-                            cursor_x + end[0] * size_value,
-                            cursor_y + end[1] * size_value,
-                        ),
-                    )
-                )
-            cursor_x += glyph.advance * size_value
-
-    if not segments:
-        raise ValueError("Text contains no renderable vector glyphs")
+        )
 
     return VectorTextLayout(
         text=normalized_text,
@@ -890,6 +924,30 @@ def _endpoint_key(point: Point2D) -> tuple[float, float]:
     return (round(point[0], 9), round(point[1], 9))
 
 
+@lru_cache(maxsize=512)
+def _materialized_vector_glyph_solid(
+    adapter_id: str,
+    char: str,
+    size_value: float,
+    stroke_value: float,
+    thickness_value: float,
+):
+    from shellforgepy.adapters._adapter import create_extruded_polygon, fuse_parts
+
+    segments = _scaled_vector_glyph_segments(char, size_value, stroke_value)
+    solids = [
+        create_extruded_polygon(polygon, thickness_value)
+        for polygon in vector_text_stroke_polygons(segments, stroke_value)
+    ]
+    if not solids:
+        raise RuntimeError("Vector glyph layout produced no solids")
+
+    solid = solids[0]
+    for stroke_solid in solids[1:]:
+        solid = fuse_parts(solid, stroke_solid)
+    return solid
+
+
 def create_vector_text_object(
     text: str,
     size,
@@ -906,22 +964,36 @@ def create_vector_text_object(
     """
 
     from shellforgepy.adapters._adapter import (
-        create_extruded_polygon,
         fuse_parts,
+        get_adapter_id,
         get_bounding_box,
         translate_part,
     )
 
     thickness_value = _positive_float(thickness, "Thickness")
     padding_value = _non_negative_float(padding, "Padding")
-    layout = layout_vector_text(text, size, stroke_width=stroke_width)
+    if not isinstance(text, str) or text == "":
+        raise ValueError("Text must be a non-empty string")
 
+    size_value = _positive_float(size, "Size")
+    stroke_value = resolve_stroke_width(size_value, stroke_width)
+    _, placements = _vector_text_glyph_placements(text, size_value, stroke_value)
+    adapter_id = get_adapter_id()
     solids = [
-        create_extruded_polygon(polygon, thickness_value)
-        for polygon in vector_text_stroke_polygons(layout.segments, layout.stroke_width)
+        translate_part(
+            _materialized_vector_glyph_solid(
+                adapter_id,
+                placement.char,
+                size_value,
+                stroke_value,
+                thickness_value,
+            ),
+            (placement.origin[0], placement.origin[1], 0.0),
+        )
+        for placement in placements
     ]
     if not solids:
-        raise RuntimeError("Vector text layout produced no solids")
+        raise RuntimeError("Vector text placement produced no solids")
 
     solid = solids[0]
     for stroke_solid in solids[1:]:

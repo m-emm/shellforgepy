@@ -383,6 +383,54 @@ def create_bolt_thread(size, length, enlargement=0, cutter=False):
     return thread
 
 
+def create_self_threading_hole_cutter(
+    size, length, clearance_type="close", start_angle=90.0
+):
+    """
+    Create a tri-lobed self-threading hole cutter for the specified screw size.
+
+    The cutter starts as a clearance-hole cylinder, then subtracts three broad
+    cylindrical bites from the drill shape. The deepest point of each bite lands
+    on the screw's core-hole radius, leaving three self-threading contact lobes.
+
+    Args:
+        size: Screw size string (e.g., "M3", "M4", etc.)
+        length: Length of the cutter
+        clearance_type: Type of clearance ("close", "normal", or "loose")
+        start_angle: Rotation angle in degrees for the first reduced-radius lobe
+
+    Returns:
+        Solid: CAD solid representing the self-threading hole cutter
+
+    Raises:
+        KeyError: If the screw size is not supported
+        ValueError: If the clearance type is not valid
+    """
+
+    clearance_radius = get_clearance_hole_diameter(size, clearance_type) / 2
+    core_radius = get_core_hole_diameter(size) / 2
+
+    cutter = create_cylinder(clearance_radius, length)
+    bite_radius = clearance_radius
+    bite_center_radius = core_radius + bite_radius
+    bite_margin = max(length * 0.02, 0.1)
+
+    for index in range(3):
+        angle = math.radians(start_angle + index * 120)
+        bite = create_cylinder(
+            bite_radius,
+            length + bite_margin,
+            origin=(
+                bite_center_radius * math.cos(angle),
+                bite_center_radius * math.sin(angle),
+                -bite_margin / 2,
+            ),
+        )
+        cutter = cut_parts(cutter, bite)
+
+    return cutter
+
+
 def create_cylinder_screw(
     size, length, with_thread=False, only_minimal_thread=True, enlargement=0
 ):
