@@ -6561,6 +6561,58 @@ def _normalize_preview_views(value: Any) -> Optional[List[str]]:
     )
 
 
+def _normalize_preview_hide_prefixes(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [
+            token.strip() for token in value.replace(",", " ").split() if token.strip()
+        ]
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return [str(token).strip() for token in value if str(token).strip()]
+    raise BuilderError(
+        "Builder preview variant hide must be a string or a sequence of object name prefixes"
+    )
+
+
+def _normalize_preview_variants(value: Any) -> List[Dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise BuilderError("Builder preview variants must be a sequence of mappings")
+
+    normalized: List[Dict[str, Any]] = []
+    seen_names: set[str] = set()
+    for index, variant in enumerate(value, start=1):
+        if not isinstance(variant, Mapping):
+            raise BuilderError(
+                f"Builder preview variant #{index} must resolve to a mapping"
+            )
+        name = str(variant.get("name", "")).strip()
+        if not name:
+            raise BuilderError(f"Builder preview variant #{index} requires a name")
+        if _SAFE_NAME_PATTERN.search(name):
+            raise BuilderError(
+                f"Builder preview variant name '{name}' may only contain letters, numbers, dots, underscores, and hyphens"
+            )
+        if name in seen_names:
+            raise BuilderError(f"Duplicate Builder preview variant name: {name}")
+        seen_names.add(name)
+
+        normalized_variant: Dict[str, Any] = {
+            "name": name,
+            "hide": _normalize_preview_hide_prefixes(variant.get("hide")),
+        }
+        if "views" in variant:
+            normalized_variant["views"] = _normalize_preview_views(variant.get("views"))
+        if "width" in variant:
+            normalized_variant["width"] = int(variant["width"])
+        if "height" in variant:
+            normalized_variant["height"] = int(variant["height"])
+        normalized.append(normalized_variant)
+    return normalized
+
+
 def _resolve_preview_options(
     metadata: Mapping[str, Any],
     resource_data: Mapping[str, Any],
@@ -6609,6 +6661,8 @@ def _resolve_preview_options(
         options["width"] = int(resolved["width"])
     if "height" in resolved:
         options["height"] = int(resolved["height"])
+    if "variants" in resolved:
+        options["variants"] = _normalize_preview_variants(resolved.get("variants"))
 
     return options
 
@@ -6635,6 +6689,8 @@ def _apply_preview_options_to_workflow_config(
         render_config["width"] = int(preview_options["width"])
     if "height" in preview_options:
         render_config["height"] = int(preview_options["height"])
+    if "variants" in preview_options:
+        render_config["variants"] = list(preview_options["variants"])
     return updated
 
 

@@ -384,35 +384,52 @@ def create_bolt_thread(size, length, enlargement=0, cutter=False):
 
 
 def create_self_threading_hole_cutter(
-    size, length, clearance_type="close", start_angle=90.0
+    size,
+    length,
+    clearance_type="close",
+    start_angle=90.0,
+    core_radius_adjustment=0.0,
+    lead_in=False,
 ):
     """
     Create a tri-lobed self-threading hole cutter for the specified screw size.
 
     The cutter starts as a clearance-hole cylinder, then subtracts three broad
     cylindrical bites from the drill shape. The deepest point of each bite lands
-    on the screw's core-hole radius, leaving three self-threading contact lobes.
+    on the adjusted screw core-hole radius, leaving three self-threading contact
+    lobes.
 
     Args:
         size: Screw size string (e.g., "M3", "M4", etc.)
         length: Length of the cutter
         clearance_type: Type of clearance ("close", "normal", or "loose")
         start_angle: Rotation angle in degrees for the first reduced-radius lobe
+        core_radius_adjustment: Absolute radius adjustment applied to the
+            screw-table core-hole radius. Negative values make the valleys
+            tighter.
+        lead_in: If True, add a 45-degree conical lead-in at the local +Z end
 
     Returns:
         Solid: CAD solid representing the self-threading hole cutter
 
     Raises:
         KeyError: If the screw size is not supported
-        ValueError: If the clearance type is not valid
+        ValueError: If the clearance type or adjusted core radius is not valid
     """
 
     clearance_radius = get_clearance_hole_diameter(size, clearance_type) / 2
     core_radius = get_core_hole_diameter(size) / 2
+    adjusted_core_radius = core_radius + core_radius_adjustment
+
+    if adjusted_core_radius <= 0 or adjusted_core_radius >= clearance_radius:
+        raise ValueError(
+            "Adjusted core radius must be greater than 0 and smaller than the "
+            "clearance radius"
+        )
 
     cutter = create_cylinder(clearance_radius, length)
     bite_radius = clearance_radius
-    bite_center_radius = core_radius + bite_radius
+    bite_center_radius = adjusted_core_radius + bite_radius
     bite_margin = max(length * 0.02, 0.1)
 
     for index in range(3):
@@ -427,6 +444,19 @@ def create_self_threading_hole_cutter(
             ),
         )
         cutter = cut_parts(cutter, bite)
+
+    if lead_in:
+        lead_in_height = clearance_radius - adjusted_core_radius
+        if lead_in_height > length:
+            raise ValueError("Lead-in cone cannot be longer than the cutter")
+
+        lead_in_cone = create_cone(
+            adjusted_core_radius,
+            clearance_radius,
+            lead_in_height,
+            origin=(0, 0, length - lead_in_height),
+        )
+        cutter = fuse_parts(cutter, lead_in_cone)
 
     return cutter
 

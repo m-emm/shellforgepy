@@ -977,6 +977,7 @@ def test_complete_workflow_run_generates_obj_previews_when_enabled(
         height=512,
         filename_prefix=None,
         background_color=(250, 250, 250),
+        exclude_object_name_prefixes=(),
     ):
         render_calls.append(
             {
@@ -986,6 +987,7 @@ def test_complete_workflow_run_generates_obj_previews_when_enabled(
                 "width": width,
                 "height": height,
                 "filename_prefix": filename_prefix,
+                "exclude_object_name_prefixes": tuple(exclude_object_name_prefixes),
             }
         )
         preview_path = Path(output_dir) / "design_front_angle.ppm"
@@ -1049,8 +1051,151 @@ def test_complete_workflow_run_generates_obj_previews_when_enabled(
             "width": 512,
             "height": 512,
             "filename_prefix": "design",
+            "exclude_object_name_prefixes": (),
         }
     ]
+
+
+def test_complete_workflow_run_generates_obj_preview_variants(monkeypatch, tmp_path):
+    from shellforgepy.render.api import PreviewRenderBatchResult, PreviewRenderResult
+
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    obj_path = run_directory / "design.obj"
+    obj_path.write_text("# obj\n", encoding="utf-8")
+
+    render_calls = []
+
+    def fake_render_obj_views_with_stats(
+        obj_path_arg,
+        *,
+        output_dir,
+        views=None,
+        width=512,
+        height=512,
+        filename_prefix=None,
+        background_color=(250, 250, 250),
+        exclude_object_name_prefixes=(),
+    ):
+        actual_views = list(views or ["front_angle"])
+        render_calls.append(
+            {
+                "obj_path": Path(obj_path_arg),
+                "output_dir": Path(output_dir),
+                "views": views,
+                "width": width,
+                "height": height,
+                "filename_prefix": filename_prefix,
+                "exclude_object_name_prefixes": tuple(exclude_object_name_prefixes),
+            }
+        )
+        results = []
+        for view in actual_views:
+            preview_path = Path(output_dir) / f"{filename_prefix}_{view}.ppm"
+            preview_path.parent.mkdir(parents=True, exist_ok=True)
+            preview_path.write_text("preview", encoding="utf-8")
+            results.append(
+                PreviewRenderResult(
+                    view=view,
+                    path=preview_path,
+                    width=width,
+                    height=height,
+                    triangle_count=42,
+                    vertex_count=21,
+                    object_count=2,
+                    render_seconds=0.1,
+                )
+            )
+        return PreviewRenderBatchResult(
+            obj_path=Path(obj_path_arg),
+            scene_load_seconds=0.01,
+            total_seconds=0.11,
+            triangle_count=42,
+            vertex_count=21,
+            object_count=2,
+            results=tuple(results),
+        )
+
+    monkeypatch.setattr(
+        render_api,
+        "render_obj_views_with_stats",
+        fake_render_obj_views_with_stats,
+    )
+
+    args = argparse.Namespace(
+        slice=False,
+        upload=False,
+        open=False,
+        part_file=None,
+        process_file=None,
+        master_settings_dir=None,
+        orca_executable=None,
+        orca_debug=None,
+        printer=None,
+    )
+    config = {
+        "render": {
+            "enabled": True,
+            "views": ["front", "right"],
+            "width": 800,
+            "height": 600,
+            "variants": [
+                {"name": "no_lid", "hide": ["lid", "lid_screws"]},
+                {
+                    "name": "no_lid_no_psus",
+                    "views": ["top"],
+                    "width": 256,
+                    "hide": ["lid", "cooleon_psu_1_", "cooleon_psu_2_"],
+                },
+            ],
+        }
+    }
+    manifest = {"obj_path": str(obj_path)}
+
+    result = complete_workflow_run(
+        args,
+        config=config,
+        run_directory=run_directory,
+        manifest=manifest,
+        target_label="design",
+    )
+
+    assert result == 0
+    assert render_calls == [
+        {
+            "obj_path": obj_path,
+            "output_dir": run_directory / "previews",
+            "views": ["front", "right"],
+            "width": 800,
+            "height": 600,
+            "filename_prefix": "design",
+            "exclude_object_name_prefixes": (),
+        },
+        {
+            "obj_path": obj_path,
+            "output_dir": run_directory / "previews",
+            "views": ["front", "right"],
+            "width": 800,
+            "height": 600,
+            "filename_prefix": "design__no_lid",
+            "exclude_object_name_prefixes": ("lid", "lid_screws"),
+        },
+        {
+            "obj_path": obj_path,
+            "output_dir": run_directory / "previews",
+            "views": ["top"],
+            "width": 256,
+            "height": 600,
+            "filename_prefix": "design__no_lid_no_psus",
+            "exclude_object_name_prefixes": (
+                "lid",
+                "cooleon_psu_1_",
+                "cooleon_psu_2_",
+            ),
+        },
+    ]
+    assert (run_directory / "previews" / "design__no_lid_front.ppm").exists()
+    assert (run_directory / "previews" / "design__no_lid_no_psus_top.ppm").exists()
 
 
 def test_complete_workflow_run_uses_obj_renderer_for_single_plate_gcode_preview(

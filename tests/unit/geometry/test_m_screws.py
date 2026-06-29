@@ -9,9 +9,17 @@ is computationally expensive. Run these with: pytest -m slow
 """
 
 import math
+from pathlib import Path
 
 import pytest
-from shellforgepy.adapters._adapter import create_cylinder, get_bounding_box, get_volume
+from shellforgepy.adapters._adapter import (
+    create_box,
+    create_cylinder,
+    cut_parts,
+    get_bounding_box,
+    get_bounding_box_size,
+    get_volume,
+)
 from shellforgepy.construct.bounding_box_helpers import get_zlen, get_zmax, get_zmin
 from shellforgepy.construct.leader_followers_cutters_part import (
     LeaderFollowersCuttersPart,
@@ -228,6 +236,208 @@ def test_create_self_threading_hole_cutter_volume_and_height():
     assert cutter_volume < get_volume(clearance_cylinder)
 
 
+def test_create_self_threading_hole_cutter_default_arguments_match_default_shape():
+    """Explicit new defaults should preserve the original public behavior."""
+    length = 8.0
+    implicit = create_self_threading_hole_cutter("M3", length)
+    explicit = create_self_threading_hole_cutter(
+        "M3",
+        length,
+        core_radius_adjustment=0.0,
+        lead_in=False,
+    )
+
+    implicit_bbox = get_bounding_box(implicit)
+    explicit_bbox = get_bounding_box(explicit)
+    assert tuple(implicit_bbox[0] + implicit_bbox[1]) == pytest.approx(
+        explicit_bbox[0] + explicit_bbox[1],
+        abs=1e-6,
+    )
+    assert get_volume(implicit) == pytest.approx(get_volume(explicit), rel=1e-6)
+
+
+def test_create_self_threading_hole_cutter_core_radius_adjustment_tightens_valleys():
+    """Negative core radius adjustment should tighten the lobes only."""
+    length = 8.0
+    clearance = get_clearance_hole_diameter("M3", "close")
+    default = create_self_threading_hole_cutter("M3", length)
+    tightened = create_self_threading_hole_cutter(
+        "M3",
+        length,
+        core_radius_adjustment=-0.15,
+    )
+
+    tightened_size = get_bounding_box_size(tightened)
+    assert get_zlen(get_bounding_box(tightened)) == pytest.approx(length)
+    assert max(tightened_size[:2]) == pytest.approx(clearance, abs=0.005)
+    assert get_volume(tightened) < get_volume(default)
+
+
+def test_create_self_threading_hole_cutter_lead_in_preserves_length_and_rounds_entry():
+    """The optional lead-in should stay inside length and round the local +Z entry."""
+    length = 8.0
+    clearance_radius = get_clearance_hole_diameter("M3", "close") / 2
+    adjusted_core_radius = get_core_hole_diameter("M3") / 2 - 0.15
+    lead_in_height = clearance_radius - adjusted_core_radius
+
+    tightened = create_self_threading_hole_cutter(
+        "M3",
+        length,
+        core_radius_adjustment=-0.15,
+    )
+    lead_in = create_self_threading_hole_cutter(
+        "M3",
+        length,
+        core_radius_adjustment=-0.15,
+        lead_in=True,
+    )
+
+    lead_in_bbox = get_bounding_box(lead_in)
+    lead_in_size = get_bounding_box_size(lead_in)
+
+    assert get_zmin(lead_in_bbox) == pytest.approx(0, abs=1e-6)
+    assert get_zmax(lead_in_bbox) == pytest.approx(length, abs=1e-6)
+    assert get_zlen(lead_in_bbox) == pytest.approx(length)
+    assert lead_in_size[:2] == pytest.approx([2 * clearance_radius] * 2, abs=0.005)
+    assert lead_in_height == pytest.approx(0.5)
+    assert get_volume(lead_in) > get_volume(tightened)
+
+
+def test_create_self_threading_hole_cutter_rejects_invalid_radius_adjustments():
+    """Adjusted core radius must stay between zero and clearance radius."""
+    with pytest.raises(ValueError, match="Adjusted core radius"):
+        create_self_threading_hole_cutter("M3", 8, core_radius_adjustment=-2)
+
+    with pytest.raises(ValueError, match="Adjusted core radius"):
+        create_self_threading_hole_cutter("M3", 8, core_radius_adjustment=1)
+
+
+def test_create_self_threading_hole_cutter_preview_artifacts():
+    """Generate deterministic preview artifacts for visual inspection."""
+    from shellforgepy.construct.alignment_operations import Alignment, align, translate
+    from shellforgepy.produce.arrange_and_export import arrange_and_export
+    from shellforgepy.produce.production_parts_model import PartList
+    from shellforgepy.render.api import render_obj_views
+    from shellforgepy.render.image import preferred_image_suffix
+
+    if preferred_image_suffix() != ".png":
+        pytest.skip("PNG preview generation requires Pillow")
+
+    output_dir = (
+        Path(__file__).resolve().parents[3]
+        / "output"
+        / "self_threading_hole_cutter_preview"
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    def export_obj_scene(part, name, color):
+        parts = PartList()
+        parts.add(part, name, color=color)
+        return arrange_and_export(
+            parts,
+            script_file=__file__,
+            export_base_name=name,
+            export_directory=output_dir,
+            export_stl=False,
+            export_step=False,
+            export_obj=True,
+            export_individual_parts=False,
+            preserve_model_coordinates=True,
+        )
+
+    cutter_length = 8
+    block_height = 6
+    preview_specs = [
+        (
+            create_self_threading_hole_cutter("M3", cutter_length),
+            "self_threading_hole_cutter_default",
+            (0.95, 0.38, 0.18),
+        ),
+        (
+            create_self_threading_hole_cutter(
+                "M3",
+                cutter_length,
+                core_radius_adjustment=-0.15,
+            ),
+            "self_threading_hole_cutter_tightened",
+            (0.95, 0.52, 0.18),
+        ),
+        (
+            create_self_threading_hole_cutter(
+                "M3",
+                cutter_length,
+                core_radius_adjustment=-0.15,
+                lead_in=True,
+            ),
+            "self_threading_hole_cutter_tightened_lead_in",
+            (0.25, 0.62, 0.95),
+        ),
+    ]
+    lead_in_cutaway = cut_parts(
+        preview_specs[-1][0],
+        create_box(4, 4, cutter_length + 2, origin=(-2, 0, -1)),
+    )
+    preview_specs.append(
+        (
+            lead_in_cutaway,
+            "self_threading_hole_cutter_tightened_lead_in_cutaway",
+            (0.25, 0.62, 0.95),
+        )
+    )
+
+    block = create_box(16, 16, block_height)
+    drilling_cutter = align(
+        preview_specs[2][0],
+        block,
+        Alignment.CENTER,
+        axes=[0, 1],
+    )
+    drilling_cutter = translate(0, 0, block_height - cutter_length)(drilling_cutter)
+    drilled_block = cut_parts(block, drilling_cutter)
+    drilled_block_cutaway = cut_parts(
+        drilled_block,
+        create_box(20, 10, 8, origin=(-2, -2, -1)),
+    )
+    preview_specs.append(
+        (
+            drilled_block,
+            "self_threading_hole_drilled_block_lead_in",
+            (0.86, 0.90, 0.78),
+        )
+    )
+    preview_specs.append(
+        (
+            drilled_block_cutaway,
+            "self_threading_hole_drilled_block_lead_in_cutaway",
+            (0.86, 0.90, 0.78),
+        )
+    )
+
+    preview_paths = []
+    for part, name, color in preview_specs:
+        obj_path = export_obj_scene(part, name, color=color)
+        preview_paths.extend(
+            render_obj_views(
+                obj_path,
+                output_dir=output_dir,
+                views=("top", "front_angle"),
+                width=768,
+                height=768,
+                filename_prefix=name,
+            )
+        )
+
+    assert {path.suffix for path in preview_paths} == {".png"}
+    assert {path.name for path in preview_paths} >= {
+        "self_threading_hole_cutter_default_top.png",
+        "self_threading_hole_cutter_tightened_top.png",
+        "self_threading_hole_cutter_tightened_lead_in_front_angle.png",
+        "self_threading_hole_cutter_tightened_lead_in_cutaway_front_angle.png",
+        "self_threading_hole_drilled_block_lead_in_top.png",
+        "self_threading_hole_drilled_block_lead_in_cutaway_front_angle.png",
+    }
+
+
 def test_create_self_threading_hole_cutter_preserves_lookup_errors():
     """Self-threading cutter should use the same size and clearance validation."""
     with pytest.raises(KeyError, match="Unsupported screw size"):
@@ -243,7 +453,12 @@ def test_create_self_threading_hole_cutter_is_exported_from_simple():
         create_self_threading_hole_cutter as simple_self_threading_hole_cutter,
     )
 
-    cutter = simple_self_threading_hole_cutter("M3", 2)
+    cutter = simple_self_threading_hole_cutter(
+        "M3",
+        2,
+        core_radius_adjustment=-0.05,
+        lead_in=True,
+    )
     assert cutter is not None
 
 

@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence
 
 from shellforgepy.simple import LOGGING_FORMAT
 from shellforgepy.slicing.orca_slicer_settings_generator import generate_settings
@@ -46,6 +46,7 @@ CONFIG_KEYS = {
     "render_views": "render.views",
     "render_width": "render.width",
     "render_height": "render.height",
+    "render_variants": "render.variants",
     "orca_debug_level": "orca.debug_level",
     "orca_env": "orca.env",
     "render_script": "render.script",
@@ -66,6 +67,7 @@ CONFIG_KEY_DOCUMENTATION = {
     "render_views": "List of named built-in preview views to render (for example: ['front_angle', 'top']).",
     "render_width": "Output width in pixels for built-in OBJ previews.",
     "render_height": "Output height in pixels for built-in OBJ previews.",
+    "render_variants": "Named built-in OBJ preview variants with hidden object-name prefixes.",
     "orca_debug_level": "Debug level to use when running OrcaSlicer.",
     "orca_env": "Environment variables to set when running OrcaSlicer.",
     "render_script": "Path to a custom rendering script to generate preview images.",
@@ -765,6 +767,52 @@ def _normalize_render_views(configured_views: object) -> list[str] | None:
     return None
 
 
+def _normalize_render_hidden_prefixes(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return tuple(
+            token.strip() for token in value.replace(",", " ").split() if token.strip()
+        )
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return tuple(str(token).strip() for token in value if str(token).strip())
+    raise WorkflowError(
+        f"render variant hide must be a string or list of prefixes, got {value!r}"
+    )
+
+
+def _normalize_render_variants(value: object) -> list[dict[str, object]]:
+    if value is None:
+        return []
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise WorkflowError("render.variants must be a list of mappings")
+
+    normalized: list[dict[str, object]] = []
+    seen_names: set[str] = set()
+    for index, variant in enumerate(value, start=1):
+        if not isinstance(variant, Mapping):
+            raise WorkflowError(f"render.variants item #{index} must be a mapping")
+        name = str(variant.get("name", "")).strip()
+        if not name:
+            raise WorkflowError(f"render.variants item #{index} requires a name")
+        if name in seen_names:
+            raise WorkflowError(f"Duplicate render variant name: {name}")
+        seen_names.add(name)
+
+        normalized_variant: dict[str, object] = {
+            "name": name,
+            "hide": _normalize_render_hidden_prefixes(variant.get("hide")),
+        }
+        if "views" in variant:
+            normalized_variant["views"] = _normalize_render_views(variant.get("views"))
+        if "width" in variant:
+            normalized_variant["width"] = variant["width"]
+        if "height" in variant:
+            normalized_variant["height"] = variant["height"]
+        normalized.append(normalized_variant)
+    return normalized
+
+
 def _normalize_render_dimension(value: object, *, key_name: str) -> int:
     if value is None:
         return 512
@@ -777,6 +825,37 @@ def _normalize_render_dimension(value: object, *, key_name: str) -> int:
     return dimension
 
 
+def _log_obj_preview_batch_result(
+    batch_result,
+    *,
+    width: int,
+    height: int,
+    label: str,
+) -> None:
+    per_view_seconds = sum(
+        result.render_seconds for result in batch_result.results
+    ) / max(len(batch_result.results), 1)
+    _logger.info(
+        "Generating %s previews took %.3f seconds total; per view %.3f seconds; "
+        "rendered %s triangles, %s vertices, %s objects at %sx%s",
+        label,
+        batch_result.total_seconds,
+        per_view_seconds,
+        batch_result.triangle_count,
+        batch_result.vertex_count,
+        batch_result.object_count,
+        width,
+        height,
+    )
+    for result in batch_result.results:
+        _logger.info(
+            "Generated OBJ preview [%s] in %.3f seconds: %s",
+            result.view,
+            result.render_seconds,
+            result.path,
+        )
+
+
 def _generate_obj_previews(
     *,
     config: Dict[str, object],
@@ -786,6 +865,9 @@ def _generate_obj_previews(
     render_enabled = bool(_resolve_config_key_value(config, "render_enabled"))
     render_views = _normalize_render_views(
         _resolve_config_key_value(config, "render_views")
+    )
+    render_variants = _normalize_render_variants(
+        _resolve_config_key_value(config, "render_variants")
     )
     if not render_enabled and render_views is None:
         return []
@@ -812,28 +894,42 @@ def _generate_obj_previews(
         width=width,
         height=height,
         filename_prefix=obj_path.stem,
+        exclude_object_name_prefixes=(),
     )
     preview_paths = [result.path for result in batch_result.results]
-    per_view_seconds = sum(
-        result.render_seconds for result in batch_result.results
-    ) / max(len(batch_result.results), 1)
-    _logger.info(
-        "Generating previews took %.3f seconds total; per view %.3f seconds; "
-        "rendered %s triangles, %s vertices, %s objects at %sx%s",
-        batch_result.total_seconds,
-        per_view_seconds,
-        batch_result.triangle_count,
-        batch_result.vertex_count,
-        batch_result.object_count,
-        width,
-        height,
+    _log_obj_preview_batch_result(
+        batch_result,
+        width=width,
+        height=height,
+        label="default",
     )
-    for result in batch_result.results:
-        _logger.info(
-            "Generated OBJ preview [%s] in %.3f seconds: %s",
-            result.view,
-            result.render_seconds,
-            result.path,
+
+    for variant in render_variants:
+        variant_name = str(variant["name"])
+        variant_views = variant["views"] if "views" in variant else render_views
+        variant_width = _normalize_render_dimension(
+            variant.get("width", width),
+            key_name=f"render.variants.{variant_name}.width",
+        )
+        variant_height = _normalize_render_dimension(
+            variant.get("height", height),
+            key_name=f"render.variants.{variant_name}.height",
+        )
+        variant_batch_result = render_obj_views_with_stats(
+            obj_path,
+            output_dir=preview_dir,
+            views=variant_views,
+            width=variant_width,
+            height=variant_height,
+            filename_prefix=f"{obj_path.stem}__{_slugify_name(variant_name)}",
+            exclude_object_name_prefixes=variant["hide"],
+        )
+        preview_paths.extend(result.path for result in variant_batch_result.results)
+        _log_obj_preview_batch_result(
+            variant_batch_result,
+            width=variant_width,
+            height=variant_height,
+            label=f"preview variant '{variant_name}'",
         )
     return preview_paths
 

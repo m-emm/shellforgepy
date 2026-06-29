@@ -160,6 +160,7 @@ def render_obj_views_with_stats(
     height: int = 512,
     background_color: tuple[int, int, int] = (250, 250, 250),
     filename_prefix: str | None = None,
+    exclude_object_name_prefixes: Sequence[str] | None = None,
     disable_numba: bool = False,
 ) -> PreviewRenderBatchResult:
     """Render one or more named views of an OBJ scene and collect timing stats."""
@@ -167,6 +168,7 @@ def render_obj_views_with_stats(
     batch_start = time.perf_counter()
     scene_load_start = batch_start
     scene = load_obj_scene(obj_path)
+    scene = _filter_scene_by_name_prefixes(scene, exclude_object_name_prefixes)
     scene_load_seconds = time.perf_counter() - scene_load_start
 
     obj_path = Path(obj_path)
@@ -216,6 +218,7 @@ def render_obj_views(
     height: int = 512,
     background_color: tuple[int, int, int] = (250, 250, 250),
     filename_prefix: str | None = None,
+    exclude_object_name_prefixes: Sequence[str] | None = None,
     disable_numba: bool = False,
 ) -> list[Path]:
     """Render one or more named views of an OBJ scene."""
@@ -228,6 +231,7 @@ def render_obj_views(
         height=height,
         background_color=background_color,
         filename_prefix=filename_prefix,
+        exclude_object_name_prefixes=exclude_object_name_prefixes,
         disable_numba=disable_numba,
     )
     return [result.path for result in batch.results]

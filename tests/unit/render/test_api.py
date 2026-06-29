@@ -408,6 +408,33 @@ def test_render_obj_views_with_stats_reports_geometry_and_dimensions(
     assert batch.results[0].render_seconds >= 0.0
 
 
+def test_render_obj_views_with_stats_can_exclude_named_objects(tmp_path, disable_numba):
+    obj_path = tmp_path / "filtered_batch.obj"
+    vertices = [(0.0, 0.0, 0.0), (10.0, 0.0, 0.0), (0.0, 10.0, 0.0)]
+    faces = [(0, 1, 2)]
+    export_colored_meshes_to_obj(
+        [
+            (vertices, faces, "triangle", (0.9, 0.3, 0.2)),
+            (vertices, faces, "hidden_lid", (0.8, 0.8, 0.8)),
+        ],
+        obj_path,
+    )
+
+    batch = render_obj_views_with_stats(
+        obj_path,
+        output_dir=tmp_path / "filtered_batch_previews",
+        views=["front", "top"],
+        exclude_object_name_prefixes=("hidden_",),
+        disable_numba=disable_numba,
+    )
+
+    assert batch.object_count == 1
+    assert batch.triangle_count == 1
+    assert batch.vertex_count == 3
+    assert [result.view for result in batch.results] == ["front", "top"]
+    assert all(result.object_count == 1 for result in batch.results)
+
+
 @pytest.mark.parametrize("view_name", ["top", "front", "isometric", "front_angle"])
 def test_render_scene_preserves_left_to_right_order(view_name, disable_numba):
     scene = Scene(

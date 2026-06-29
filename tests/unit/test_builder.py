@@ -2708,6 +2708,18 @@ def test_resolve_preview_options_from_visualization_section():
                     "views": ["top", {"$ref": "default_view"}],
                     "width": 512,
                     "height": 384,
+                    "variants": [
+                        {
+                            "name": "no_lid",
+                            "hide": ["lid", "lid_screws"],
+                        },
+                        {
+                            "name": "no_lid_no_context",
+                            "views": ["right"],
+                            "width": 256,
+                            "hide": "lid context_",
+                        },
+                    ],
                 }
             }
         }
@@ -2724,7 +2736,45 @@ def test_resolve_preview_options_from_visualization_section():
         "views": ["top", "front_angle"],
         "width": 512,
         "height": 384,
+        "variants": [
+            {
+                "name": "no_lid",
+                "hide": ["lid", "lid_screws"],
+            },
+            {
+                "name": "no_lid_no_context",
+                "views": ["right"],
+                "width": 256,
+                "hide": ["lid", "context_"],
+            },
+        ],
     }
+
+
+@pytest.mark.parametrize(
+    "variants,error_text",
+    [
+        ([{"name": "", "hide": ["lid"]}], "requires a name"),
+        (
+            [{"name": "no_lid"}, {"name": "no_lid"}],
+            "Duplicate Builder preview variant name",
+        ),
+    ],
+)
+def test_resolve_preview_options_rejects_invalid_variants(variants, error_text):
+    resource_data = {
+        "Builder": {
+            "Visualization": {
+                "preview": {
+                    "enabled": True,
+                    "variants": variants,
+                }
+            }
+        }
+    }
+
+    with pytest.raises(builder.BuilderError, match=error_text):
+        builder._resolve_preview_options({}, resource_data, "visualization")
 
 
 def test_export_scene_for_assembly_applies_preview_overrides_to_workflow_config(
@@ -2745,6 +2795,13 @@ def test_export_scene_for_assembly_applies_preview_overrides_to_workflow_config(
                 "        - top",
                 "      width: 512",
                 "      height: 384",
+                "      variants:",
+                "        - name: no_lid",
+                "          hide:",
+                "            - frame_lid",
+                "        - name: no_context",
+                "          views: [right]",
+                "          hide: frame_context_",
             ]
         ),
         encoding="utf-8",
@@ -2859,6 +2916,17 @@ def test_export_scene_for_assembly_applies_preview_overrides_to_workflow_config(
         "views": ["front_angle", "top"],
         "width": 512,
         "height": 384,
+        "variants": [
+            {
+                "name": "no_lid",
+                "hide": ["frame_lid"],
+            },
+            {
+                "name": "no_context",
+                "views": ["right"],
+                "hide": ["frame_context_"],
+            },
+        ],
     }
 
 
