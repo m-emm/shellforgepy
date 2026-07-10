@@ -14,13 +14,16 @@ optional adapters for CadQuery and FreeCAD.
 # Beginner-friendly parametric CAD
 python examples/filleted_boxes_example.py
 
+# Alignment-first corner placement
+python examples/rotate_alignment_demo.py
+
 # Amazing mathematical surfaces
 python examples/mobius_strip.py
 
 # Declarative machine assembly with the builder
 python examples/builder_machine_example.py
 
-# All 8 examples ready to run!
+# Examples ready to run!
 ```
 
 **[👉 See All Examples →](examples/README.md)** | **[🎯 Quick Examples Guide →](#examples)** | **[🏗️ Declarative Builder Guide →](README_BUILDER.md)**
@@ -270,11 +273,12 @@ src/shellforgepy/
 
 ## 🎯 Examples - From Zero to Mind-Blown 🤯
 
-**8 working examples** that showcase everything from basic CAD to mathematical wizardry!
+**Working examples** that showcase everything from basic CAD to mathematical wizardry!
 
 ### 🔰 **Beginner-Friendly**
 ```bash
 python examples/filleted_boxes_example.py    # 12 parametric boxes with selective fillets
+python examples/rotate_alignment_demo.py     # Four-corner placement with rotate_alignment()
 python examples/create_cylinder_stl.py       # Mesh generation fundamentals
 python examples/straight_snake.py            # Path-following basics
 ```

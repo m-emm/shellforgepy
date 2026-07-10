@@ -41,6 +41,7 @@ run_example() {
 echo ""
 echo "🔰 Beginner Examples:"
 run_example "filleted_boxes_example.py"
+run_example "rotate_alignment_demo.py"
 run_example "create_cylinder_stl.py"
 
 echo ""

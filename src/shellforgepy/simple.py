@@ -39,7 +39,11 @@ from shellforgepy.adapters._adapter import (
 )
 
 # Core alignment functionality
-from shellforgepy.construct.alignment import ALIGNMENT_SIGNS, Alignment
+from shellforgepy.construct.alignment import (
+    ALIGNMENT_SIGNS,
+    Alignment,
+    rotate_alignment,
+)
 from shellforgepy.construct.alignment_operations import (
     align,
     align_translation,
@@ -289,6 +293,7 @@ __all__ = [
     "ray_triangle_intersect",
     "reset_to_original_orientation",
     "rotate",
+    "rotate_alignment",
     "scale",
     "shortest_arc_axis_angle",
     "slice_part",

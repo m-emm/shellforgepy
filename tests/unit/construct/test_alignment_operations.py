@@ -15,6 +15,7 @@ from shellforgepy.simple import (
     get_vertex_coordinates,
     mirror,
     rotate,
+    rotate_alignment,
     scale,
     stack_alignment_of,
     translate,
@@ -54,6 +55,82 @@ def test_rotate():
     assert np.allclose(len_x, 20)
     assert np.allclose(len_y, 10)
     assert np.allclose(len_z, 30)
+
+
+def test_rotate_alignment_z_axis_matches_rotate_convention():
+    rotator = rotate_alignment(90)
+
+    assert rotator(Alignment.RIGHT) == Alignment.BACK
+    assert rotator(Alignment.BACK) == Alignment.LEFT
+    assert rotator(Alignment.LEFT) == Alignment.FRONT
+    assert rotator(Alignment.FRONT) == Alignment.RIGHT
+    assert rotator(Alignment.TOP) == Alignment.TOP
+    assert rotator(Alignment.BOTTOM) == Alignment.BOTTOM
+    assert rotator(Alignment.CENTER) == Alignment.CENTER
+
+
+@pytest.mark.parametrize(
+    "axis, alignment, expected",
+    [
+        ((1, 0, 0), Alignment.BACK, Alignment.TOP),
+        ((1, 0, 0), Alignment.TOP, Alignment.FRONT),
+        ((1, 0, 0), Alignment.LEFT, Alignment.LEFT),
+        ((0, 1, 0), Alignment.RIGHT, Alignment.BOTTOM),
+        ((0, 1, 0), Alignment.BOTTOM, Alignment.LEFT),
+        ((0, 1, 0), Alignment.BACK, Alignment.BACK),
+        ((0, 0, 1), Alignment.RIGHT, Alignment.BACK),
+        ((0, 0, 1), Alignment.TOP, Alignment.TOP),
+    ],
+)
+def test_rotate_alignment_supports_positive_coordinate_axes(axis, alignment, expected):
+    assert rotate_alignment(90, axis=axis)(alignment) == expected
+
+
+@pytest.mark.parametrize(
+    "angle, expected",
+    [
+        (-90, Alignment.FRONT),
+        (0, Alignment.RIGHT),
+        (180, Alignment.LEFT),
+        (270, Alignment.FRONT),
+        (360, Alignment.RIGHT),
+        (450, Alignment.BACK),
+    ],
+)
+def test_rotate_alignment_normalizes_quarter_turn_angles(angle, expected):
+    assert rotate_alignment(angle)(Alignment.RIGHT) == expected
+
+
+@pytest.mark.parametrize(
+    "alignment, expected",
+    [
+        (Alignment.STACK_RIGHT, Alignment.STACK_BACK),
+        (Alignment.STACK_BACK, Alignment.STACK_LEFT),
+        (Alignment.STACK_TOP, Alignment.STACK_TOP),
+        (Alignment.EDGE_RIGHT, Alignment.EDGE_BACK),
+        (Alignment.EDGE_BACK, Alignment.EDGE_LEFT),
+        (Alignment.EDGE_BOTTOM, Alignment.EDGE_BOTTOM),
+    ],
+)
+def test_rotate_alignment_preserves_alignment_family(alignment, expected):
+    assert rotate_alignment(90)(alignment) == expected
+
+
+@pytest.mark.parametrize("angle", [45, 91, float("inf"), float("nan")])
+def test_rotate_alignment_rejects_invalid_angles(angle):
+    with pytest.raises(ValueError):
+        rotate_alignment(angle)
+
+
+@pytest.mark.parametrize("axis", [(0, 0, -1), (2, 0, 0), (1, 1, 0), None])
+def test_rotate_alignment_rejects_unsupported_axes(axis):
+    with pytest.raises(ValueError):
+        rotate_alignment(90, axis=axis)
+
+
+def test_rotate_alignment_rejects_non_alignment_values():
+    with pytest.raises(TypeError):
+        rotate_alignment(90)("LEFT")
 
 
 def test_scale_around_center():

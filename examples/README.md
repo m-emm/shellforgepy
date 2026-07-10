@@ -36,6 +36,25 @@ python examples/filleted_boxes_example.py
 
 ---
 
+#### **Rotated Alignment** (`rotate_alignment_demo.py`)
+Compact rotational topology with semantic alignments.
+
+```bash
+python examples/rotate_alignment_demo.py
+```
+
+**Output:**
+- `output/rotate_alignment_demo.stl`
+- `output/rotate_alignment_demo.obj`
+
+**Features:**
+- Builds one master-coordinate F marker from boxes
+- Uses `for i in range(4)` and `i * 90` for the four corner systems
+- Uses `rotate_alignment()` so the same stack-and-edge placement recipe works after every turn
+- Avoids coordinate and sign math in the placement loop
+
+---
+
 #### **Cylinder Mesh** (`create_cylinder_stl.py`)
 Basic mesh generation from point clouds.
 
@@ -243,6 +262,7 @@ Want to see everything in action?
 ```bash
 # Run each example individually
 python examples/filleted_boxes_example.py
+python examples/rotate_alignment_demo.py
 python examples/create_cylinder_stl.py
 python examples/straight_snake.py
 python examples/curved_snake.py
@@ -271,7 +291,9 @@ Examples create STL files in these locations:
 │   ├── curved_snake.stl
 │   ├── cylindrical_coil.stl
 │   ├── conical_coil.stl
-│   └── mobius_strip.stl
+│   ├── mobius_strip.stl
+│   ├── rotate_alignment_demo.stl
+│   └── rotate_alignment_demo.obj
 ├── face_stl_output/                # Face example
 │   ├── face_m_front.stl
 │   ├── face_m_back.stl
@@ -286,7 +308,9 @@ Examples create STL files in these locations:
 ## 📊 Example Complexity
 
 | Example | Complexity | Focus | Output Files |
-|---------|------------|-------|--------------|\n| `filleted_boxes_example.py` | 🔰 Beginner | CAD adapter usage, production workflow | 13 STL files |
+|---------|------------|-------|--------------|
+| `filleted_boxes_example.py` | 🔰 Beginner | CAD adapter usage, production workflow | 13 STL files |
+| `rotate_alignment_demo.py` | 🔰 Beginner | Rotated semantic alignment placement | 2 files |
 | `create_cylinder_stl.py` | 🔰 Beginner | Basic mesh workflows | 1 STL file |
 | `straight_snake.py` | 🔰 Beginner | Path-following basics | 1 STL file |
 | `curved_snake.py` | 🔶 Intermediate | Curved path following | 1 STL file |
@@ -312,6 +336,7 @@ Examples create STL files in these locations:
 - ✅ Mesh partitioning for multi-part printing
 - ✅ Coordinate transformation for path-following geometries
 - ✅ Production-ready part arrangement and export
+- ✅ Semantic alignment rotation for compact corner/topology patterns
 - ✅ Binary STL export
 
 ### Path-Following Capabilities:
@@ -348,11 +373,12 @@ All examples generate STL files optimized for 3D printing:
 
 1. **Try all examples at once** with `./run_examples.sh`
 2. **Start with `filleted_boxes_example.py`** for CAD adapter basics
-3. **Try `create_cylinder_stl.py`** for mesh fundamentals
-4. **Explore path-following** with snake and coil examples
-5. **Build functional parts** with the bottle cap example
-6. **Challenge yourself** with the advanced face mesh example
-7. **Modify the examples** for your own projects!
+3. **Try `rotate_alignment_demo.py`** for alignment-first corner placement
+4. **Try `create_cylinder_stl.py`** for mesh fundamentals
+5. **Explore path-following** with snake and coil examples
+6. **Build functional parts** with the bottle cap example
+7. **Challenge yourself** with the advanced face mesh example
+8. **Modify the examples** for your own projects!
 
 ---
 

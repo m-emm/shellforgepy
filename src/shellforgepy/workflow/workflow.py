@@ -492,11 +492,14 @@ def _orca_filament_metadata_from_files(
 
 def _replace_zip_entries(zip_path: Path, replacements: Mapping[str, bytes]) -> None:
     tmp_path = zip_path.with_suffix(zip_path.suffix + ".tmp")
-    with zipfile.ZipFile(zip_path, "r") as src_zip, zipfile.ZipFile(
-        tmp_path,
-        "w",
-        compression=zipfile.ZIP_DEFLATED,
-    ) as dst_zip:
+    with (
+        zipfile.ZipFile(zip_path, "r") as src_zip,
+        zipfile.ZipFile(
+            tmp_path,
+            "w",
+            compression=zipfile.ZIP_DEFLATED,
+        ) as dst_zip,
+    ):
         for item in src_zip.infolist():
             data = replacements.get(item.filename)
             if data is None:
