@@ -44,6 +44,12 @@ def _format_coordinate(value):
     return f"{float(value):g}"
 
 
+def _format_override_value(value):
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return str(value)
+
+
 def _apply_print_area(machine_data, print_area):
     if not isinstance(print_area, dict):
         return
@@ -274,7 +280,7 @@ def generate_settings(
                 continue
 
             _logger.info(f"Overriding {key} in {name} with {value}")
-            master_data[key] = str(value)
+            master_data[key] = _format_override_value(value)
 
         json_path = (output_dir / f"{path_part}{name}.json").resolve()
         with json_path.open("w", encoding="utf-8") as file_handle:

@@ -236,6 +236,44 @@ def test_generate_settings_stringifies_numeric_process_overrides(tmp_path):
     assert generated_process["support_object_first_layer_gap"] == "0.8"
 
 
+def test_generate_settings_preserves_list_process_overrides(tmp_path):
+    master_dir = tmp_path / "masters"
+    master_dir.mkdir()
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    part_file = tmp_path / "part.stl"
+    part_file.write_text("solid part\nendsolid part\n", encoding="utf-8")
+    process_data_file = tmp_path / "process.json"
+
+    _write_master_settings(
+        master_dir,
+        filament_name="TestFilament",
+        filament_data={"filament_flow_ratio": ["1.0"]},
+        machine_data={
+            "z_hop": ["0.2", "0.2"],
+            "z_hop_types": ["Normal Lift", "Normal Lift"],
+        },
+    )
+    _write_process_data(
+        process_data_file,
+        filament_name="TestFilament",
+        part_file=part_file,
+        process_overrides={
+            "z_hop": ["0.6", "0.6"],
+            "z_hop_types": ["Normal Lift", "Normal Lift"],
+        },
+    )
+
+    generate_settings(process_data_file, output_dir, master_dir)
+
+    generated_machine = json.loads(
+        (output_dir / "TestMachine.json").read_text(encoding="utf-8")
+    )
+
+    assert generated_machine["z_hop"] == ["0.6", "0.6"]
+    assert generated_machine["z_hop_types"] == ["Normal Lift", "Normal Lift"]
+
+
 def test_generate_settings_syncs_machine_default_filament_metadata(tmp_path):
     master_dir = tmp_path / "masters"
     master_dir.mkdir()

@@ -2,6 +2,7 @@ import argparse
 import json
 import logging
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -439,6 +440,117 @@ def test_complete_workflow_run_passes_multi_material_parts_to_orca(
     assert "--allow-multicolor-oneplate" in slicer_cmd
     assert slicer_cmd[slicer_cmd.index("--load-filament-ids") + 1] == "1,2"
     assert slicer_cmd[-2:] == [str(tool_0_stl), str(tool_1_stl)]
+
+
+def test_normalize_orca_3mf_filament_metadata_repairs_gui_project_fields(tmp_path):
+    project_path = tmp_path / "demo.3mf"
+    filaments_dir = tmp_path / "filaments"
+    filaments_dir.mkdir()
+    petgcf_path = filaments_dir / "FilamentPETGCF.json"
+    tpu_path = filaments_dir / "FilamenteSunTPU95A.json"
+    petgcf_path.write_text(
+        json.dumps(
+            {
+                "name": "FilamentPETGCF",
+                "filament_settings_id": ["Generic PETG-CF @IDEX"],
+                "filament_id": "PETGCF_ID",
+                "filament_type": ["PETG"],
+                "default_filament_colour": ["#222222"],
+                "nozzle_temperature": ["255"],
+                "nozzle_temperature_initial_layer": ["260"],
+                "hot_plate_temp": "55",
+                "hot_plate_temp_initial_layer": "55",
+            }
+        ),
+        encoding="utf-8",
+    )
+    tpu_path.write_text(
+        json.dumps(
+            {
+                "name": "FilamenteSunTPU95A",
+                "filament_settings_id": ["eSun TPU 95A @IDEX"],
+                "filament_id": "TPU95A_ID",
+                "filament_type": ["TPU"],
+                "default_filament_colour": ["#00FF00"],
+                "nozzle_temperature": ["230"],
+                "nozzle_temperature_initial_layer": ["230"],
+                "hot_plate_temp": "55",
+                "hot_plate_temp_initial_layer": "55",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with zipfile.ZipFile(project_path, "w") as project_zip:
+        project_zip.writestr(
+            "Metadata/project_settings.config",
+            json.dumps(
+                {
+                    "filament_settings_id": ["FilamentPETGCF", "FilamentPETGCF"],
+                    "filament_ids": ["PETGCF_ID", "PETGCF_ID"],
+                    "filament_type": ["PETG", "PETG"],
+                    "filament_colour": ["#F2754E"],
+                    "nozzle_temperature": ["255", "255"],
+                    "nozzle_temperature_initial_layer": ["260", "260"],
+                    "hot_plate_temp": ["55", "55"],
+                }
+            ),
+        )
+        project_zip.writestr(
+            "Metadata/plate_1.json",
+            json.dumps({"filament_colors": ["#F2754E", "#F2754E"]}),
+        )
+        project_zip.writestr(
+            "Metadata/slice_info.config",
+            (
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                "<config><plate>"
+                '<filament id="1" tray_info_idx="PETGCF_ID" type="PETG" color="#F2754E" />'
+                '<filament id="2" tray_info_idx="PETGCF_ID" type="PETG" color="#F2754E" />'
+                "</plate></config>"
+            ),
+        )
+        project_zip.writestr(
+            "Metadata/model_settings.config",
+            (
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                "<config>"
+                '<object id="2"><metadata key="extruder" value="1"/></object>'
+                '<object id="4"><metadata key="extruder" value="2"/></object>'
+                "</config>"
+            ),
+        )
+
+    report = workflow_module._normalize_orca_3mf_filament_metadata(
+        project_path,
+        [petgcf_path, tpu_path],
+    )
+
+    assert report["object_extruders"] == [1, 2]
+    with zipfile.ZipFile(project_path, "r") as project_zip:
+        project_settings = json.loads(
+            project_zip.read("Metadata/project_settings.config").decode("utf-8")
+        )
+        plate_json = json.loads(
+            project_zip.read("Metadata/plate_1.json").decode("utf-8")
+        )
+        slice_info = project_zip.read("Metadata/slice_info.config").decode("utf-8")
+
+    assert project_settings["filament_settings_id"] == [
+        "Generic PETG-CF @IDEX",
+        "eSun TPU 95A @IDEX",
+    ]
+    assert project_settings["default_filament_profile"] == [
+        "FilamentPETGCF",
+        "FilamenteSunTPU95A",
+    ]
+    assert project_settings["filament_ids"] == ["PETGCF_ID", "TPU95A_ID"]
+    assert project_settings["filament_type"] == ["PETG", "TPU"]
+    assert project_settings["filament_colour"] == ["#222222", "#00FF00"]
+    assert project_settings["nozzle_temperature_initial_layer"] == ["260", "230"]
+    assert plate_json["filament_colors"] == ["#222222", "#00FF00"]
+    assert 'tray_info_idx="TPU95A_ID"' in slice_info
+    assert 'type="TPU"' in slice_info
+    assert 'color="#00FF00"' in slice_info
 
 
 def test_complete_workflow_run_excludes_builder_debug_json_from_orca_settings(

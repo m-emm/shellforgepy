@@ -14,9 +14,11 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence
+from xml.etree import ElementTree as ET
 
 from shellforgepy.simple import LOGGING_FORMAT
 from shellforgepy.slicing.orca_slicer_settings_generator import generate_settings
@@ -33,6 +35,24 @@ RUN_ID_ENV = "SHELLFORGEPY_RUN_ID"
 RUN_DIR_ENV = "SHELLFORGEPY_RUN_DIRECTORY"
 SELECTED_PLATES_ENV = "SHELLFORGEPY_SELECTED_PLATES"
 MANIFEST_FILENAME = "workflow_manifest.json"
+
+ORCA_3MF_PROJECT_SETTINGS = "Metadata/project_settings.config"
+ORCA_3MF_MODEL_SETTINGS = "Metadata/model_settings.config"
+ORCA_3MF_SLICE_INFO = "Metadata/slice_info.config"
+ORCA_FILAMENT_BED_TEMP_KEYS = (
+    "hot_plate_temp",
+    "hot_plate_temp_initial_layer",
+    "cool_plate_temp",
+    "cool_plate_temp_initial_layer",
+    "eng_plate_temp",
+    "eng_plate_temp_initial_layer",
+    "supertack_plate_temp",
+    "supertack_plate_temp_initial_layer",
+    "textured_cool_plate_temp",
+    "textured_cool_plate_temp_initial_layer",
+    "textured_plate_temp",
+    "textured_plate_temp_initial_layer",
+)
 
 CONFIG_KEYS = {
     "python_runner": "python.runner",
@@ -416,6 +436,227 @@ def _slicer_part_inputs_from_manifest_entries(
         )
 
     return part_paths, filament_ids
+
+
+def _first_orca_config_value(value: object, default: str = "") -> str:
+    if isinstance(value, list):
+        if not value:
+            return default
+        value = value[0]
+    if value is None:
+        return default
+    return str(value)
+
+
+def _orca_filament_metadata_from_json(path: Path) -> Dict[str, str]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    name = _first_orca_config_value(data.get("name"), path.stem)
+    return {
+        "name": name,
+        "settings_id": _first_orca_config_value(
+            data.get("filament_settings_id"),
+            name,
+        ),
+        "filament_id": _first_orca_config_value(
+            data.get("filament_id") or data.get("flament_id"),
+            name,
+        ),
+        "type": _first_orca_config_value(data.get("filament_type"), ""),
+        "color": _first_orca_config_value(
+            data.get("default_filament_colour") or data.get("filament_colour"),
+            "#F2754E",
+        ),
+        "nozzle_temperature": _first_orca_config_value(
+            data.get("nozzle_temperature"),
+            "0",
+        ),
+        "nozzle_temperature_initial_layer": _first_orca_config_value(
+            data.get("nozzle_temperature_initial_layer"),
+            "0",
+        ),
+        **{
+            key: _first_orca_config_value(data.get(key), "0")
+            for key in ORCA_FILAMENT_BED_TEMP_KEYS
+        },
+    }
+
+
+def _orca_filament_metadata_from_files(
+    filament_files: Sequence[Path],
+) -> List[Dict[str, str]]:
+    return [
+        _orca_filament_metadata_from_json(Path(filament_file))
+        for filament_file in filament_files
+    ]
+
+
+def _replace_zip_entries(zip_path: Path, replacements: Mapping[str, bytes]) -> None:
+    tmp_path = zip_path.with_suffix(zip_path.suffix + ".tmp")
+    with zipfile.ZipFile(zip_path, "r") as src_zip, zipfile.ZipFile(
+        tmp_path,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+    ) as dst_zip:
+        for item in src_zip.infolist():
+            data = replacements.get(item.filename)
+            if data is None:
+                data = src_zip.read(item.filename)
+            dst_zip.writestr(item, data)
+    tmp_path.replace(zip_path)
+
+
+def _normalize_orca_project_settings(
+    project_settings: Dict[str, object],
+    filament_metadata: Sequence[Mapping[str, str]],
+) -> None:
+    project_settings["filament_settings_id"] = [
+        filament["settings_id"] for filament in filament_metadata
+    ]
+    project_settings["default_filament_profile"] = [
+        filament["name"] for filament in filament_metadata
+    ]
+    project_settings["filament_ids"] = [
+        filament["filament_id"] for filament in filament_metadata
+    ]
+    project_settings["filament_type"] = [
+        filament["type"] for filament in filament_metadata
+    ]
+    filament_colors = [filament["color"] for filament in filament_metadata]
+    project_settings["filament_colour"] = filament_colors
+    project_settings["default_filament_colour"] = filament_colors
+    project_settings["extruder_colour"] = filament_colors
+    project_settings["nozzle_temperature"] = [
+        filament["nozzle_temperature"] for filament in filament_metadata
+    ]
+    project_settings["nozzle_temperature_initial_layer"] = [
+        filament["nozzle_temperature_initial_layer"] for filament in filament_metadata
+    ]
+    for key in ORCA_FILAMENT_BED_TEMP_KEYS:
+        project_settings[key] = [filament[key] for filament in filament_metadata]
+
+
+def _normalize_orca_plate_json(
+    plate_json: Dict[str, object],
+    filament_metadata: Sequence[Mapping[str, str]],
+) -> None:
+    plate_json["filament_colors"] = [
+        filament["color"] for filament in filament_metadata
+    ]
+    plate_json["filament_ids"] = list(range(len(filament_metadata)))
+
+
+def _normalize_orca_slice_info(
+    slice_info_xml: bytes,
+    filament_metadata: Sequence[Mapping[str, str]],
+) -> bytes:
+    root = ET.fromstring(slice_info_xml)
+    filament_elements = root.findall(".//filament")
+    for index, filament in enumerate(filament_metadata):
+        if index >= len(filament_elements):
+            break
+        element = filament_elements[index]
+        element.set("tray_info_idx", filament["filament_id"])
+        element.set("type", filament["type"])
+        element.set("color", filament["color"])
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def _orca_model_extruders(model_settings_xml: bytes) -> List[int]:
+    root = ET.fromstring(model_settings_xml)
+    extruders: List[int] = []
+    for metadata in root.findall(".//metadata"):
+        if metadata.get("key") != "extruder":
+            continue
+        value = metadata.get("value")
+        if value is None:
+            continue
+        extruders.append(int(value))
+    return extruders
+
+
+def _normalize_orca_3mf_filament_metadata(
+    project_path: Path,
+    filament_files: Sequence[Path],
+) -> Dict[str, object]:
+    if len(filament_files) < 2 or not project_path.exists():
+        return {}
+    if not zipfile.is_zipfile(project_path):
+        _logger.warning(
+            "Skipping Orca 3MF filament metadata normalization for non-zip file: %s",
+            project_path,
+        )
+        return {}
+
+    filament_metadata = _orca_filament_metadata_from_files(filament_files)
+    replacements: Dict[str, bytes] = {}
+    report: Dict[str, object] = {
+        "project_path": str(project_path),
+        "filaments": [
+            {
+                "name": filament["name"],
+                "settings_id": filament["settings_id"],
+                "filament_id": filament["filament_id"],
+                "type": filament["type"],
+                "color": filament["color"],
+                "nozzle_temperature": filament["nozzle_temperature"],
+                "nozzle_temperature_initial_layer": filament[
+                    "nozzle_temperature_initial_layer"
+                ],
+            }
+            for filament in filament_metadata
+        ],
+    }
+
+    with zipfile.ZipFile(project_path, "r") as project_zip:
+        names = set(project_zip.namelist())
+        if ORCA_3MF_PROJECT_SETTINGS in names:
+            project_settings = json.loads(
+                project_zip.read(ORCA_3MF_PROJECT_SETTINGS).decode("utf-8")
+            )
+            _normalize_orca_project_settings(project_settings, filament_metadata)
+            replacements[ORCA_3MF_PROJECT_SETTINGS] = json.dumps(
+                project_settings,
+                indent=4,
+            ).encode("utf-8")
+
+        for name in sorted(names):
+            if name.startswith("Metadata/plate_") and name.endswith(".json"):
+                plate_json = json.loads(project_zip.read(name).decode("utf-8"))
+                _normalize_orca_plate_json(plate_json, filament_metadata)
+                replacements[name] = json.dumps(
+                    plate_json, separators=(",", ":")
+                ).encode("utf-8")
+                report["plate_json"] = name
+
+        if ORCA_3MF_SLICE_INFO in names:
+            replacements[ORCA_3MF_SLICE_INFO] = _normalize_orca_slice_info(
+                project_zip.read(ORCA_3MF_SLICE_INFO),
+                filament_metadata,
+            )
+
+        if ORCA_3MF_MODEL_SETTINGS in names:
+            extruders = _orca_model_extruders(project_zip.read(ORCA_3MF_MODEL_SETTINGS))
+            report["object_extruders"] = extruders
+            invalid_extruders = [
+                extruder
+                for extruder in extruders
+                if extruder < 1 or extruder > len(filament_metadata)
+            ]
+            if invalid_extruders:
+                raise WorkflowError(
+                    "3MF object extruder assignment references unloaded filament "
+                    f"slots: {invalid_extruders}; loaded slots=1..{len(filament_metadata)}"
+                )
+
+    if replacements:
+        _replace_zip_entries(project_path, replacements)
+        _logger.info(
+            "Normalized Orca 3MF filament metadata for %s: %s",
+            project_path,
+            ", ".join(filament["name"] for filament in filament_metadata),
+        )
+
+    return report
 
 
 def _resolve_process_master_settings_dir(
@@ -1346,6 +1587,17 @@ def complete_workflow_run(
             format_command(slicer_cmd),
         )
         execute_subprocess(slicer_cmd, env=orca_env)
+        project_3mf_report = _normalize_orca_3mf_filament_metadata(
+            project_path,
+            filament_files,
+        )
+        if project_3mf_report:
+            slicer_manifest_data["project_3mf_metadata"] = project_3mf_report
+            if isinstance(manifest_entry, dict):
+                manifest_entry["slicer"] = slicer_manifest_data
+            else:
+                manifest["slicer"] = slicer_manifest_data
+            _write_manifest(run_directory, manifest)
 
         preserved_paths = _preserve_generated_gcode_files(
             run_directory=run_directory,
