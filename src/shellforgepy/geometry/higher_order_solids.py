@@ -948,8 +948,30 @@ def create_triangular_prism(corners):
     return create_solid_from_traditional_face_vertex_maps(maps)
 
 
-def materialize_bounding_box(part, x_enlargement=0, y_enlargement=0, z_enlargement=0):
+def materialize_bounding_box(
+    part,
+    x_enlargement=0,
+    y_enlargement=0,
+    z_enlargement=0,
+    x_size=None,
+    y_size=None,
+    z_size=None,
+):
     bb = get_bounding_box(part)
+
+    if x_size is not None:
+        if not np.isclose(x_enlargement, 0):
+            raise ValueError("Cannot specify both x_size and x_enlargement")
+        x_enlargement = x_size - (bb[1][0] - bb[0][0])
+    if y_size is not None:
+        if not np.isclose(y_enlargement, 0):
+            raise ValueError("Cannot specify both y_size and y_enlargement")
+        y_enlargement = y_size - (bb[1][1] - bb[0][1])
+    if z_size is not None:
+        if not np.isclose(z_enlargement, 0):
+            raise ValueError("Cannot specify both z_size and z_enlargement")
+        z_enlargement = z_size - (bb[1][2] - bb[0][2])
+
     corners = [
         (
             bb[0][0] - x_enlargement / 2,

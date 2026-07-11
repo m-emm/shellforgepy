@@ -286,3 +286,6 @@ for k, v in ALIGNMENT_EDGE_ALIGNMENT.items():
 
 for k, v in OPPOSITE_ALIGNMENTS.items():
     setattr(k, "opposite", v)
+
+for k, v in ALIGNMENT_VECTORS.items():
+    setattr(k, "vector", v)
