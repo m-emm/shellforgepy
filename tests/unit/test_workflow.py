@@ -1090,6 +1090,7 @@ def test_complete_workflow_run_generates_obj_previews_when_enabled(
         filename_prefix=None,
         background_color=(250, 250, 250),
         exclude_object_name_prefixes=(),
+        pixels_per_mm=None,
     ):
         render_calls.append(
             {
@@ -1100,6 +1101,7 @@ def test_complete_workflow_run_generates_obj_previews_when_enabled(
                 "height": height,
                 "filename_prefix": filename_prefix,
                 "exclude_object_name_prefixes": tuple(exclude_object_name_prefixes),
+                "pixels_per_mm": pixels_per_mm,
             }
         )
         preview_path = Path(output_dir) / "design_front_angle.ppm"
@@ -1164,6 +1166,7 @@ def test_complete_workflow_run_generates_obj_previews_when_enabled(
             "height": 512,
             "filename_prefix": "design",
             "exclude_object_name_prefixes": (),
+            "pixels_per_mm": None,
         }
     ]
 
@@ -1188,6 +1191,7 @@ def test_complete_workflow_run_generates_obj_preview_variants(monkeypatch, tmp_p
         filename_prefix=None,
         background_color=(250, 250, 250),
         exclude_object_name_prefixes=(),
+        pixels_per_mm=None,
     ):
         actual_views = list(views or ["front_angle"])
         render_calls.append(
@@ -1199,6 +1203,7 @@ def test_complete_workflow_run_generates_obj_preview_variants(monkeypatch, tmp_p
                 "height": height,
                 "filename_prefix": filename_prefix,
                 "exclude_object_name_prefixes": tuple(exclude_object_name_prefixes),
+                "pixels_per_mm": pixels_per_mm,
             }
         )
         results = []
@@ -1251,12 +1256,14 @@ def test_complete_workflow_run_generates_obj_preview_variants(monkeypatch, tmp_p
             "views": ["front", "right"],
             "width": 800,
             "height": 600,
+            "pixels_per_mm": 12,
             "variants": [
                 {"name": "no_lid", "hide": ["lid", "lid_screws"]},
                 {
                     "name": "no_lid_no_psus",
                     "views": ["top"],
                     "width": 256,
+                    "pixels_per_mm": 66,
                     "hide": ["lid", "cooleon_psu_1_", "cooleon_psu_2_"],
                 },
             ],
@@ -1282,6 +1289,7 @@ def test_complete_workflow_run_generates_obj_preview_variants(monkeypatch, tmp_p
             "height": 600,
             "filename_prefix": "design",
             "exclude_object_name_prefixes": (),
+            "pixels_per_mm": 12.0,
         },
         {
             "obj_path": obj_path,
@@ -1291,6 +1299,7 @@ def test_complete_workflow_run_generates_obj_preview_variants(monkeypatch, tmp_p
             "height": 600,
             "filename_prefix": "design__no_lid",
             "exclude_object_name_prefixes": ("lid", "lid_screws"),
+            "pixels_per_mm": 12.0,
         },
         {
             "obj_path": obj_path,
@@ -1304,10 +1313,51 @@ def test_complete_workflow_run_generates_obj_preview_variants(monkeypatch, tmp_p
                 "cooleon_psu_1_",
                 "cooleon_psu_2_",
             ),
+            "pixels_per_mm": 66.0,
         },
     ]
     assert (run_directory / "previews" / "design__no_lid_front.ppm").exists()
     assert (run_directory / "previews" / "design__no_lid_no_psus_top.ppm").exists()
+
+
+@pytest.mark.parametrize(
+    "render_config,error_text",
+    [
+        (
+            {"enabled": True, "pixels_per_mm": 10, "mm_per_pixel": 0.1},
+            "only one of pixels_per_mm or mm_per_pixel",
+        ),
+        ({"enabled": True, "pixels_per_mm": 0}, "pixels_per_mm must be positive"),
+    ],
+)
+def test_complete_workflow_run_rejects_invalid_obj_preview_scale(
+    render_config, error_text, tmp_path
+):
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    obj_path = run_directory / "design.obj"
+    obj_path.write_text("# obj\n", encoding="utf-8")
+
+    args = argparse.Namespace(
+        slice=False,
+        upload=False,
+        open=False,
+        part_file=None,
+        process_file=None,
+        master_settings_dir=None,
+        orca_executable=None,
+        orca_debug=None,
+        printer=None,
+    )
+
+    with pytest.raises(WorkflowError, match=error_text):
+        complete_workflow_run(
+            args,
+            config={"render": render_config},
+            run_directory=run_directory,
+            manifest={"obj_path": str(obj_path)},
+            target_label="design",
+        )
 
 
 def test_complete_workflow_run_uses_obj_renderer_for_single_plate_gcode_preview(

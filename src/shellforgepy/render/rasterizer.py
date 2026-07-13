@@ -86,6 +86,7 @@ def _camera_mvp_for_scene(
     *,
     width: int,
     height: int,
+    pixels_per_mm: float | None = None,
     margin_ratio: float = 0.08,
 ) -> tuple[np.ndarray, np.ndarray]:
     bounds_min, bounds_max = scene.bounds()
@@ -112,19 +113,24 @@ def _camera_mvp_for_scene(
     view_max = view_space.max(axis=0)
     center_view = 0.5 * (view_min + view_max)
     half_extent = 0.5 * (view_max - view_min)
-    half_extent *= 1.0 + margin_ratio
+    if pixels_per_mm is None:
+        half_extent *= 1.0 + margin_ratio
     half_extent = np.maximum(half_extent, 1e-3)
 
-    # Preserve object proportions by fitting orthographic X/Y with one scale.
-    viewport_aspect = max(float(width), 1.0) / max(float(height), 1.0)
-    half_width = float(half_extent[0])
-    half_height = float(half_extent[1])
-    if half_width / max(half_height, 1e-6) < viewport_aspect:
-        half_width = half_height * viewport_aspect
+    if pixels_per_mm is not None:
+        half_extent[0] = max(float(width) / (2.0 * pixels_per_mm), 1e-3)
+        half_extent[1] = max(float(height) / (2.0 * pixels_per_mm), 1e-3)
     else:
-        half_height = half_width / max(viewport_aspect, 1e-6)
-    half_extent[0] = max(half_width, 1e-3)
-    half_extent[1] = max(half_height, 1e-3)
+        # Preserve object proportions by fitting orthographic X/Y with one scale.
+        viewport_aspect = max(float(width), 1.0) / max(float(height), 1.0)
+        half_width = float(half_extent[0])
+        half_height = float(half_extent[1])
+        if half_width / max(half_height, 1e-6) < viewport_aspect:
+            half_width = half_height * viewport_aspect
+        else:
+            half_height = half_width / max(viewport_aspect, 1e-6)
+        half_extent[0] = max(half_width, 1e-3)
+        half_extent[1] = max(half_height, 1e-3)
 
     view_min = center_view - half_extent
     view_max = center_view + half_extent
@@ -138,6 +144,31 @@ def _camera_mvp_for_scene(
         float(view_max[2]) + radius,
     )
     return proj @ view, view
+
+
+def _resolve_pixels_per_mm(
+    *,
+    pixels_per_mm: float | None,
+    mm_per_pixel: float | None,
+) -> float | None:
+    if pixels_per_mm is not None and mm_per_pixel is not None:
+        raise ValueError("Specify either pixels_per_mm or mm_per_pixel, not both")
+    if pixels_per_mm is None and mm_per_pixel is None:
+        return None
+
+    if pixels_per_mm is not None:
+        scale = float(pixels_per_mm)
+        scale_name = "pixels_per_mm"
+    else:
+        mm_scale = float(mm_per_pixel)
+        if mm_scale <= 0.0:
+            raise ValueError("mm_per_pixel must be positive")
+        scale = 1.0 / mm_scale
+        scale_name = "mm_per_pixel"
+
+    if scale <= 0.0:
+        raise ValueError(f"{scale_name} must be positive")
+    return scale
 
 
 def _ndc_to_screen(triangles_ndc: np.ndarray, width: int, height: int) -> np.ndarray:
@@ -327,15 +358,27 @@ def render_scene(
     height: int = 1024,
     background_color: tuple[int, int, int] = (250, 250, 250),
     disable_numba: bool = False,
+    pixels_per_mm: float | None = None,
+    mm_per_pixel: float | None = None,
 ) -> np.ndarray:
     """Render a mesh scene to an RGB numpy image."""
+    resolved_pixels_per_mm = _resolve_pixels_per_mm(
+        pixels_per_mm=pixels_per_mm,
+        mm_per_pixel=mm_per_pixel,
+    )
     triangles, face_colors = _scene_triangles(scene)
     if len(triangles) == 0:
         image = np.empty((height, width, 3), dtype=np.uint8)
         image[:] = np.asarray(background_color, dtype=np.uint8)
         return image
 
-    mvp, view = _camera_mvp_for_scene(scene, view_name, width=width, height=height)
+    mvp, view = _camera_mvp_for_scene(
+        scene,
+        view_name,
+        width=width,
+        height=height,
+        pixels_per_mm=resolved_pixels_per_mm,
+    )
     triangles_h = np.concatenate(
         [triangles, np.ones((triangles.shape[0], 3, 1), dtype=np.float32)], axis=2
     )

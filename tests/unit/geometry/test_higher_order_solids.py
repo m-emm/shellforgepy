@@ -2,7 +2,13 @@ import math
 
 import numpy as np
 import pytest
-from shellforgepy.adapters._adapter import get_volume
+from shellforgepy.adapters._adapter import (
+    create_box,
+    get_bounding_box,
+    get_vertex_coordinates,
+    get_volume,
+)
+from shellforgepy.construct.alignment import Alignment
 from shellforgepy.construct.construct_utils import normalize
 from shellforgepy.geometry.higher_order_solids import (
     create_distorted_cube,
@@ -15,12 +21,12 @@ from shellforgepy.geometry.higher_order_solids import (
     create_rounded_ends_ring,
     create_rounded_slab,
     create_screw_thread,
+    create_support_triangle,
     directed_box_at,
     directed_cone_at,
     directed_cylinder_at,
     materialize_bounding_box,
 )
-from shellforgepy.simple import create_box, get_bounding_box, get_vertex_coordinates
 
 
 def _min_angle_delta(angles, target):
@@ -56,6 +62,10 @@ def _vertex_angles_radii_heights(vertices, center, plane_normal, start_direction
         angles.append(angle)
 
     return np.array(angles), np.array(radii), np.array(heights)
+
+
+def _has_vertex(vertices, expected):
+    return np.any(np.all(np.isclose(vertices, expected, atol=1e-7), axis=1))
 
 
 def test_create_hex_prism():
@@ -164,6 +174,103 @@ def test_create_right_triangle_invalid_inputs():
             extrusion_direction=(0, 0, 1),
             a_normal=(0, 0, 0),
         )
+
+
+def test_create_support_triangle_right_front_geometry():
+    protrusion = create_box(12.0, 4.0, 3.0, origin=(5.0, -7.0, 2.0))
+
+    support = create_support_triangle(
+        protrusion,
+        protrusion_direction=Alignment.RIGHT,
+        gravity_direction=Alignment.FRONT,
+    )
+
+    bb_min, bb_max = get_bounding_box(support)
+    assert np.allclose(bb_min, (5.0, -19.0, 2.0), atol=1e-7)
+    assert np.allclose(bb_max, (17.0, -7.0, 5.0), atol=1e-7)
+    assert np.isclose(get_volume(support), 0.5 * 12.0 * 12.0 * 3.0, rtol=1e-6)
+
+    vertices = np.asarray(get_vertex_coordinates(support), dtype=float)
+    assert _has_vertex(vertices, (5.0, -19.0, 2.0))
+    assert _has_vertex(vertices, (5.0, -19.0, 5.0))
+    assert not _has_vertex(vertices, (17.0, -19.0, 2.0))
+    assert not _has_vertex(vertices, (17.0, -19.0, 5.0))
+
+
+@pytest.mark.parametrize(
+    (
+        "protrusion_direction",
+        "gravity_direction",
+        "expected_min",
+        "expected_max",
+        "expected_volume",
+        "expected_wall_foot",
+    ),
+    [
+        (
+            Alignment.LEFT,
+            Alignment.BOTTOM,
+            (5.0, -7.0, -10.0),
+            (17.0, -3.0, 2.0),
+            0.5 * 12.0 * 12.0 * 4.0,
+            (17.0, -7.0, -10.0),
+        ),
+        (
+            Alignment.RIGHT,
+            Alignment.BACK,
+            (5.0, -3.0, 2.0),
+            (17.0, 9.0, 5.0),
+            0.5 * 12.0 * 12.0 * 3.0,
+            (5.0, 9.0, 2.0),
+        ),
+    ],
+)
+def test_create_support_triangle_handles_sign_combinations(
+    protrusion_direction,
+    gravity_direction,
+    expected_min,
+    expected_max,
+    expected_volume,
+    expected_wall_foot,
+):
+    protrusion = create_box(12.0, 4.0, 3.0, origin=(5.0, -7.0, 2.0))
+
+    support = create_support_triangle(
+        protrusion, protrusion_direction, gravity_direction
+    )
+
+    bb_min, bb_max = get_bounding_box(support)
+    assert np.allclose(bb_min, expected_min, atol=1e-7)
+    assert np.allclose(bb_max, expected_max, atol=1e-7)
+    assert np.isclose(get_volume(support), expected_volume, rtol=1e-6)
+
+    vertices = np.asarray(get_vertex_coordinates(support), dtype=float)
+    assert _has_vertex(vertices, expected_wall_foot)
+
+
+def test_create_support_triangle_rejects_invalid_directions():
+    protrusion = create_box(12.0, 4.0, 3.0, origin=(5.0, -7.0, 2.0))
+    invalid_cases = [
+        (Alignment.RIGHT, Alignment.LEFT),
+        (Alignment.RIGHT, Alignment.RIGHT),
+        (Alignment.CENTER, Alignment.FRONT),
+        (Alignment.STACK_RIGHT, Alignment.FRONT),
+        (Alignment.EDGE_RIGHT, Alignment.FRONT),
+        ("RIGHT", Alignment.FRONT),
+        (Alignment.RIGHT, "FRONT"),
+    ]
+
+    for protrusion_direction, gravity_direction in invalid_cases:
+        with pytest.raises(ValueError):
+            create_support_triangle(protrusion, protrusion_direction, gravity_direction)
+
+
+def test_create_support_triangle_is_exported_from_simple():
+    pytest.importorskip("cadquery")
+    import shellforgepy.simple as sf
+
+    assert sf.create_support_triangle is create_support_triangle
+    assert "create_support_triangle" in sf.__all__
 
 
 def test_create_screw_thread():

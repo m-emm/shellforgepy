@@ -6575,6 +6575,43 @@ def _normalize_preview_hide_prefixes(value: Any) -> List[str]:
     )
 
 
+def _normalize_preview_positive_float(value: Any, *, key_name: str) -> float:
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError) as exc:
+        raise BuilderError(f"{key_name} must resolve to a positive number") from exc
+    if normalized <= 0.0:
+        raise BuilderError(f"{key_name} must be positive")
+    return normalized
+
+
+def _normalize_preview_scale_options(
+    value: Mapping[str, Any],
+    *,
+    key_name: str,
+) -> Dict[str, float]:
+    has_pixels_per_mm = "pixels_per_mm" in value
+    has_mm_per_pixel = "mm_per_pixel" in value
+    if has_pixels_per_mm and has_mm_per_pixel:
+        raise BuilderError(
+            f"{key_name} may specify only one of pixels_per_mm or mm_per_pixel"
+        )
+    if has_pixels_per_mm:
+        return {
+            "pixels_per_mm": _normalize_preview_positive_float(
+                value["pixels_per_mm"],
+                key_name=f"{key_name}.pixels_per_mm",
+            )
+        }
+    if has_mm_per_pixel:
+        mm_per_pixel = _normalize_preview_positive_float(
+            value["mm_per_pixel"],
+            key_name=f"{key_name}.mm_per_pixel",
+        )
+        return {"pixels_per_mm": 1.0 / mm_per_pixel}
+    return {}
+
+
 def _normalize_preview_variants(value: Any) -> List[Dict[str, Any]]:
     if value is None:
         return []
@@ -6609,6 +6646,12 @@ def _normalize_preview_variants(value: Any) -> List[Dict[str, Any]]:
             normalized_variant["width"] = int(variant["width"])
         if "height" in variant:
             normalized_variant["height"] = int(variant["height"])
+        normalized_variant.update(
+            _normalize_preview_scale_options(
+                variant,
+                key_name=f"Builder preview variant {name}",
+            )
+        )
         normalized.append(normalized_variant)
     return normalized
 
@@ -6661,6 +6704,12 @@ def _resolve_preview_options(
         options["width"] = int(resolved["width"])
     if "height" in resolved:
         options["height"] = int(resolved["height"])
+    options.update(
+        _normalize_preview_scale_options(
+            resolved,
+            key_name=f"Builder.{section_name}.preview",
+        )
+    )
     if "variants" in resolved:
         options["variants"] = _normalize_preview_variants(resolved.get("variants"))
 
@@ -6689,6 +6738,8 @@ def _apply_preview_options_to_workflow_config(
         render_config["width"] = int(preview_options["width"])
     if "height" in preview_options:
         render_config["height"] = int(preview_options["height"])
+    if "pixels_per_mm" in preview_options:
+        render_config["pixels_per_mm"] = float(preview_options["pixels_per_mm"])
     if "variants" in preview_options:
         render_config["variants"] = list(preview_options["variants"])
     return updated

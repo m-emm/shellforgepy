@@ -66,6 +66,8 @@ CONFIG_KEYS = {
     "render_views": "render.views",
     "render_width": "render.width",
     "render_height": "render.height",
+    "render_pixels_per_mm": "render.pixels_per_mm",
+    "render_mm_per_pixel": "render.mm_per_pixel",
     "render_variants": "render.variants",
     "orca_debug_level": "orca.debug_level",
     "orca_env": "orca.env",
@@ -87,6 +89,8 @@ CONFIG_KEY_DOCUMENTATION = {
     "render_views": "List of named built-in preview views to render (for example: ['front_angle', 'top']).",
     "render_width": "Output width in pixels for built-in OBJ previews.",
     "render_height": "Output height in pixels for built-in OBJ previews.",
+    "render_pixels_per_mm": "Optional fixed preview render scale in pixels per millimeter.",
+    "render_mm_per_pixel": "Optional fixed preview render scale in millimeters per pixel.",
     "render_variants": "Named built-in OBJ preview variants with hidden object-name prefixes.",
     "orca_debug_level": "Debug level to use when running OrcaSlicer.",
     "orca_env": "Environment variables to set when running OrcaSlicer.",
@@ -1053,8 +1057,54 @@ def _normalize_render_variants(value: object) -> list[dict[str, object]]:
             normalized_variant["width"] = variant["width"]
         if "height" in variant:
             normalized_variant["height"] = variant["height"]
+        if "pixels_per_mm" in variant:
+            normalized_variant["pixels_per_mm"] = variant["pixels_per_mm"]
+        if "mm_per_pixel" in variant:
+            normalized_variant["mm_per_pixel"] = variant["mm_per_pixel"]
         normalized.append(normalized_variant)
     return normalized
+
+
+def _normalize_render_scale_value(value: object, *, key_name: str) -> float:
+    try:
+        scale = float(value)
+    except (TypeError, ValueError) as exc:
+        raise WorkflowError(f"Invalid {key_name} value: {value!r}") from exc
+    if scale <= 0.0:
+        raise WorkflowError(f"{key_name} must be positive, got {scale:g}")
+    return scale
+
+
+def _normalize_render_pixels_per_mm(
+    *,
+    pixels_per_mm: object,
+    mm_per_pixel: object,
+    key_name: str,
+) -> float | None:
+    has_pixels_per_mm = pixels_per_mm is not None
+    has_mm_per_pixel = mm_per_pixel is not None
+    if has_pixels_per_mm and has_mm_per_pixel:
+        raise WorkflowError(
+            f"{key_name} may specify only one of pixels_per_mm or mm_per_pixel"
+        )
+    if not has_pixels_per_mm and not has_mm_per_pixel:
+        return None
+    if has_pixels_per_mm:
+        return _normalize_render_scale_value(
+            pixels_per_mm,
+            key_name=f"{key_name}.pixels_per_mm",
+        )
+    mm_scale = _normalize_render_scale_value(
+        mm_per_pixel,
+        key_name=f"{key_name}.mm_per_pixel",
+    )
+    return 1.0 / mm_scale
+
+
+def _render_scale_kwargs(pixels_per_mm: float | None) -> dict[str, float]:
+    if pixels_per_mm is None:
+        return {}
+    return {"pixels_per_mm": pixels_per_mm}
 
 
 def _normalize_render_dimension(value: object, *, key_name: str) -> int:
@@ -1131,6 +1181,11 @@ def _generate_obj_previews(
         _resolve_config_key_value(config, "render_height"),
         key_name="render.height",
     )
+    pixels_per_mm = _normalize_render_pixels_per_mm(
+        pixels_per_mm=_resolve_config_key_value(config, "render_pixels_per_mm"),
+        mm_per_pixel=_resolve_config_key_value(config, "render_mm_per_pixel"),
+        key_name="render",
+    )
     batch_result = render_obj_views_with_stats(
         obj_path,
         output_dir=preview_dir,
@@ -1139,6 +1194,7 @@ def _generate_obj_previews(
         height=height,
         filename_prefix=obj_path.stem,
         exclude_object_name_prefixes=(),
+        **_render_scale_kwargs(pixels_per_mm),
     )
     preview_paths = [result.path for result in batch_result.results]
     _log_obj_preview_batch_result(
@@ -1159,6 +1215,14 @@ def _generate_obj_previews(
             variant.get("height", height),
             key_name=f"render.variants.{variant_name}.height",
         )
+        if "pixels_per_mm" in variant or "mm_per_pixel" in variant:
+            variant_pixels_per_mm = _normalize_render_pixels_per_mm(
+                pixels_per_mm=variant.get("pixels_per_mm"),
+                mm_per_pixel=variant.get("mm_per_pixel"),
+                key_name=f"render.variants.{variant_name}",
+            )
+        else:
+            variant_pixels_per_mm = pixels_per_mm
         variant_batch_result = render_obj_views_with_stats(
             obj_path,
             output_dir=preview_dir,
@@ -1167,6 +1231,7 @@ def _generate_obj_previews(
             height=variant_height,
             filename_prefix=f"{obj_path.stem}__{_slugify_name(variant_name)}",
             exclude_object_name_prefixes=variant["hide"],
+            **_render_scale_kwargs(variant_pixels_per_mm),
         )
         preview_paths.extend(result.path for result in variant_batch_result.results)
         _log_obj_preview_batch_result(
@@ -1204,6 +1269,11 @@ def _generate_obj_gcode_preview(
         _resolve_config_key_value(config, "render_height"),
         key_name="render.height",
     )
+    pixels_per_mm = _normalize_render_pixels_per_mm(
+        pixels_per_mm=_resolve_config_key_value(config, "render_pixels_per_mm"),
+        mm_per_pixel=_resolve_config_key_value(config, "render_mm_per_pixel"),
+        key_name="render",
+    )
     result = render_obj_view_to_image_with_stats(
         obj_path,
         destination=destination,
@@ -1211,6 +1281,7 @@ def _generate_obj_gcode_preview(
         width=width,
         height=height,
         exclude_object_name_prefixes=("plate_boundary_",),
+        **_render_scale_kwargs(pixels_per_mm),
     )
     _logger.info(
         "Generated G-code preview from OBJ [%s] in %.3f seconds: %s",

@@ -72,6 +72,8 @@ def _render_scene_view_to_path(
     height: int,
     background_color: tuple[int, int, int],
     disable_numba: bool,
+    pixels_per_mm: float | None = None,
+    mm_per_pixel: float | None = None,
 ) -> PreviewRenderResult:
     triangle_count = scene.triangle_count()
     vertex_count = scene.vertex_count()
@@ -84,6 +86,8 @@ def _render_scene_view_to_path(
         height=height,
         background_color=background_color,
         disable_numba=disable_numba,
+        pixels_per_mm=pixels_per_mm,
+        mm_per_pixel=mm_per_pixel,
     )
     output_path = write_image(image, destination)
     render_seconds = time.perf_counter() - render_start
@@ -109,6 +113,8 @@ def render_obj_view_to_image_with_stats(
     background_color: tuple[int, int, int] = (250, 250, 250),
     exclude_object_name_prefixes: Sequence[str] | None = None,
     disable_numba: bool = False,
+    pixels_per_mm: float | None = None,
+    mm_per_pixel: float | None = None,
 ) -> PreviewRenderResult:
     """Render a single named OBJ view to an explicit image destination."""
 
@@ -122,6 +128,8 @@ def render_obj_view_to_image_with_stats(
         height=height,
         background_color=background_color,
         disable_numba=disable_numba,
+        pixels_per_mm=pixels_per_mm,
+        mm_per_pixel=mm_per_pixel,
     )
 
 
@@ -135,6 +143,8 @@ def render_obj_view_to_image(
     background_color: tuple[int, int, int] = (250, 250, 250),
     exclude_object_name_prefixes: Sequence[str] | None = None,
     disable_numba: bool = False,
+    pixels_per_mm: float | None = None,
+    mm_per_pixel: float | None = None,
 ) -> Path:
     """Render a single named OBJ view to an explicit image destination."""
 
@@ -147,6 +157,8 @@ def render_obj_view_to_image(
         background_color=background_color,
         exclude_object_name_prefixes=exclude_object_name_prefixes,
         disable_numba=disable_numba,
+        pixels_per_mm=pixels_per_mm,
+        mm_per_pixel=mm_per_pixel,
     )
     return result.path
 
@@ -162,6 +174,8 @@ def render_obj_views_with_stats(
     filename_prefix: str | None = None,
     exclude_object_name_prefixes: Sequence[str] | None = None,
     disable_numba: bool = False,
+    pixels_per_mm: float | None = None,
+    mm_per_pixel: float | None = None,
 ) -> PreviewRenderBatchResult:
     """Render one or more named views of an OBJ scene and collect timing stats."""
 
@@ -194,6 +208,8 @@ def render_obj_views_with_stats(
                 height=height,
                 background_color=background_color,
                 disable_numba=disable_numba,
+                pixels_per_mm=pixels_per_mm,
+                mm_per_pixel=mm_per_pixel,
             )
         )
 
@@ -220,6 +236,8 @@ def render_obj_views(
     filename_prefix: str | None = None,
     exclude_object_name_prefixes: Sequence[str] | None = None,
     disable_numba: bool = False,
+    pixels_per_mm: float | None = None,
+    mm_per_pixel: float | None = None,
 ) -> list[Path]:
     """Render one or more named views of an OBJ scene."""
 
@@ -233,6 +251,8 @@ def render_obj_views(
         filename_prefix=filename_prefix,
         exclude_object_name_prefixes=exclude_object_name_prefixes,
         disable_numba=disable_numba,
+        pixels_per_mm=pixels_per_mm,
+        mm_per_pixel=mm_per_pixel,
     )
     return [result.path for result in batch.results]
 

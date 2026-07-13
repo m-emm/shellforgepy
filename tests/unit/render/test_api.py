@@ -568,6 +568,103 @@ def test_render_scene_preserves_cube_proportions_in_wide_front_view(disable_numb
     assert cube_height / cube_width == pytest.approx(1.0, rel=0.15)
 
 
+def test_render_scene_fixed_scale_uses_pixels_per_mm(disable_numba):
+    scene = Scene(
+        [
+            _create_cube_mesh_object(
+                name="reference_cube",
+                origin=(0.0, 0.0, 0.0),
+                size=10.0,
+                color=(0.95, 0.10, 0.10),
+            )
+        ]
+    )
+
+    fixed_image = render_scene(
+        scene,
+        view_name="top",
+        width=80,
+        height=80,
+        pixels_per_mm=4.0,
+        disable_numba=disable_numba,
+    )
+    fitted_image = render_scene(
+        scene,
+        view_name="top",
+        width=80,
+        height=80,
+        disable_numba=disable_numba,
+    )
+
+    fixed_width, fixed_height = _dominant_channel_bbox_size(fixed_image, 0)
+    fitted_width, fitted_height = _dominant_channel_bbox_size(fitted_image, 0)
+
+    assert fixed_width == pytest.approx(40.0, abs=2.0)
+    assert fixed_height == pytest.approx(40.0, abs=2.0)
+    assert fitted_width > fixed_width + 20.0
+    assert fitted_height > fixed_height + 20.0
+
+
+def test_render_scene_fixed_scale_accepts_mm_per_pixel_alias(disable_numba):
+    scene = Scene(
+        [
+            _create_cube_mesh_object(
+                name="reference_cube",
+                origin=(0.0, 0.0, 0.0),
+                size=10.0,
+                color=(0.95, 0.10, 0.10),
+            )
+        ]
+    )
+
+    image = render_scene(
+        scene,
+        view_name="top",
+        width=80,
+        height=80,
+        mm_per_pixel=0.25,
+        disable_numba=disable_numba,
+    )
+
+    width, height = _dominant_channel_bbox_size(image, 0)
+
+    assert width == pytest.approx(40.0, abs=2.0)
+    assert height == pytest.approx(40.0, abs=2.0)
+
+
+@pytest.mark.parametrize(
+    "scale_kwargs,error_text",
+    [
+        ({"pixels_per_mm": 4.0, "mm_per_pixel": 0.25}, "either pixels_per_mm"),
+        ({"pixels_per_mm": 0.0}, "pixels_per_mm must be positive"),
+        ({"mm_per_pixel": 0.0}, "mm_per_pixel must be positive"),
+    ],
+)
+def test_render_scene_rejects_invalid_fixed_scale(
+    scale_kwargs, error_text, disable_numba
+):
+    scene = Scene(
+        [
+            _create_cube_mesh_object(
+                name="reference_cube",
+                origin=(0.0, 0.0, 0.0),
+                size=10.0,
+                color=(0.95, 0.10, 0.10),
+            )
+        ]
+    )
+
+    with pytest.raises(ValueError, match=error_text):
+        render_scene(
+            scene,
+            view_name="top",
+            width=80,
+            height=80,
+            disable_numba=disable_numba,
+            **scale_kwargs,
+        )
+
+
 def test_render_obj_view_to_image_with_stats_can_exclude_named_objects(
     tmp_path, disable_numba
 ):

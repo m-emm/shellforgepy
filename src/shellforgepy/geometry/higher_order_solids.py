@@ -12,6 +12,7 @@ from shellforgepy.adapters._adapter import (
     create_solid_from_traditional_face_vertex_maps,
     get_bounding_box,
 )
+from shellforgepy.construct.alignment import Alignment
 from shellforgepy.construct.alignment_operations import mirror, rotate, translate
 from shellforgepy.construct.construct_utils import normalize
 from shellforgepy.geometry.mesh_builders import create_cube_geometry
@@ -25,6 +26,15 @@ from shellforgepy.geometry.treapezoidal_snake_geometry import (
 )
 
 _logger = logging.getLogger(__name__)
+
+_BASE_FACE_ALIGNMENTS = (
+    Alignment.LEFT,
+    Alignment.RIGHT,
+    Alignment.TOP,
+    Alignment.BOTTOM,
+    Alignment.FRONT,
+    Alignment.BACK,
+)
 
 
 def create_hex_prism(diameter, thickness, origin=(0, 0, 0)):
@@ -85,6 +95,78 @@ def create_isoceles_triangle(side_length, tip_angle, thickness):
     ]
 
     return create_extruded_polygon(points, thickness=thickness)
+
+
+def _validate_support_direction(name, direction):
+    if not isinstance(direction, Alignment) or direction not in _BASE_FACE_ALIGNMENTS:
+        valid_names = ", ".join(alignment.name for alignment in _BASE_FACE_ALIGNMENTS)
+        raise ValueError(f"{name} must be one of: {valid_names}")
+    return direction
+
+
+def _bounding_box_coordinate(bounding_box, axis, sign):
+    return float(bounding_box[1][axis] if sign > 0 else bounding_box[0][axis])
+
+
+def create_support_triangle(protrusion_part, protrusion_direction, gravity_direction):
+    """Create a 45 degree support wedge below a protruding part.
+
+    The returned solid is only the generated support, sized from the
+    ``protrusion_part`` bounding box. ``protrusion_direction`` points from the
+    wall toward the protrusion tip. ``gravity_direction`` points downward in the
+    original coordinate system.
+    """
+
+    protrusion_direction = _validate_support_direction(
+        "protrusion_direction", protrusion_direction
+    )
+    gravity_direction = _validate_support_direction(
+        "gravity_direction", gravity_direction
+    )
+
+    protrusion_axis = protrusion_direction.axis
+    gravity_axis = gravity_direction.axis
+    if protrusion_axis == gravity_axis:
+        raise ValueError(
+            "protrusion_direction and gravity_direction must be perpendicular"
+        )
+
+    span_axis = ({0, 1, 2} - {protrusion_axis, gravity_axis}).pop()
+    bb = get_bounding_box(protrusion_part)
+
+    wall_coord = _bounding_box_coordinate(
+        bb, protrusion_axis, -protrusion_direction.sign
+    )
+    tip_coord = _bounding_box_coordinate(bb, protrusion_axis, protrusion_direction.sign)
+    protrusion_length = abs(tip_coord - wall_coord)
+    if protrusion_length <= 0:
+        raise ValueError("protrusion_part must have positive protrusion length")
+
+    contact_coord = _bounding_box_coordinate(bb, gravity_axis, gravity_direction.sign)
+    support_bottom_coord = contact_coord + gravity_direction.sign * protrusion_length
+
+    span_min = float(bb[0][span_axis])
+    span_max = float(bb[1][span_axis])
+    if span_max <= span_min:
+        raise ValueError("protrusion_part must have positive support span")
+
+    def point(protrusion_coord, gravity_coord, span_coord):
+        coords = [0.0, 0.0, 0.0]
+        coords[protrusion_axis] = protrusion_coord
+        coords[gravity_axis] = gravity_coord
+        coords[span_axis] = span_coord
+        return tuple(coords)
+
+    corners = [
+        point(wall_coord, contact_coord, span_min),
+        point(tip_coord, contact_coord, span_min),
+        point(wall_coord, support_bottom_coord, span_min),
+        point(wall_coord, contact_coord, span_max),
+        point(tip_coord, contact_coord, span_max),
+        point(wall_coord, support_bottom_coord, span_max),
+    ]
+
+    return create_triangular_prism(corners)
 
 
 def create_right_triangle(

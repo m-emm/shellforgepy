@@ -2698,6 +2698,7 @@ def test_resolve_preview_options_from_visualization_section():
     metadata = {
         "public_parameters": {
             "default_view": "front_angle",
+            "preview_scale": 8,
         }
     }
     resource_data = {
@@ -2708,6 +2709,7 @@ def test_resolve_preview_options_from_visualization_section():
                     "views": ["top", {"$ref": "default_view"}],
                     "width": 512,
                     "height": 384,
+                    "pixels_per_mm": {"$ref": "preview_scale"},
                     "variants": [
                         {
                             "name": "no_lid",
@@ -2717,6 +2719,7 @@ def test_resolve_preview_options_from_visualization_section():
                             "name": "no_lid_no_context",
                             "views": ["right"],
                             "width": 256,
+                            "mm_per_pixel": 0.25,
                             "hide": "lid context_",
                         },
                     ],
@@ -2736,6 +2739,7 @@ def test_resolve_preview_options_from_visualization_section():
         "views": ["top", "front_angle"],
         "width": 512,
         "height": 384,
+        "pixels_per_mm": 8.0,
         "variants": [
             {
                 "name": "no_lid",
@@ -2745,6 +2749,7 @@ def test_resolve_preview_options_from_visualization_section():
                 "name": "no_lid_no_context",
                 "views": ["right"],
                 "width": 256,
+                "pixels_per_mm": 4.0,
                 "hide": ["lid", "context_"],
             },
         ],
@@ -2758,6 +2763,14 @@ def test_resolve_preview_options_from_visualization_section():
         (
             [{"name": "no_lid"}, {"name": "no_lid"}],
             "Duplicate Builder preview variant name",
+        ),
+        (
+            [{"name": "scaled", "pixels_per_mm": 10, "mm_per_pixel": 0.1}],
+            "only one of pixels_per_mm or mm_per_pixel",
+        ),
+        (
+            [{"name": "scaled", "pixels_per_mm": 0}],
+            "must be positive",
         ),
     ],
 )
@@ -2795,12 +2808,14 @@ def test_export_scene_for_assembly_applies_preview_overrides_to_workflow_config(
                 "        - top",
                 "      width: 512",
                 "      height: 384",
+                "      pixels_per_mm: 10",
                 "      variants:",
                 "        - name: no_lid",
                 "          hide:",
                 "            - frame_lid",
                 "        - name: no_context",
                 "          views: [right]",
+                "          pixels_per_mm: 12",
                 "          hide: frame_context_",
             ]
         ),
@@ -2916,6 +2931,7 @@ def test_export_scene_for_assembly_applies_preview_overrides_to_workflow_config(
         "views": ["front_angle", "top"],
         "width": 512,
         "height": 384,
+        "pixels_per_mm": 10.0,
         "variants": [
             {
                 "name": "no_lid",
@@ -2924,6 +2940,7 @@ def test_export_scene_for_assembly_applies_preview_overrides_to_workflow_config(
             {
                 "name": "no_context",
                 "views": ["right"],
+                "pixels_per_mm": 12.0,
                 "hide": ["frame_context_"],
             },
         ],
