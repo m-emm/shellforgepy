@@ -1,9 +1,12 @@
 import numpy as np
+import pytest
+import shellforgepy.simple as sf
 from shellforgepy.geometry.mesh_builders import (
     create_cube_geometry,
     create_dodecahedron_geometry,
     create_fibonacci_sphere_geometry,
     create_icosahedron_geometry,
+    create_regular_polygon_geometry,
     create_tetrahedron_geometry,
 )
 from shellforgepy.geometry.mesh_utils import convert_to_traditional_face_vertex_maps
@@ -93,6 +96,39 @@ def test_create_fibonacci_sphere_geometry():
     )  # All points should be on the unit sphere
 
     _ = PartitionableSpheroidTriangleMesh(points, faces)
+
+
+def test_create_regular_polygon_geometry():
+    sides = 6
+    radius = 2.0
+    thickness = 0.5
+
+    points, faces = create_regular_polygon_geometry(radius, sides, thickness)
+
+    assert points.shape == (2 * sides, 3)
+    assert faces.shape == (4 * sides - 4, 3)
+    assert np.all(faces >= 0)
+    assert np.all(faces < len(points))
+    assert np.allclose(points[:sides, 2], 0.0)
+    assert np.allclose(points[sides:, 2], thickness)
+    assert np.allclose(np.linalg.norm(points[:, :2], axis=1), radius)
+
+    mesh_center = np.mean(points, axis=0)
+    for face in faces:
+        a, b, c = points[face]
+        normal = np.cross(b - a, c - a)
+        face_center = (a + b + c) / 3.0
+        assert np.dot(normal, face_center - mesh_center) > 0.0
+
+
+def test_create_regular_polygon_geometry_rejects_too_few_sides():
+    with pytest.raises(ValueError, match="at least 3 sides"):
+        create_regular_polygon_geometry(sides=2)
+
+
+def test_create_regular_polygon_geometry_is_exported_from_simple():
+    assert sf.create_regular_polygon_geometry is create_regular_polygon_geometry
+    assert "create_regular_polygon_geometry" in sf.__all__
 
 
 def test_tetrahedron_traditional_face_vertex_maps():

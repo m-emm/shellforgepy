@@ -931,6 +931,19 @@ def create_rounded_slab(
     round_radius,
     rounding_flags={(1, 1): True, (-1, 1): True, (-1, -1): True, (1, -1): True},
 ):
+    """Create a rectangular slab with rounded corners in the XY plane.
+
+    The returned solid is a cuboid of size ``length`` by ``width`` by ``thick``
+    with selected vertical corners rounded to ``round_radius``. With all default
+    rounding flags enabled, the XY footprint is a rounded rectangle. The slab is
+    axis-aligned, spans from ``x=0`` to ``x=length`` and ``y=0`` to ``y=width``,
+    and extrudes upward from ``z=0`` to ``z=thick``.
+
+    ``rounding_flags`` selects which XY corners are rounded. Keys are ``(x_sign,
+    y_sign)`` tuples relative to the slab center: ``(1, 1)`` is the +X/+Y
+    corner, ``(-1, 1)`` is the -X/+Y corner, ``(-1, -1)`` is the -X/-Y corner,
+    and ``(1, -1)`` is the +X/-Y corner.
+    """
     retval = create_box(length, width, thick)
     retval = translate(-length / 2, -width / 2, 0)(retval)
     stencil = create_box(round_radius, round_radius, thick)

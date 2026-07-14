@@ -111,6 +111,11 @@ def create_box(length, width, height, origin=(0.0, 0.0, 0.0)):
     Returns:
         Solid representing the box.
     """
+
+    if length <= 0 or width <= 0 or height <= 0:
+        raise ValueError(
+            f"Invalid box dimensions: length={length}, width={width}, height={height}. All dimensions must be positive."
+        )
     return adapter_create_box(length, width, height, origin=origin)
 
 

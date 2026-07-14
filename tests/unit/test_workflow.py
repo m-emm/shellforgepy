@@ -1703,17 +1703,24 @@ def test_main_build_list_assemblies_flag_reaches_builder(monkeypatch, tmp_path):
     }
 
 
-def test_module_main_reports_builder_errors_without_traceback(monkeypatch, capsys):
+def test_module_main_reports_builder_errors_without_traceback(
+    monkeypatch, capsys, caplog
+):
     import shellforgepy.__main__ as shellforgepy_main
 
     def fake_main():
         raise builder_module.BuilderError("bad assembly")
 
     monkeypatch.setattr(shellforgepy_main, "main", fake_main)
+    caplog.set_level(logging.ERROR, logger=shellforgepy_main.__name__)
 
     result = shellforgepy_main._main()
 
     captured = capsys.readouterr()
     assert result == 1
     assert captured.out == ""
-    assert captured.err == "Error: bad assembly\n"
+    assert "Traceback" not in captured.err
+    assert any(
+        record.levelno == logging.ERROR and record.getMessage() == "bad assembly"
+        for record in caplog.records
+    )

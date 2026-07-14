@@ -114,6 +114,7 @@ from shellforgepy.geometry.mesh_builders import (
     create_dodecahedron_geometry,
     create_fibonacci_sphere_geometry,
     create_icosahedron_geometry,
+    create_regular_polygon_geometry,
     create_tetrahedron_geometry,
 )
 from shellforgepy.geometry.mesh_utils import (
@@ -219,6 +220,7 @@ __all__ = [
     "create_isoceles_triangle",
     "create_nut",
     "create_pyramid_stump",
+    "create_regular_polygon_geometry",
     "create_right_triangle",
     "create_ring_segment_between_points",
     "create_ring",

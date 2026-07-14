@@ -242,3 +242,49 @@ def create_fibonacci_sphere_geometry(radius=1.0, samples=100):
     faces = np.array(faces, dtype=int)
 
     return verts, faces
+
+
+def create_regular_polygon_geometry(radius=1.0, sides=6, thickness=0.1):
+    """
+    Returns:
+        verts: (2 * sides, 3) array of bottom and top vertex coordinates
+        faces: triangular face indices for an extruded regular polygon prism
+    """
+    if sides < 3:
+        raise ValueError("A polygon must have at least 3 sides.")
+
+    angle_increment = 2 * math.pi / sides
+
+    bottom_verts = np.array(
+        [
+            [
+                radius * math.cos(i * angle_increment),
+                radius * math.sin(i * angle_increment),
+                0,
+            ]
+            for i in range(sides)
+        ],
+        dtype=np.float64,
+    )
+
+    top_verts = bottom_verts + np.array([0, 0, thickness])
+
+    verts = np.vstack((bottom_verts, top_verts))
+
+    faces = []
+    # Create triangular side faces
+    for i in range(sides):
+        next_i = (i + 1) % sides
+        # Side face (two triangles)
+        faces.append([i, next_i, sides + i])  # Triangle 1
+        faces.append([next_i, sides + next_i, sides + i])  # Triangle 2
+    # Create top and bottom faces
+    for i in range(1, sides - 1):
+        # Bottom face
+        faces.append([0, i + 1, i])
+        # Top face
+        faces.append([sides, sides + i, sides + i + 1])
+
+    faces = np.array(faces, dtype=int)
+
+    return verts, faces
