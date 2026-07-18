@@ -55,6 +55,26 @@ python examples/rotate_alignment_demo.py
 
 ---
 
+#### **Complete Screw Assembly Board** (`complete_screw_assembly_board_demo.py`)
+Mount complete screw assemblies into a thick board using semantic alignment.
+
+```bash
+python examples/complete_screw_assembly_board_demo.py
+```
+
+**Output:**
+- `output/complete_screw_assembly_board_demo.obj`
+- `output/complete_screw_assembly_board_demo.stl`
+
+**Features:**
+- Cylinder and conical heads in M3, M4, and M5 sizes
+- Flush, proud, recessed, bottom-entry, and spaced-head mountings
+- Access-hole and self-threading lead-in examples
+- Alignment-only placement, with whole-assembly rotation for bottom entry
+- Colored purchased-screw references alongside the cut board
+
+---
+
 #### **Cylinder Mesh** (`create_cylinder_stl.py`)
 Basic mesh generation from point clouds.
 

@@ -96,8 +96,11 @@ from shellforgepy.geometry.higher_order_solids import (
 )
 from shellforgepy.geometry.keepouts import create_box_hole_cutter
 from shellforgepy.geometry.m_screws import (
+    HoleType,
     MScrew,
+    ScrewType,
     create_bolt_thread,
+    create_complete_screw_assembly,
     create_conical_head_screw,
     create_cylinder_screw,
     create_hidden_nut_pocket_cutter,
@@ -200,6 +203,7 @@ __all__ = [
     "coordinate_system_transformation_function",
     "create_bezier_snake_geometry",
     "create_bolt_thread",
+    "create_complete_screw_assembly",
     "create_box",
     "create_box_hole_cutter",
     "create_cone",
@@ -268,6 +272,7 @@ __all__ = [
     "get_volume",
     "import_solid_from_step",
     "LeaderFollowersCuttersPart",
+    "HoleType",
     "list_supported_sizes",
     "m_screws_table",
     "create_thread_inset_assembly",
@@ -278,6 +283,7 @@ __all__ = [
     "MeshPartition",
     "mirror",
     "MScrew",
+    "ScrewType",
     "NamedPart",
     "normalize",
     "orient_for_flatness_riemannian",

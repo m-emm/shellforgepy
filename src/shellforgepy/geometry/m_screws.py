@@ -18,6 +18,7 @@ allowing them to work with any supported CAD backend.
 
 import math
 from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
 
 from shellforgepy.adapters._adapter import (
@@ -27,6 +28,7 @@ from shellforgepy.adapters._adapter import (
     create_extruded_polygon,
     cut_parts,
     fuse_parts,
+    get_bounding_box,
 )
 from shellforgepy.construct.alignment_operations import (
     Alignment,
@@ -34,6 +36,7 @@ from shellforgepy.construct.alignment_operations import (
     rotate,
     translate,
 )
+from shellforgepy.construct.bounding_box_helpers import get_zlen
 from shellforgepy.construct.leader_followers_cutters_part import (
     LeaderFollowersCuttersPart,
 )
@@ -57,6 +60,8 @@ m_screws_table = {
         "cylinder_head_height": 2,
         "wrench_socket_outer_diameter": 7.0,
         "min_thread_length": 16,
+        "thread_inset_hole_diameter": 3.54,
+        "thread_inset_length": 4,
     },
     "M2.5": {
         "nut_size": 5,
@@ -745,7 +750,11 @@ def create_hidden_nut_pocket_cutter(
 
 
 def create_thread_inset_assembly(
-    size, thickness, extra_radius=2, clearance_type="normal"
+    size,
+    thickness,
+    extra_radius=2,
+    clearance_type="normal",
+    thread_inset_hole_radius_adjustment=0.0,
 ):
     """
     Create an assembly for a thread inset for the specified screw size.
@@ -806,7 +815,8 @@ def create_thread_inset_assembly(
         inset_assembly_leader = inset_assembly_leader.cut(clearance_hole_cutter)
 
     thread_inset_cutter = create_cylinder(
-        thread_inset_hole_diameter / 2, thread_inset_length
+        thread_inset_hole_diameter / 2 + thread_inset_hole_radius_adjustment,
+        thread_inset_length,
     )
     thread_inset_cutter = align(
         thread_inset_cutter, inset_assembly_cylinder, Alignment.CENTER
@@ -834,3 +844,158 @@ def create_thread_inset_assembly(
     retval.add_named_non_production_part(thread_inset, "thread_inset")
 
     return retval
+
+
+class ScrewType(str, Enum):
+    """Supported screw-head geometries for complete screw assemblies."""
+
+    CYLINDER_HEAD = "cylinder_head"
+    CONICAL_HEAD = "conical_head"
+
+
+class HoleType(str, Enum):
+    """Supported thread-side hole geometries for complete screw assemblies."""
+
+    CLEARANCE = "clearance"
+    CORE = "core"
+    SELF_THREADING = "self_threading"
+
+
+def create_complete_screw_assembly(
+    size,
+    length,
+    screw_type=ScrewType.CYLINDER_HEAD,
+    with_thread=False,
+    hole_type=HoleType.CLEARANCE,
+    clearance_type="normal",
+    core_radius_adjustment=0.0,
+    lead_in=False,
+    hole_distance_from_head=0.0,
+    extra_hole_length=0.0,
+    with_access_hole=False,
+    extra_access_hole_length=None,
+    access_hole_clearance=0.1,
+):
+    """
+    Create an alignable screw with its thread-side and optional access cutters.
+
+    The headless screw shaft is the assembly leader. Aligning or rotating the
+    returned assembly therefore moves the screw, cutters, and reference parts as
+    one unit while keeping the head from influencing placement.
+
+    Args:
+        size: Screw size string (e.g., "M3", "M4", etc.)
+        length: Length of the screw shaft
+        screw_type: Type of screw head ("cylinder_head" or "conical_head")
+        with_thread: If True, creates actual threaded geometry
+        hole_type: Thread-side hole type ("clearance", "core", or
+            "self_threading")
+        clearance_type: Clearance class used by clearance and self-threading holes
+        core_radius_adjustment: Radius adjustment for self-threading-hole valleys
+        lead_in: Add a conical lead-in at the head-side end of a self-threading hole
+        hole_distance_from_head: Uncut distance between the head and the
+            head-side end of the thread-side hole
+        extra_hole_length: Distance the thread-side cutter extends beyond the tip
+        with_access_hole: Add a head-diameter access cutter above the shaft
+        extra_access_hole_length: Access length in addition to the head height
+        access_hole_clearance: Radial clearance around the screw head
+
+    Returns:
+        LeaderFollowersCuttersPart with the headless shaft as leader. Named
+        cutters are ``thread_side_hole_cutter`` and, when requested,
+        ``access_hole_cutter``. Named reference parts are ``complete_screw`` and
+        ``screw_head``.
+
+    Raises:
+        KeyError: If the screw size is not supported
+        ValueError: If an enum value or calculated cutter length is invalid
+    """
+
+    if size not in m_screws_table:
+        raise KeyError(f"Unsupported screw size: {size}")
+
+    if hole_distance_from_head < 0:
+        raise ValueError("hole_distance_from_head must be greater than or equal to 0")
+
+    screw_spec = MScrew.from_size(size)
+
+    if screw_type == ScrewType.CYLINDER_HEAD:
+        main_screw = create_cylinder_screw(size, length, with_thread=with_thread)
+        head_height = screw_spec.cylinder_head_height
+        head_radius = screw_spec.cylinder_head_diameter / 2 + access_hole_clearance
+    elif screw_type == ScrewType.CONICAL_HEAD:
+        main_screw = create_conical_head_screw(size, length, with_thread=with_thread)
+        head_height = screw_spec.conical_head_height
+        head_radius = screw_spec.conical_head_diameter / 2 + access_hole_clearance
+    else:
+        raise ValueError(
+            f"Invalid screw type: {screw_type}. Must be 'cylinder_head' or "
+            "'conical_head'"
+        )
+
+    head_cutter = create_cylinder(head_radius, head_height)
+    head_cutter = align(head_cutter, main_screw, Alignment.CENTER, axes=[0, 1])
+    head_cutter = align(head_cutter, main_screw, Alignment.TOP)
+    leader = main_screw.cut(head_cutter)
+
+    leader_length = get_zlen(get_bounding_box(leader))
+    effective_hole_length = leader_length - hole_distance_from_head + extra_hole_length
+    if effective_hole_length <= 0:
+        raise ValueError(
+            "Thread-side hole length must be positive after applying "
+            "hole_distance_from_head and extra_hole_length"
+        )
+
+    if hole_type == HoleType.CLEARANCE:
+        hole_diameter = screw_spec.get_clearance_hole_diameter(clearance_type)
+        hole_cutter = create_cylinder(hole_diameter / 2, effective_hole_length)
+    elif hole_type == HoleType.CORE:
+        hole_cutter = create_cylinder(screw_spec.core_hole / 2, effective_hole_length)
+    elif hole_type == HoleType.SELF_THREADING:
+        hole_cutter = create_self_threading_hole_cutter(
+            size,
+            effective_hole_length,
+            clearance_type=clearance_type,
+            core_radius_adjustment=core_radius_adjustment,
+            lead_in=lead_in,
+        )
+    else:
+        raise ValueError(
+            f"Invalid hole type: {hole_type}. Must be 'clearance', 'core', or "
+            "'self_threading'"
+        )
+
+    hole_cutter = align(hole_cutter, leader, Alignment.CENTER, axes=[0, 1])
+    hole_cutter = align(hole_cutter, leader, Alignment.TOP)
+    if hole_distance_from_head:
+        hole_cutter = translate(0, 0, -hole_distance_from_head)(hole_cutter)
+
+    access_hole_cutter = None
+    if with_access_hole:
+        extra_access_length = (
+            extra_access_hole_length if extra_access_hole_length is not None else 0.0
+        )
+        access_hole_length = head_height + extra_access_length
+        if access_hole_length <= 0:
+            raise ValueError(
+                "Access hole length must be positive after applying "
+                "extra_access_hole_length"
+            )
+
+        access_hole_cutter = create_cylinder(head_radius, access_hole_length)
+        access_hole_cutter = align(
+            access_hole_cutter, leader, Alignment.CENTER, axes=[0, 1]
+        )
+        access_hole_cutter = align(access_hole_cutter, leader, Alignment.STACK_TOP)
+
+    assembly = LeaderFollowersCuttersPart(leader)
+    assembly.add_named_cutter(hole_cutter, "thread_side_hole_cutter")
+
+    if access_hole_cutter is not None:
+        assembly.add_named_cutter(access_hole_cutter, "access_hole_cutter")
+
+    assembly.add_named_non_production_part(main_screw, "complete_screw")
+    screw_head_only = main_screw.cut(leader)
+    assembly.add_named_non_production_part(screw_head_only, "screw_head")
+
+    return assembly

@@ -20,18 +20,23 @@ from shellforgepy.adapters._adapter import (
     get_bounding_box_size,
     get_volume,
 )
+from shellforgepy.construct.alignment_operations import Alignment, align, rotate
 from shellforgepy.construct.bounding_box_helpers import get_zlen, get_zmax, get_zmin
 from shellforgepy.construct.leader_followers_cutters_part import (
     LeaderFollowersCuttersPart,
 )
 from shellforgepy.geometry.m_screws import (
+    HoleType,
     MScrew,
+    ScrewType,
     create_bolt_thread,
+    create_complete_screw_assembly,
     create_conical_head_screw,
     create_cylinder_screw,
     create_hidden_nut_pocket_cutter,
     create_nut,
     create_self_threading_hole_cutter,
+    create_thread_inset_assembly,
     get_clearance_hole_diameter,
     get_core_hole_diameter,
     get_nut_outer_diameter,
@@ -697,6 +702,239 @@ def test_m_screw_class():
     # Test unsupported size
     with pytest.raises(KeyError, match="Unsupported screw size"):
         MScrew.from_size("M999")
+
+
+def test_create_m2_thread_inset_assembly():
+    """Test that the configured M2 heat inset can create an assembly."""
+    screw = MScrew.from_size("M2")
+
+    assembly = create_thread_inset_assembly(
+        screw.size, thickness=screw.thread_inset_length
+    )
+
+    assert isinstance(assembly, LeaderFollowersCuttersPart)
+    assert assembly.get_named_cutter("assembly_cutter") is not None
+    assert assembly.get_named_non_production_part("thread_inset") is not None
+
+
+def test_create_complete_cylinder_screw_assembly_components():
+    """Cylinder assembly should expose a headless leader and named components."""
+    size = "M3"
+    length = 12.0
+    screw = MScrew.from_size(size)
+
+    assembly = create_complete_screw_assembly(size, length, with_thread=False)
+
+    assert isinstance(assembly, LeaderFollowersCuttersPart)
+    assert get_zlen(get_bounding_box(assembly.leader)) == pytest.approx(length)
+
+    hole_cutter = assembly.get_named_cutter("thread_side_hole_cutter")
+    hole_size = get_bounding_box_size(hole_cutter)
+    assert hole_size[:2] == pytest.approx([screw.clearance_hole_normal] * 2)
+    assert hole_size[2] == pytest.approx(length)
+
+    complete_screw = assembly.get_named_non_production_part("complete_screw")
+    screw_head = assembly.get_named_non_production_part("screw_head")
+    assert get_zlen(get_bounding_box(complete_screw)) == pytest.approx(
+        length + screw.cylinder_head_height
+    )
+    assert get_zlen(get_bounding_box(screw_head)) == pytest.approx(
+        screw.cylinder_head_height
+    )
+
+    with pytest.raises(KeyError, match="access_hole_cutter"):
+        assembly.get_named_cutter("access_hole_cutter")
+
+
+def test_create_complete_conical_screw_assembly_uses_headless_length():
+    """Conical head overlap should not count as part of the alignable leader."""
+    size = "M4"
+    length = 18.0
+    screw = MScrew.from_size(size)
+
+    assembly = create_complete_screw_assembly(
+        size,
+        length,
+        screw_type=ScrewType.CONICAL_HEAD,
+        with_access_hole=True,
+    )
+
+    expected_leader_length = length - screw.conical_head_height
+    assert get_zlen(get_bounding_box(assembly.leader)) == pytest.approx(
+        expected_leader_length
+    )
+    assert get_zlen(
+        get_bounding_box(assembly.get_named_cutter("thread_side_hole_cutter"))
+    ) == pytest.approx(expected_leader_length)
+    assert get_zlen(
+        get_bounding_box(assembly.get_named_non_production_part("complete_screw"))
+    ) == pytest.approx(length)
+    assert get_zlen(
+        get_bounding_box(assembly.get_named_non_production_part("screw_head"))
+    ) == pytest.approx(screw.conical_head_height)
+
+
+@pytest.mark.parametrize(
+    ("hole_type", "expected_diameter"),
+    [
+        (HoleType.CLEARANCE, lambda screw: screw.clearance_hole_loose),
+        (HoleType.CORE, lambda screw: screw.core_hole),
+        (HoleType.SELF_THREADING, lambda screw: screw.clearance_hole_loose),
+    ],
+)
+def test_create_complete_screw_assembly_hole_types(hole_type, expected_diameter):
+    """Every thread-side hole type should retain its table-derived envelope."""
+    size = "M3"
+    length = 10.0
+    screw = MScrew.from_size(size)
+
+    assembly = create_complete_screw_assembly(
+        size,
+        length,
+        hole_type=hole_type,
+        clearance_type="loose",
+        with_thread=False,
+    )
+
+    hole_size = get_bounding_box_size(
+        assembly.get_named_cutter("thread_side_hole_cutter")
+    )
+    if hole_type == HoleType.SELF_THREADING:
+        assert max(hole_size[:2]) == pytest.approx(expected_diameter(screw), abs=0.005)
+        assert min(hole_size[:2]) > screw.core_hole
+    else:
+        assert hole_size[:2] == pytest.approx([expected_diameter(screw)] * 2, abs=0.005)
+    assert hole_size[2] == pytest.approx(length, abs=1e-5)
+
+
+def test_complete_self_threading_hole_distance_extra_length_and_lead_in():
+    """A spaced head should leave the lead-in at the intended head-side surface."""
+    size = "M3"
+    length = 22.0
+    head_gap = 4.0
+    extra_tip_length = 2.0
+    common_kwargs = {
+        "hole_type": HoleType.SELF_THREADING,
+        "hole_distance_from_head": head_gap,
+        "extra_hole_length": extra_tip_length,
+        "core_radius_adjustment": -0.1,
+        "with_thread": False,
+    }
+
+    without_lead_in = create_complete_screw_assembly(
+        size, length, lead_in=False, **common_kwargs
+    )
+    with_lead_in = create_complete_screw_assembly(
+        size, length, lead_in=True, **common_kwargs
+    )
+
+    leader_bbox = get_bounding_box(with_lead_in.leader)
+    cutter = with_lead_in.get_named_cutter("thread_side_hole_cutter")
+    cutter_bbox = get_bounding_box(cutter)
+    assert get_zmax(cutter_bbox) == pytest.approx(
+        get_zmax(leader_bbox) - head_gap, abs=1e-5
+    )
+    assert get_zmin(cutter_bbox) == pytest.approx(
+        get_zmin(leader_bbox) - extra_tip_length, abs=1e-5
+    )
+    assert get_volume(cutter) > get_volume(
+        without_lead_in.get_named_cutter("thread_side_hole_cutter")
+    )
+
+
+def test_complete_screw_access_hole_uses_head_size_and_extra_length():
+    """Access cutter should continue from the shaft to the requested opening."""
+    size = "M5"
+    length = 10.0
+    access_extension = 3.0
+    radial_clearance = 0.2
+    screw = MScrew.from_size(size)
+
+    assembly = create_complete_screw_assembly(
+        size,
+        length,
+        with_access_hole=True,
+        extra_access_hole_length=access_extension,
+        access_hole_clearance=radial_clearance,
+        with_thread=False,
+    )
+
+    leader_bbox = get_bounding_box(assembly.leader)
+    access_bbox = get_bounding_box(assembly.get_named_cutter("access_hole_cutter"))
+    expected_diameter = screw.cylinder_head_diameter + 2 * radial_clearance
+    assert get_bounding_box_size(assembly.get_named_cutter("access_hole_cutter"))[
+        :2
+    ] == pytest.approx([expected_diameter] * 2)
+    assert get_zmin(access_bbox) == pytest.approx(get_zmax(leader_bbox))
+    assert get_zlen(access_bbox) == pytest.approx(
+        screw.cylinder_head_height + access_extension
+    )
+
+
+def test_complete_screw_assembly_aligns_and_rotates_as_one_unit():
+    """Bottom mounting should move the screw and its cutters with the leader."""
+    board = create_box(40, 30, 8)
+    assembly = create_complete_screw_assembly("M3", 8, with_thread=False)
+    assembly = rotate(180, axis=(1, 0, 0))(assembly)
+    assembly = align(assembly, board, Alignment.CENTER, axes=[0, 1])
+    assembly = align(assembly, board, Alignment.BOTTOM)
+
+    board_bbox = get_bounding_box(board)
+    leader_bbox = get_bounding_box(assembly.leader)
+    cutter_bbox = get_bounding_box(assembly.get_named_cutter("thread_side_hole_cutter"))
+    screw_bbox = get_bounding_box(
+        assembly.get_named_non_production_part("complete_screw")
+    )
+
+    assert get_zmin(leader_bbox) == pytest.approx(get_zmin(board_bbox))
+    assert get_zmax(leader_bbox) == pytest.approx(get_zmax(board_bbox))
+    assert get_zmin(cutter_bbox) == pytest.approx(get_zmin(board_bbox))
+    assert get_zmax(cutter_bbox) == pytest.approx(get_zmax(board_bbox))
+    assert get_zmin(screw_bbox) < get_zmin(board_bbox)
+    assert get_zmax(screw_bbox) == pytest.approx(get_zmax(board_bbox))
+
+
+def test_create_complete_screw_assembly_validation():
+    """Complete assembly should reject unsupported and impossible configurations."""
+    with pytest.raises(KeyError, match="Unsupported screw size"):
+        create_complete_screw_assembly("M999", 10)
+
+    with pytest.raises(ValueError, match="Invalid screw type"):
+        create_complete_screw_assembly("M3", 10, screw_type="pan_head")
+
+    with pytest.raises(ValueError, match="Invalid hole type"):
+        create_complete_screw_assembly("M3", 10, hole_type="tapped")
+
+    with pytest.raises(ValueError, match="Conical head dimensions"):
+        create_complete_screw_assembly("M12", 20, screw_type=ScrewType.CONICAL_HEAD)
+
+    with pytest.raises(ValueError, match="hole_distance_from_head"):
+        create_complete_screw_assembly("M3", 10, hole_distance_from_head=-1)
+
+    with pytest.raises(ValueError, match="Thread-side hole length"):
+        create_complete_screw_assembly("M3", 10, hole_distance_from_head=10)
+
+    head_height = MScrew.from_size("M3").cylinder_head_height
+    with pytest.raises(ValueError, match="Access hole length"):
+        create_complete_screw_assembly(
+            "M3",
+            10,
+            with_access_hole=True,
+            extra_access_hole_length=-head_height,
+        )
+
+
+def test_create_complete_screw_assembly_is_exported_from_simple():
+    """The convenience facade should expose the complete assembly API."""
+    from shellforgepy.simple import HoleType as SimpleHoleType
+    from shellforgepy.simple import ScrewType as SimpleScrewType
+    from shellforgepy.simple import (
+        create_complete_screw_assembly as simple_create_complete_screw_assembly,
+    )
+
+    assert SimpleHoleType is HoleType
+    assert SimpleScrewType is ScrewType
+    assert simple_create_complete_screw_assembly is create_complete_screw_assembly
 
 
 def test_create_conical_head_screw_basic():
