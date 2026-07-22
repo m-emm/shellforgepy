@@ -203,6 +203,7 @@ class LeaderFollowersCuttersPart:
         non_production_names=None,
         direction_vectors=None,
         direction_vector_names=None,
+        hidden_by_default_names=None,
     ):
         """Initialize a composite part with leader and associated components.
 
@@ -217,6 +218,7 @@ class LeaderFollowersCuttersPart:
             cutter_names: List of names for cutters (must match count)
             non_production_names: List of names for non-production parts (must match count)
             direction_vector_names: List of names for direction vectors (must match count)
+            hidden_by_default_names: Names of non-production parts hidden in viewers by default
 
         Raises:
             AssertionError: If name list lengths don't match corresponding part counts
@@ -264,6 +266,17 @@ class LeaderFollowersCuttersPart:
             assert len(direction_vector_names) == len(self.direction_vectors)
             for idx, name in enumerate(direction_vector_names):
                 self.direction_vector_indices_by_name[name] = idx
+
+        self.hidden_by_default_names = []
+        if hidden_by_default_names is not None:
+            if not isinstance(hidden_by_default_names, (list, tuple)):
+                raise TypeError("hidden_by_default_names must be a list or tuple.")
+            if any(not isinstance(name, str) for name in hidden_by_default_names):
+                raise TypeError("hidden_by_default_names must contain strings.")
+            if len(set(hidden_by_default_names)) != len(hidden_by_default_names):
+                raise ValueError("hidden_by_default_names must not contain duplicates.")
+            for name in hidden_by_default_names:
+                self.set_hidden_by_default(name)
 
     def use_as_cutter_on(self, part):
         """Apply all cutters from this composite to a target part.
@@ -392,6 +405,25 @@ class LeaderFollowersCuttersPart:
         raise KeyError(
             f"Non-production part with name '{name}' not found. Available names: {sorted(self.non_production_indices_by_name.keys())}"
         )
+
+    def set_hidden_by_default(self, name, hidden=True):
+        """Set the default viewer visibility policy for a named non-production part."""
+
+        if not isinstance(name, str):
+            raise TypeError("Hidden-by-default part name must be a string.")
+        if name not in self.non_production_indices_by_name:
+            raise KeyError(
+                f"Hidden-by-default part '{name}' must be a named non-production part. "
+                f"Available names: {sorted(self.non_production_indices_by_name.keys())}"
+            )
+        if not isinstance(hidden, bool):
+            raise TypeError("hidden must be a boolean.")
+
+        if hidden:
+            if name not in self.hidden_by_default_names:
+                self.hidden_by_default_names.append(name)
+        elif name in self.hidden_by_default_names:
+            self.hidden_by_default_names.remove(name)
 
     def _part_ref_origin_assembly_name(self):
         origin = self.additional_data.get(PART_REF_ORIGIN_KEY)
@@ -788,6 +820,9 @@ class LeaderFollowersCuttersPart:
             if idx not in other_direction_vector_indices_with_name:
                 retval.direction_vectors.append(tuple(direction_vector))
 
+        for name in self.hidden_by_default_names + other.hidden_by_default_names:
+            retval.set_hidden_by_default(name)
+
         return retval
 
     def prefixed_copy(self, name_prefix):
@@ -814,6 +849,9 @@ class LeaderFollowersCuttersPart:
             f"{name_prefix}_{name}": idx
             for name, idx in self.non_production_indices_by_name.items()
         }
+        result.hidden_by_default_names = [
+            f"{name_prefix}_{name}" for name in self.hidden_by_default_names
+        ]
         result.direction_vector_indices_by_name = {
             f"{name_prefix}_{name}": idx
             for name, idx in self.direction_vector_indices_by_name.items()
@@ -912,6 +950,9 @@ class LeaderFollowersCuttersPart:
 
         index = self.non_production_indices_by_name.pop(old_name)
         self.non_production_indices_by_name[new_name] = index
+        if old_name in self.hidden_by_default_names:
+            hidden_index = self.hidden_by_default_names.index(old_name)
+            self.hidden_by_default_names[hidden_index] = new_name
 
     def copy(self):
         """Create a deep copy of this composite part.
@@ -938,6 +979,7 @@ class LeaderFollowersCuttersPart:
         result.direction_vector_indices_by_name = (
             self.direction_vector_indices_by_name.copy()
         )
+        result.hidden_by_default_names = self.hidden_by_default_names.copy()
         return result
 
     def BoundingBox(self):
@@ -1107,6 +1149,9 @@ class LeaderFollowersCuttersPart:
             result.direction_vector_indices_by_name = (
                 new_direction_vector_indices_by_name
             )
+            result.hidden_by_default_names = (
+                self.hidden_by_default_names + other.hidden_by_default_names
+            )
             return result
 
         other_shape = _unwrap_named_part(other)
@@ -1132,6 +1177,7 @@ class LeaderFollowersCuttersPart:
         result.direction_vector_indices_by_name = (
             self.direction_vector_indices_by_name.copy()
         )
+        result.hidden_by_default_names = self.hidden_by_default_names.copy()
         return result
 
     def cut(self, other):
@@ -1182,6 +1228,7 @@ class LeaderFollowersCuttersPart:
             result.direction_vector_indices_by_name = (
                 self.direction_vector_indices_by_name.copy()
             )
+            result.hidden_by_default_names = self.hidden_by_default_names.copy()
             return result
 
         other_shape = _unwrap_named_part(other)
@@ -1208,6 +1255,7 @@ class LeaderFollowersCuttersPart:
         result.direction_vector_indices_by_name = (
             self.direction_vector_indices_by_name.copy()
         )
+        result.hidden_by_default_names = self.hidden_by_default_names.copy()
         return result
 
     def translate(self, *args):
@@ -1364,6 +1412,7 @@ class LeaderFollowersCuttersPart:
             result.direction_vector_indices_by_name = (
                 self.direction_vector_indices_by_name.copy()
             )
+            result.hidden_by_default_names = self.hidden_by_default_names.copy()
             return result
 
         else:
@@ -1383,6 +1432,7 @@ class LeaderFollowersCuttersPart:
             result.direction_vector_indices_by_name = (
                 self.direction_vector_indices_by_name.copy()
             )
+            result.hidden_by_default_names = self.hidden_by_default_names.copy()
             return result
 
     def tessellate(self, *args, **kwargs):

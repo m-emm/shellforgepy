@@ -229,6 +229,9 @@ def _write_shellforgepy_metadata_comment(file_obj, metadata) -> None:
     consumption = metadata.get("consumption")
     if consumption:
         extra_metadata["consumption"] = consumption
+    visibility = metadata.get("visibility")
+    if visibility:
+        extra_metadata["visibility"] = visibility
 
     if not extra_metadata:
         return

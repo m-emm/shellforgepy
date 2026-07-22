@@ -161,9 +161,9 @@ def _normalize_join_declarations(
                 raise BuilderError(
                     f"Join operation '{name}' must define outputs as a mapping"
                 )
-            if len(raw_outputs) < 2:
+            if not raw_outputs:
                 raise BuilderError(
-                    f"Join operation '{name}' must define at least two outputs"
+                    f"Join operation '{name}' must define at least one output"
                 )
 
             outputs: Dict[str, str] = {}

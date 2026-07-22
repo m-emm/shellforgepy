@@ -2609,6 +2609,31 @@ def _generated_part_additional_data(generated_part: Any) -> Dict[str, Any]:
     return json.loads(json.dumps(additional_data, sort_keys=True, default=str))
 
 
+def _generated_part_hidden_by_default_names(generated_part: Any) -> List[str]:
+    raw_names = getattr(generated_part, "hidden_by_default_names", [])
+    if not isinstance(raw_names, Sequence) or isinstance(raw_names, (str, bytes)):
+        raise BuilderError("hidden_by_default_names must be a list of strings")
+
+    if any(not isinstance(name, str) for name in raw_names):
+        raise BuilderError("hidden_by_default_names must be a list of strings")
+    names = list(raw_names)
+    if any(not name for name in names):
+        raise BuilderError("hidden_by_default_names must contain non-empty strings")
+    if len(set(names)) != len(names):
+        raise BuilderError("hidden_by_default_names must not contain duplicates")
+
+    known_names = set(
+        getattr(generated_part, "non_production_indices_by_name", {}).keys()
+    )
+    unknown_names = sorted(set(names) - known_names)
+    if unknown_names:
+        raise BuilderError(
+            "Hidden-by-default parts must be named non-production parts: "
+            + ", ".join(unknown_names)
+        )
+    return names
+
+
 def _export_part_to_step(part: Any, destination: Path) -> None:
     from shellforgepy.produce.arrange_and_export import export_solid_to_step
 
@@ -2951,6 +2976,18 @@ def _import_dependency_assembly(metadata: Mapping[str, Any]) -> Any:
             assembly.add_named_non_production_part(non_production_part, str(name))
         else:
             assembly.non_production_parts.append(non_production_part)
+
+    hidden_by_default_names = metadata.get("hidden_by_default_names", [])
+    if not isinstance(hidden_by_default_names, Sequence) or isinstance(
+        hidden_by_default_names, (str, bytes)
+    ):
+        raise BuilderError("hidden_by_default_names cache metadata must be a list")
+    if any(not isinstance(name, str) for name in hidden_by_default_names):
+        raise BuilderError(
+            "hidden_by_default_names cache metadata must contain strings"
+        )
+    for name in hidden_by_default_names:
+        assembly.set_hidden_by_default(name)
 
     return assembly
 
@@ -4679,6 +4716,23 @@ def _builder_selector_for_scene_entry(entry: Mapping[str, Any]) -> Optional[str]
     return f"{assembly_name}.{artifact}"
 
 
+def _hidden_by_default_names_from_metadata(
+    metadata: Mapping[str, Any],
+) -> set[str]:
+    raw_names = metadata.get("hidden_by_default_names", [])
+    if raw_names is None:
+        return set()
+    if not isinstance(raw_names, Sequence) or isinstance(raw_names, (str, bytes)):
+        _logger.warning(
+            "Ignoring invalid hidden_by_default_names metadata for assembly %s",
+            metadata.get("assembly_name"),
+        )
+        return set()
+    return {
+        str(name) for name in raw_names if isinstance(name, str) and str(name).strip()
+    }
+
+
 def _consumed_part_refs_from_metadata(metadata: Mapping[str, Any]) -> List[str]:
     additional_data = metadata.get("additional_data")
     if not isinstance(additional_data, Mapping):
@@ -5032,6 +5086,12 @@ def _materialize_rule_parts(
                     "animation": animation,
                     "_direction_vector_animation_keys": direction_vector_animation_keys,
                 }
+                if entry["artifact"] == "non_production_parts" and entry.get(
+                    "name"
+                ) in _hidden_by_default_names_from_metadata(target):
+                    base_scene_part["obj_metadata"]["visibility"] = {
+                        "hidden_by_default": True
+                    }
                 if transform_record is not None:
                     _apply_direction_vector_animation_transform(
                         base_scene_part,
@@ -7406,6 +7466,9 @@ def _build_join_operation(
             "public_parameters": resolved.public_parameters,
             "generator_kwargs": resolved.joiner_kwargs,
             "additional_data": _generated_part_additional_data(generated_part),
+            "hidden_by_default_names": _generated_part_hidden_by_default_names(
+                generated_part
+            ),
             "file_dependencies": deepcopy(resolved.file_dependencies),
             "generator_context": (
                 {
@@ -7731,6 +7794,9 @@ def build_from_file(
                 "generator_kwargs": resolved.generator_kwargs,
                 "architecture": deepcopy(resolved.architecture),
                 "additional_data": _generated_part_additional_data(generated_part),
+                "hidden_by_default_names": _generated_part_hidden_by_default_names(
+                    generated_part
+                ),
                 "file_dependencies": deepcopy(resolved.file_dependencies),
                 "generator_context": (
                     {

@@ -454,6 +454,7 @@ def test_export_colored_meshes_to_obj_writes_shellforgepy_metadata_comment():
             {
                 "builder_selector": "fan_assembly.followers.mount_plate",
                 "consumption": {"is_consumed": True},
+                "visibility": {"hidden_by_default": True},
             },
         )
     ]
@@ -467,7 +468,8 @@ def test_export_colored_meshes_to_obj_writes_shellforgepy_metadata_comment():
             obj_content = f.read()
 
         metadata_comment = (
-            '# shellforgepy_metadata {"consumption":{"is_consumed":true}}'
+            '# shellforgepy_metadata {"consumption":{"is_consumed":true},'
+            '"visibility":{"hidden_by_default":true}}'
         )
         assert metadata_comment in obj_content
         assert obj_content.index(metadata_comment) < obj_content.index(

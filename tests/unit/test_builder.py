@@ -864,6 +864,7 @@ def test_build_from_file_writes_hashed_metadata_and_reuses_cache(monkeypatch, tm
                 "        self.follower_indices_by_name = {'brace': 0}",
                 "        self.cutter_indices_by_name = {'hole': 0}",
                 "        self.non_production_indices_by_name = {'visual': 0}",
+                "        self.hidden_by_default_names = ['visual']",
                 "    def leaders_followers_fused(self):",
                 "        return 'fused-shape'",
                 "def make_widget(*, width, height, label):",
@@ -948,6 +949,7 @@ def test_build_from_file_writes_hashed_metadata_and_reuses_cache(monkeypatch, tm
     assert result["artifacts"]["followers"][0]["name"] == "brace"
     assert result["artifacts"]["cutters"][0]["name"] == "hole"
     assert result["artifacts"]["non_production_parts"][0]["name"] == "visual"
+    assert result["hidden_by_default_names"] == ["visual"]
     assert Path(result["artifact_dir"]).name == f"sample_assembly__{expected_hash}"
 
     metadata_path = (
@@ -971,6 +973,7 @@ def test_build_from_file_writes_hashed_metadata_and_reuses_cache(monkeypatch, tm
     cached_results = builder.build_from_file(config_path)
     assert cached_results[0]["cache_hit"] is True
     assert cached_results[0]["parameter_hash"] == expected_hash
+    assert cached_results[0]["hidden_by_default_names"] == ["visual"]
 
 
 def test_build_from_file_hashes_declared_file_dependencies(monkeypatch, tmp_path):
@@ -5653,6 +5656,91 @@ def test_materialize_rule_parts_attaches_obj_metadata_for_assembly_grouping(
     }
 
 
+def test_materialize_dependency_marks_only_named_hidden_by_default_parts(
+    monkeypatch, tmp_path
+):
+    reference_step = tmp_path / "provider__reference.step"
+    reference_step.write_text("reference", encoding="utf-8")
+    visible_step = tmp_path / "provider__visible.step"
+    visible_step.write_text("visible", encoding="utf-8")
+
+    scene_metadata = {
+        "assembly_name": "scene",
+        "resource_file": str(tmp_path / "scene.yaml"),
+        "public_parameters": {},
+        "generator_kwargs": {},
+        "dependencies": [],
+    }
+    provider_metadata = {
+        "assembly_name": "provider",
+        "hidden_by_default_names": ["datum"],
+        "artifacts": {
+            "non_production_parts": [
+                {"index": 0, "name": "datum", "path": str(reference_step)},
+                {"index": 1, "name": "context", "path": str(visible_step)},
+            ]
+        },
+    }
+    resource_data = {
+        "Builder": {
+            "Visualization": {
+                "parts": [
+                    {
+                        "source": "dependencies",
+                        "assembly": "provider",
+                        "artifact": "non_production_parts",
+                        "name_template": "renamed_{name}",
+                    }
+                ]
+            }
+        }
+    }
+    config_data = {
+        "assemblies": [
+            {"name": "provider", "depends_on": []},
+            {"name": "scene", "depends_on": ["provider"]},
+        ]
+    }
+    monkeypatch.setattr(builder, "_import_dependency_part", lambda path: f"part:{path}")
+
+    parts = builder._materialize_rule_parts(
+        scene_metadata,
+        resource_data,
+        "visualization",
+        {"provider": provider_metadata},
+        tmp_path,
+        config_data,
+    )
+
+    parts_by_name = {part["name"]: part for part in parts}
+    assert parts_by_name["renamed_datum"]["obj_metadata"]["visibility"] == {
+        "hidden_by_default": True
+    }
+    assert "visibility" not in parts_by_name["renamed_context"]["obj_metadata"]
+
+
+def test_import_dependency_assembly_restores_hidden_by_default_names(monkeypatch):
+    monkeypatch.setattr(builder, "_import_dependency_part", lambda path: object())
+    metadata = {
+        "assembly_name": "provider",
+        "hidden_by_default_names": ["datum"],
+        "artifacts": {
+            "leader_step": "/tmp/provider__leader.step",
+            "non_production_parts": [
+                {
+                    "index": 0,
+                    "name": "datum",
+                    "path": "/tmp/provider__datum.step",
+                }
+            ],
+        },
+    }
+
+    assembly = builder._import_dependency_assembly(metadata)
+
+    assert assembly.hidden_by_default_names == ["datum"]
+
+
 def test_apply_placement_alignments_moves_only_the_owning_assembly(
     monkeypatch, tmp_path
 ):
@@ -8390,6 +8478,35 @@ def test_build_graph_model_adds_join_operation_nodes_and_public_outputs():
         ["left_source", "right_source"],
         ["join:pair_join"],
         ["left_joined", "right_joined"],
+    ]
+
+
+def test_build_graph_model_allows_join_with_one_replacement_output():
+    model = builder_graph_model.build_graph_model(
+        [
+            {"name": "holder"},
+            {"name": "reference_hardware"},
+            {
+                "name": "holder_join",
+                "kind": "join",
+                "resource_file": "joiner.yaml",
+                "inject_parts": {
+                    "holder": "holder",
+                    "reference_hardware": "reference_hardware",
+                },
+                "outputs": {"holder": "holder_joined"},
+            },
+        ]
+    )
+
+    assert model.join_outputs_by_operation["holder_join"] == {"holder": "holder_joined"}
+    assert builder_graph_model.resolve_build_generation_names(
+        model,
+        ["holder_joined"],
+    ) == [
+        ["holder", "reference_hardware"],
+        ["join:holder_join"],
+        ["holder_joined"],
     ]
 
 

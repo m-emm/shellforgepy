@@ -27,7 +27,7 @@ from shellforgepy.construct.part_parameters import PartParameters
 _logger = logging.getLogger(__name__)
 
 # Metadata version - increment when format changes
-_METADATA_VERSION = 3
+_METADATA_VERSION = 4
 _STEP_CACHE_ENV_VAR = "SHELLFORGEPY_STEP_CACHE_DIR"
 _STEP_CACHE_PLAIN_PART_KEY = "_step_cache_plain_part"
 
@@ -147,7 +147,25 @@ def serialize_to_step(
     assy = cq.Assembly(name="LeaderFollowersCuttersPart")
 
     # Build metadata for user-defined names and additional_data
-    metadata = {"version": _METADATA_VERSION, "groups": {}}
+    hidden_by_default_names = list(part.hidden_by_default_names)
+    if any(not isinstance(name, str) for name in hidden_by_default_names):
+        raise ValueError("hidden_by_default_names must contain strings.")
+    if len(set(hidden_by_default_names)) != len(hidden_by_default_names):
+        raise ValueError("hidden_by_default_names must not contain duplicates.")
+    unknown_hidden_names = sorted(
+        set(hidden_by_default_names) - set(part.non_production_indices_by_name)
+    )
+    if unknown_hidden_names:
+        raise ValueError(
+            "Hidden-by-default parts must be named non-production parts: "
+            + ", ".join(unknown_hidden_names)
+        )
+
+    metadata = {
+        "version": _METADATA_VERSION,
+        "groups": {},
+        "hidden_by_default_names": hidden_by_default_names,
+    }
 
     # Serialize additional_data if present
     if part.additional_data:
@@ -270,7 +288,7 @@ def deserialize_to_leader_followers_cutters_part(
 
     version = metadata.get("version", 1)
 
-    # Require version 2+ format (v2 = assembly-based, v3 = assembly + additional_data)
+    # Require version 2+ format (v4 adds hidden-by-default visibility metadata).
     if version < 2:
         raise ValueError(
             f"STEP file {path} uses legacy v1 format which is no longer supported. "
@@ -281,6 +299,12 @@ def deserialize_to_leader_followers_cutters_part(
     additional_data = None
     if "additional_data" in metadata:
         additional_data = _convert_from_json(metadata["additional_data"])
+
+    hidden_by_default_names = (
+        metadata.get("hidden_by_default_names", []) if version >= 4 else []
+    )
+    if not isinstance(hidden_by_default_names, list):
+        raise ValueError("hidden_by_default_names metadata must be a list.")
 
     # Load assembly from STEP
     assy = cq.Assembly.load(path)
@@ -340,6 +364,7 @@ def deserialize_to_leader_followers_cutters_part(
         cutter_names=cutter_names,
         non_production_names=non_production_names,
         additional_data=additional_data,
+        hidden_by_default_names=hidden_by_default_names,
     )
 
 
