@@ -128,3 +128,130 @@ def test_copy_preserves_complete_assembly_state_independently():
     assert assembly.non_production_indices_by_name == {"datum": 0, "context": 1}
     assert assembly.hidden_by_default_names == ["datum"]
     assert assembly.additional_data == {"nested": {"values": [1, 2]}}
+
+
+def test_filtered_copy_excludes_all_named_artifact_types_and_rebuilds_indices():
+    assembly = LeaderFollowersCuttersPart(
+        create_box(4, 4, 4),
+        additional_data={"nested": {"values": [1, 2]}},
+    )
+
+    assembly.followers.append(create_box(1, 1, 1))
+    assembly.add_named_follower(create_box(2, 1, 1), "removed_follower")
+    assembly.followers.append(create_box(3, 1, 1))
+    assembly.add_named_follower(create_box(4, 1, 1), "kept_follower")
+
+    assembly.cutters.append(create_box(0.1, 0.1, 0.1))
+    assembly.add_named_cutter(create_box(0.2, 0.2, 0.2), "removed_cutter")
+    assembly.cutters.append(create_box(0.3, 0.3, 0.3))
+    assembly.add_named_cutter(create_box(0.4, 0.4, 0.4), "kept_cutter")
+
+    assembly.non_production_parts.append(create_box(1, 2, 1))
+    assembly.add_named_non_production_part(
+        create_box(1, 3, 1),
+        "removed_datum",
+    )
+    assembly.non_production_parts.append(create_box(1, 4, 1))
+    assembly.add_named_non_production_part(
+        create_box(1, 5, 1),
+        "kept_datum",
+    )
+    assembly.set_hidden_by_default("removed_datum")
+    assembly.set_hidden_by_default("kept_datum")
+
+    assembly.direction_vectors.append((1, 0, 0))
+    assembly.add_named_direction_vector((0, 1, 0), "removed_direction")
+    assembly.direction_vectors.append((0, 0, 1))
+    assembly.add_named_direction_vector((1, 1, 0), "kept_direction")
+
+    filtered = assembly.filtered_copy(
+        [
+            "removed_follower",
+            "removed_cutter",
+            "removed_datum",
+            "removed_direction",
+        ]
+    )
+
+    assert filtered.leader is not assembly.leader
+    assert filtered.follower_indices_by_name == {"kept_follower": 2}
+    assert filtered.cutter_indices_by_name == {"kept_cutter": 2}
+    assert filtered.non_production_indices_by_name == {"kept_datum": 2}
+    assert filtered.direction_vector_indices_by_name == {"kept_direction": 2}
+    assert len(filtered.followers) == 3
+    assert len(filtered.cutters) == 3
+    assert len(filtered.non_production_parts) == 3
+    assert filtered.direction_vectors == [(1, 0, 0), (0, 0, 1), (1, 1, 0)]
+
+    retained_original_parts = (
+        [assembly.followers[index] for index in (0, 2, 3)]
+        + [assembly.cutters[index] for index in (0, 2, 3)]
+        + [assembly.non_production_parts[index] for index in (0, 2, 3)]
+    )
+    retained_copied_parts = (
+        filtered.followers + filtered.cutters + filtered.non_production_parts
+    )
+    assert all(
+        copied_part is not original_part
+        for copied_part, original_part in zip(
+            retained_copied_parts,
+            retained_original_parts,
+        )
+    )
+
+    assert filtered.hidden_by_default_names == ["kept_datum"]
+    assert filtered.hidden_by_default_names is not assembly.hidden_by_default_names
+    assert filtered.additional_data == assembly.additional_data
+    assert filtered.additional_data is not assembly.additional_data
+    assert filtered.additional_data["nested"] is not assembly.additional_data["nested"]
+
+    filtered.additional_data["nested"]["values"].append(3)
+    filtered.set_hidden_by_default("kept_datum", hidden=False)
+
+    assert assembly.additional_data == {"nested": {"values": [1, 2]}}
+    assert assembly.hidden_by_default_names == ["removed_datum", "kept_datum"]
+    assert assembly.follower_indices_by_name == {
+        "removed_follower": 1,
+        "kept_follower": 3,
+    }
+
+
+def test_filtered_copy_with_no_exclusions_matches_copy():
+    assembly = _assembly("datum")
+    assembly.followers.append(create_box(1, 1, 1))
+    assembly.add_named_direction_vector((1, 2, 3), "normal")
+
+    copied = assembly.copy()
+    filtered = assembly.filtered_copy(())
+
+    assert filtered.follower_indices_by_name == copied.follower_indices_by_name
+    assert filtered.cutter_indices_by_name == copied.cutter_indices_by_name
+    assert (
+        filtered.non_production_indices_by_name == copied.non_production_indices_by_name
+    )
+    assert (
+        filtered.direction_vector_indices_by_name
+        == copied.direction_vector_indices_by_name
+    )
+    assert filtered.direction_vectors == copied.direction_vectors
+    assert filtered.hidden_by_default_names == copied.hidden_by_default_names
+    assert filtered.additional_data == copied.additional_data
+    assert filtered.leader is not assembly.leader
+    assert filtered.non_production_parts[0] is not assembly.non_production_parts[0]
+
+
+@pytest.mark.parametrize("excluded_names", [None, "datum", {"datum"}])
+def test_filtered_copy_requires_list_or_tuple(excluded_names):
+    with pytest.raises(TypeError, match="must be a list or tuple"):
+        _assembly("datum").filtered_copy(excluded_names)
+
+
+def test_filtered_copy_rejects_non_string_duplicate_and_unknown_names():
+    assembly = _assembly("datum")
+
+    with pytest.raises(TypeError, match="must contain strings"):
+        assembly.filtered_copy(["datum", 42])
+    with pytest.raises(ValueError, match="must not contain duplicates"):
+        assembly.filtered_copy(["datum", "datum"])
+    with pytest.raises(KeyError, match="Unknown artifact names.*missing"):
+        assembly.filtered_copy(["missing"])

@@ -954,6 +954,118 @@ class LeaderFollowersCuttersPart:
             hidden_index = self.hidden_by_default_names.index(old_name)
             self.hidden_by_default_names[hidden_index] = new_name
 
+    def filtered_copy(self, excluded_names):
+        """Create a deep copy without the specified named artifacts.
+
+        The leader and all unnamed artifacts are always retained. Named followers,
+        cutters, non-production parts, and direction vectors may be excluded.
+
+        Args:
+            excluded_names: List or tuple of unique artifact names to exclude
+
+        Returns:
+            New LeaderFollowersCuttersPart with the selected artifacts removed
+
+        Raises:
+            TypeError: If excluded_names is not a list or tuple of strings
+            ValueError: If excluded_names contains duplicates
+            KeyError: If an excluded name does not exist
+        """
+        if not isinstance(excluded_names, (list, tuple)):
+            raise TypeError("excluded_names must be a list or tuple.")
+        if any(not isinstance(name, str) for name in excluded_names):
+            raise TypeError("excluded_names must contain strings.")
+        if len(set(excluded_names)) != len(excluded_names):
+            raise ValueError("excluded_names must not contain duplicates.")
+
+        named_collections = (
+            self.follower_indices_by_name,
+            self.cutter_indices_by_name,
+            self.non_production_indices_by_name,
+            self.direction_vector_indices_by_name,
+        )
+        available_names = {
+            name for indices_by_name in named_collections for name in indices_by_name
+        }
+        unknown_names = set(excluded_names) - available_names
+        if unknown_names:
+            raise KeyError(
+                f"Unknown artifact names: {sorted(unknown_names)}. "
+                f"Available names: {sorted(available_names)}"
+            )
+
+        excluded_name_set = set(excluded_names)
+
+        def filtered_parts(parts, indices_by_name):
+            excluded_indices = {
+                index
+                for name, index in indices_by_name.items()
+                if name in excluded_name_set
+            }
+            copied_parts = []
+            copied_indices_by_old_index = {}
+            for old_index, part in enumerate(parts):
+                if old_index in excluded_indices:
+                    continue
+                copied_indices_by_old_index[old_index] = len(copied_parts)
+                copied_parts.append(_clone_part(part))
+            copied_names = {
+                name: copied_indices_by_old_index[index]
+                for name, index in indices_by_name.items()
+                if name not in excluded_name_set
+            }
+            return copied_parts, copied_names
+
+        followers, follower_indices_by_name = filtered_parts(
+            self.followers,
+            self.follower_indices_by_name,
+        )
+        cutters, cutter_indices_by_name = filtered_parts(
+            self.cutters,
+            self.cutter_indices_by_name,
+        )
+        non_production_parts, non_production_indices_by_name = filtered_parts(
+            self.non_production_parts,
+            self.non_production_indices_by_name,
+        )
+
+        excluded_direction_vector_indices = {
+            index
+            for name, index in self.direction_vector_indices_by_name.items()
+            if name in excluded_name_set
+        }
+        direction_vectors = []
+        direction_vector_indices_by_old_index = {}
+        for old_index, vector in enumerate(self.direction_vectors):
+            if old_index in excluded_direction_vector_indices:
+                continue
+            direction_vector_indices_by_old_index[old_index] = len(direction_vectors)
+            direction_vectors.append(tuple(vector))
+        direction_vector_indices_by_name = {
+            name: direction_vector_indices_by_old_index[index]
+            for name, index in self.direction_vector_indices_by_name.items()
+            if name not in excluded_name_set
+        }
+
+        result = LeaderFollowersCuttersPart(
+            _clone_part(self.leader),
+            followers=followers,
+            cutters=cutters,
+            non_production_parts=non_production_parts,
+            additional_data=copy.deepcopy(self.additional_data),
+            direction_vectors=direction_vectors,
+        )
+        result.follower_indices_by_name = follower_indices_by_name
+        result.cutter_indices_by_name = cutter_indices_by_name
+        result.non_production_indices_by_name = non_production_indices_by_name
+        result.direction_vector_indices_by_name = direction_vector_indices_by_name
+        result.hidden_by_default_names = [
+            name
+            for name in self.hidden_by_default_names
+            if name not in excluded_name_set
+        ]
+        return result
+
     def copy(self):
         """Create a deep copy of this composite part.
 
@@ -963,24 +1075,7 @@ class LeaderFollowersCuttersPart:
         Returns:
             New LeaderFollowersCuttersPart with copied components
         """
-        result = LeaderFollowersCuttersPart(
-            _clone_part(self.leader),
-            [_clone_part(follower) for follower in self.followers],
-            [_clone_part(cutter) for cutter in self.cutters],
-            [_clone_part(non_prod) for non_prod in self.non_production_parts],
-            additional_data=copy.deepcopy(self.additional_data),
-            direction_vectors=[tuple(vector) for vector in self.direction_vectors],
-        )
-        result.follower_indices_by_name = self.follower_indices_by_name.copy()
-        result.cutter_indices_by_name = self.cutter_indices_by_name.copy()
-        result.non_production_indices_by_name = (
-            self.non_production_indices_by_name.copy()
-        )
-        result.direction_vector_indices_by_name = (
-            self.direction_vector_indices_by_name.copy()
-        )
-        result.hidden_by_default_names = self.hidden_by_default_names.copy()
-        return result
+        return self.filtered_copy([])
 
     def BoundingBox(self):
         """Get the bounding box of the leader part.
