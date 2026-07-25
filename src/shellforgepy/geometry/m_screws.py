@@ -219,6 +219,18 @@ m_screws_table = {
     },
 }
 
+# DIN 562 low square nuts (Vierkantmuttern), dimensions in millimetres.
+# ``width`` is the side length (s) and ``thickness`` is the minimum height (m).
+square_nuts_table = {
+    "M2": {"width": 4.0, "thickness": 1.2},
+    "M2.5": {"width": 5.0, "thickness": 1.4},
+    "M3": {"width": 5.5, "thickness": 1.6},
+    "M4": {"width": 7.0, "thickness": 1.8},
+    "M5": {"width": 8.0, "thickness": 2.3},
+    "M6": {"width": 10.0, "thickness": 2.72},
+    "M8": {"width": 13.0, "thickness": 3.52},
+}
+
 
 @dataclass
 class MScrew:
@@ -338,6 +350,46 @@ def create_nut(size, height=None, slack=None, no_hole=False):
     nut = cut_parts(nut, nut_hole)
 
     return nut
+
+
+def create_square_nut(size, height=None, slack=None, no_hole=False):
+    """Create a DIN 562 low square nut (Vierkantmutter).
+
+    Args:
+        size: Metric thread size from M2 through M8 (including M2.5).
+        height: Nut height; defaults to the DIN 562 minimum thickness.
+        slack: Clearance added to the overall width for printable fits.
+        no_hole: Return a solid square when true.
+
+    Returns:
+        Solid: CAD solid representing the square nut.
+
+    Raises:
+        KeyError: If no DIN 562 square-nut dimensions are available for ``size``.
+    """
+    if size not in square_nuts_table:
+        raise KeyError(f"Unsupported square nut size: {size}")
+
+    specification = square_nuts_table[size]
+    width = specification["width"] + (slack or 0)
+    if height is None:
+        height = specification["thickness"]
+
+    half_width = width / 2
+    nut = create_extruded_polygon(
+        [
+            (-half_width, -half_width),
+            (half_width, -half_width),
+            (half_width, half_width),
+            (-half_width, half_width),
+        ],
+        thickness=height,
+    )
+    if no_hole:
+        return nut
+
+    hole_diameter = m_screws_table[size]["clearance_hole_normal"]
+    return cut_parts(nut, create_cylinder(hole_diameter / 2, height))
 
 
 def create_bolt_thread(size, length, enlargement=0, cutter=False):
@@ -686,17 +738,19 @@ def create_hidden_nut_pocket_cutter(
     top_cutter_length=500,
     slack=0.2,
     clearance_hole_diameter=None,
+    square_nut=False,
 ):
     """
     Create a cutter solid for a hidden nut holder for the specified screw size.
 
     Args:
         size: Screw size string (e.g., "M3", "M4", etc.)
-        height: Height of the nut holder
+        nut_height: Height of the nut pocket
         slack: Additional clearance to add to nut dimensions
         bottom_cutter_length: Length of the bottom cutter section
         top_cutter_length: Length of the top cutter section
-        clearance_hole: Diameter of the clearance hole (defaults to standard if None)
+        clearance_hole_diameter: Diameter of the clearance hole (defaults to standard)
+        square_nut: Use a DIN 562 square nut instead of a hexagonal nut
 
     Returns:
         A LeaderFollowersCuttersPart which has the nut pocket cutter as leader for easy alignment with a screw, hole or other cylindrical part. It contains a cutter, that it can be used with use_as_cutter_on
@@ -709,11 +763,25 @@ def create_hidden_nut_pocket_cutter(
     if clearance_hole_diameter is None:
         clearance_hole_diameter = screw_spec.clearance_hole_normal
 
-    if nut_height is None:
-        nut_height = screw_spec.nut_thickness + slack * 2
+    if square_nut:
+        if size not in square_nuts_table:
+            raise KeyError(f"Unsupported square nut size: {size}")
+        nut_width = square_nuts_table[size]["width"]
+        default_nut_height = square_nuts_table[size]["thickness"]
+    else:
+        nut_width = screw_spec.nut_size
+        default_nut_height = screw_spec.nut_thickness
 
-    nut = create_nut(size, height=nut_height, slack=slack, no_hole=True)
-    nut = rotate(30)(nut)  # rotate nut to align flat sides with cutter box
+    if nut_height is None:
+        nut_height = default_nut_height + slack * 2
+
+    if square_nut:
+        nut = create_square_nut(size, height=nut_height, slack=slack, no_hole=True)
+        insertion_depth = (nut_width + slack) / 2
+    else:
+        nut = create_nut(size, height=nut_height, slack=slack, no_hole=True)
+        nut = rotate(30)(nut)  # align the hexagon's flat sides with the slit
+        insertion_depth = screw_spec.nut_circle_diameter / 2
 
     overall_cutter = nut
 
@@ -733,14 +801,14 @@ def create_hidden_nut_pocket_cutter(
 
     # create the nut insertion slit cutter
 
-    nut_slit_cutter = create_box(screw_spec.nut_size + slack, 500, nut_height)
+    nut_slit_cutter = create_box(nut_width + slack, 500, nut_height)
 
     nut_slit_cutter = align(nut_slit_cutter, nut, Alignment.CENTER)
     nut_slit_cutter = align(
         nut_slit_cutter,
         nut,
         Alignment.STACK_BACK,
-        stack_gap=-screw_spec.nut_circle_diameter / 2,
+        stack_gap=-insertion_depth,
     )
     overall_cutter = overall_cutter.fuse(nut_slit_cutter)
 

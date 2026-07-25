@@ -21,7 +21,13 @@ from shellforgepy.adapters._adapter import (
     get_volume,
 )
 from shellforgepy.construct.alignment_operations import Alignment, align, rotate
-from shellforgepy.construct.bounding_box_helpers import get_zlen, get_zmax, get_zmin
+from shellforgepy.construct.bounding_box_helpers import (
+    get_xlen,
+    get_ylen,
+    get_zlen,
+    get_zmax,
+    get_zmin,
+)
 from shellforgepy.construct.leader_followers_cutters_part import (
     LeaderFollowersCuttersPart,
 )
@@ -36,6 +42,7 @@ from shellforgepy.geometry.m_screws import (
     create_hidden_nut_pocket_cutter,
     create_nut,
     create_self_threading_hole_cutter,
+    create_square_nut,
     create_thread_inset_assembly,
     get_clearance_hole_diameter,
     get_core_hole_diameter,
@@ -44,6 +51,7 @@ from shellforgepy.geometry.m_screws import (
     get_thread_pitch,
     list_supported_sizes,
     m_screws_table,
+    square_nuts_table,
 )
 
 
@@ -167,6 +175,51 @@ def test_create_nut_with_slack():
     """Test nut creation with slack."""
     nut = create_nut("M3", slack=0.2)
     assert nut is not None
+
+
+@pytest.mark.parametrize(
+    ("size", "width", "thickness"),
+    [
+        ("M2", 4.0, 1.2),
+        ("M2.5", 5.0, 1.4),
+        ("M3", 5.5, 1.6),
+        ("M4", 7.0, 1.8),
+        ("M5", 8.0, 2.3),
+        ("M6", 10.0, 2.72),
+        ("M8", 13.0, 3.52),
+    ],
+)
+def test_create_square_nut_uses_din_562_dimensions(size, width, thickness):
+    """Square nuts should use the local DIN 562 dimension table."""
+    nut = create_square_nut(size, no_hole=True)
+    bounding_box = get_bounding_box(nut)
+
+    assert square_nuts_table[size] == {"width": width, "thickness": thickness}
+    assert (
+        get_xlen(bounding_box),
+        get_ylen(bounding_box),
+        get_zlen(bounding_box),
+    ) == pytest.approx((width, width, thickness), abs=1e-6)
+
+
+def test_create_square_nut_rejects_size_without_din_dimensions():
+    with pytest.raises(KeyError, match="Unsupported square nut size"):
+        create_square_nut("M10")
+
+
+def test_create_hidden_square_nut_pocket_cutter():
+    """The pocket flag should select the thinner square-nut dimensions."""
+    slack = 0.2
+    result = create_hidden_nut_pocket_cutter("M4", slack=slack, square_nut=True)
+
+    expected_height = square_nuts_table["M4"]["thickness"] + slack * 2
+    assert isinstance(result, LeaderFollowersCuttersPart)
+    leader_box = get_bounding_box(result.leader)
+    assert (
+        get_xlen(leader_box),
+        get_ylen(leader_box),
+        get_zlen(leader_box),
+    ) == pytest.approx((7.2, 7.2, expected_height), abs=1e-6)
 
 
 def test_create_hidden_nut_pocket_cutter_defaults():
