@@ -1,15 +1,17 @@
 ShellforgepyBuilderVersion: "2026-03-27"
 
+Description: Reusable rectangular structural member
+
 Parameters:
   length:
     Type: Float
-  width:
+  depth:
     Type: Float
   height:
     Type: Float
 
 Parts:
-  SpindleHead:
+  StructuralMember:
     Type: Shellforgepy::Assembly
     Properties:
       Generator: shellforgepy.simple.create_box
@@ -17,6 +19,6 @@ Parts:
         length:
           $ref: length
         width:
-          $ref: width
+          $ref: depth
         height:
           $ref: height

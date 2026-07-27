@@ -1,6 +1,8 @@
 # 🚀 ShellForgePy Examples
 
-This directory contains working examples demonstrating shellforgepy's capabilities for creating 3D printable geometries. Each example generates real STL files ready for 3D printing!
+This directory contains working examples of ShellForgePy geometry, assembly, and
+production workflows. The examples generate inspectable 3D artifacts such as
+STL and OBJ files.
 
 ## 🎯 Quick Start
 
@@ -8,9 +10,72 @@ This directory contains working examples demonstrating shellforgepy's capabiliti
 # Try the beginner-friendly example first
 python examples/filleted_boxes_example.py
 
-# Or dive into mesh generation
-python examples/create_cylinder_stl.py
+# Build a complete declarative machine scene
+python examples/builder_machine_example.py
 ```
+
+## 🏗️ Declarative Builder: Adaptive Inspection Gantry
+
+**Problem:** a machine is not one part. It is a graph of reusable components,
+interfaces, generated fit geometry, purchased references, and moving groups.
+Writing every final XYZ coordinate into one Python script makes design changes
+spread through the whole model.
+
+[`builder_machine_example.py`](builder_machine_example.py) builds a compact
+inspection gantry that demonstrates how the builder handles that system:
+
+```text
+shared dimensions
+   ├── base + named upright pads
+   ├── two instances of one structural-member resource
+   └── bridge ──injected STEP geometry──> self-sizing tool carriage
+                                             └── rigidly attached probe
+                                                      │
+                                      curated visualization scene
+```
+
+![Isometric preview of the declarative inspection gantry](builder_machine_demo/previews/machine_demo_isometric.png)
+
+The preview is generated from the same cached assembly artifacts and placement
+rules described below; it is not a separately maintained illustration.
+
+```bash
+python examples/builder_machine_example.py
+```
+
+**Output:**
+
+- Colored assembly: `output/builder_machine_demo_runs/machine_demo_run_latest/machine_demo.obj`
+- Isometric, front, and top PNG previews in the run's `previews/` directory
+- Cached STEP artifacts for each assembly in `output/builder_machine_demo_repository/`
+- A workflow manifest and placed-assembly bounding-box report
+
+**What to look at:**
+
+- [`assemblies.yaml`](builder_machine_demo/assemblies.yaml) is the readable
+  product graph: parameters, dependencies, injections, and ordered placement.
+- The small `*_generator.py` modules contain only local geometry that cannot be
+  expressed as orchestration. Each resource has its own module, so editing the
+  carriage does not invalidate the base or probe cache.
+- `left_upright` and `right_upright` reuse one
+  [`structural_member.yaml`](builder_machine_demo/structural_member.yaml)
+  resource.
+- The bridge solid is injected into `create_tool_carriage()`. The generator
+  measures it and derives a matching opening plus running clearance, so changing
+  `profile_size` does not require a second carriage edit.
+- The uprights align to named base followers rather than copied coordinates.
+  The probe is aligned to the carriage locally, attached with `rigid_group`,
+  then moved with the carriage onto the bridge.
+- [`machine_demo.yaml`](builder_machine_demo/machine_demo.yaml) is a collection
+  root that chooses names, colors, and preview views without creating a
+  redundant fused solid.
+
+Try changing `profile_size`, `upright_height`, or `carriage_x_offset` in
+`assemblies.yaml`, then run the command again. Only invalidated assemblies are
+rebuilt; everything else is loaded from the content-addressed cache.
+
+For the syntax behind the example, see the
+[Declarative Builder Guide](../README_BUILDER.md).
 
 ## 📋 Available Examples
 

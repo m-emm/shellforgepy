@@ -1,44 +1,47 @@
-"""Illustrative declarative builder example for a small machine assembly.
+"""Build and visualize the declarative inspection-gantry example.
 
-This example uses YAML files in ``examples/builder_machine_demo`` to build three
-assemblies declaratively:
-
-1. machine_base
-2. guide_column (stacked on base)
-3. spindle_head (stacked on column)
-
-Run:
-    python examples/builder_machine_example.py
+The geometry generators live beside the YAML so the complete example can be
+read without jumping through the ShellForgePy source tree.  The orchestration
+itself is in ``builder_machine_demo/assemblies.yaml``.
 """
 
 from pathlib import Path
 
-from shellforgepy.builder import build_from_file
+from shellforgepy.builder.builder import main as builder_main
 
 
-def main() -> None:
+def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     config_file = repo_root / "examples" / "builder_machine_demo" / "assemblies.yaml"
-    repository_dir = repo_root / "output" / "builder_machine_demo_repo"
+    repository_dir = repo_root / "output" / "builder_machine_demo_repository"
+    runs_dir = repo_root / "output" / "builder_machine_demo_runs"
 
-    print("Building declarative machine demo...")
-    print(f"  config: {config_file}")
-    print(f"  repository_dir: {repository_dir}")
+    print("Building an adaptive inspection gantry from declarative YAML.")
+    print("The carriage measures the generated bridge and sizes itself to fit.")
+    print(f"Configuration: {config_file}")
 
-    results = build_from_file(config_file, repository_dir=repository_dir)
+    result = builder_main(
+        [
+            str(config_file),
+            "--assembly",
+            "machine_demo",
+            "--visualize",
+            "--repository-dir",
+            str(repository_dir),
+            "--runs-dir",
+            str(runs_dir),
+            "--run-id",
+            "latest",
+        ]
+    )
 
-    print("\nBuild results:")
-    for result in results:
-        artifacts = result.get("artifacts", {})
-        print(f"- assembly: {result['assembly_name']}")
-        print(f"  hash: {result['parameter_hash']}")
-        print(f"  cache_hit: {result['cache_hit']}")
-        print(f"  artifact_dir: {result['artifact_dir']}")
-        if artifacts.get("leader_step"):
-            print(f"  leader_step: {artifacts['leader_step']}")
-
-    print("\nDone. Inspect output files under output/builder_machine_demo_repo/.")
+    print(
+        "\nScene written to "
+        "output/builder_machine_demo_runs/machine_demo_run_latest/."
+    )
+    print("Run this example again to see unchanged assemblies come from the cache.")
+    return result
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

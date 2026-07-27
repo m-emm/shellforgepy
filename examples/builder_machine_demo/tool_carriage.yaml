@@ -1,0 +1,32 @@
+ShellforgepyBuilderVersion: "2026-03-27"
+
+Description: Shape-aware carriage sized from an injected bridge artifact
+
+Parameters:
+  carriage_width:
+    Type: Float
+  wall_thickness:
+    Type: Float
+  running_clearance:
+    Type: Float
+  tool_plate_thickness:
+    Type: Float
+  tool_plate_drop:
+    Type: Float
+
+Parts:
+  ToolCarriage:
+    Type: Shellforgepy::Assembly
+    Properties:
+      Generator: examples.builder_machine_demo.tool_carriage_generator.create_tool_carriage
+      Properties:
+        carriage_width:
+          $ref: carriage_width
+        wall_thickness:
+          $ref: wall_thickness
+        running_clearance:
+          $ref: running_clearance
+        tool_plate_thickness:
+          $ref: tool_plate_thickness
+        tool_plate_drop:
+          $ref: tool_plate_drop

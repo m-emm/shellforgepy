@@ -1,0 +1,66 @@
+ShellforgepyBuilderVersion: "2026-03-27"
+
+Description: Curated visualization root for the complete inspection gantry
+
+Builder:
+  Collection: true
+  Visualization:
+    preview:
+      enabled: true
+      views:
+        - isometric
+        - front
+        - top
+      width: 768
+      height: 768
+    parts:
+      - source: dependencies
+        assembly: machine_base
+        artifact: leader
+        name: base_plate
+        color: [0.20, 0.24, 0.30]
+      - source: dependencies
+        assembly: machine_base
+        artifact: followers
+        name_template: "{name}"
+        color: [0.22, 0.45, 0.78]
+      - source: dependencies
+        assembly: machine_base
+        artifact: non_production_parts
+        name_template: "{name}"
+        color: [0.78, 0.62, 0.25]
+      - source: dependencies
+        assembly: left_upright
+        artifact: leader
+        name: left_upright
+        color: [0.72, 0.76, 0.82]
+      - source: dependencies
+        assembly: right_upright
+        artifact: leader
+        name: right_upright
+        color: [0.72, 0.76, 0.82]
+      - source: dependencies
+        assembly: bridge
+        artifact: leader
+        name: bridge
+        color: [0.72, 0.76, 0.82]
+      - source: dependencies
+        assembly: tool_carriage
+        artifact: leader
+        name: adaptive_slide
+        color: [0.92, 0.34, 0.12]
+      - source: dependencies
+        assembly: tool_carriage
+        artifact: followers
+        name_template: "{name}"
+        color: [0.92, 0.34, 0.12]
+      - source: dependencies
+        assembly: inspection_probe
+        artifact: leader
+        name: probe_body
+        color: [0.18, 0.18, 0.20]
+      - source: dependencies
+        assembly: inspection_probe
+        artifact: followers
+        name_template: "{name}"
+        color: [0.86, 0.86, 0.80]

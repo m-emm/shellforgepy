@@ -19,6 +19,17 @@ specific order.
 - **Composable pipelines**: couple build output to visualization/production workflows.
 - **Readable reviews**: assembly diffs are mostly config changes.
 
+The builder becomes valuable when a design stops being a single part and starts
+being a system. A frame profile may be reused six times, a carriage must fit the
+profile that was actually generated, a probe must remain attached while the
+carriage moves, and the visualization should include purchased references that
+must never enter production. The builder keeps those concerns separate:
+
+- Python generators create local geometry.
+- Resource YAML files define each generator's parameter and artifact contract.
+- The orchestration YAML connects, injects, places, and groups assemblies.
+- Visualization and production rules choose different views of the same graph.
+
 ## Core file layout
 
 A typical project layout looks like this:
@@ -32,11 +43,15 @@ my_project/
 │   └── spindle_head.yaml
 └── src/
     └── my_project/
-        └── generators.py
+        ├── machine_base_generator.py
+        ├── guide_column_generator.py
+        └── spindle_head_generator.py
 ```
 
 `assemblies.yaml` is the orchestration file. Individual `*.yaml` resource files
-define generators and their parameter contracts.
+define generators and their parameter contracts. Keep unrelated resource
+generators in separate Python modules so changing one source file does not
+invalidate another assembly's build cache.
 
 ## Minimal orchestration file
 
@@ -175,7 +190,7 @@ files participate in cache invalidation.
 From your project root:
 
 ```bash
-python -m shellforgepy.builder.builder assemblies/assemblies.yaml --verbose
+python -m shellforgepy build assemblies/assemblies.yaml --verbose
 ```
 
 Useful options:
@@ -283,19 +298,49 @@ inline overrides shown above.
 
 ## Working example in this repository
 
-See the complete demo under:
+The complete example under `examples/builder_machine_demo/` is deliberately
+more capable than the minimal snippets above while remaining small enough to
+read in one sitting. It models an adaptive desktop inspection gantry:
 
-- `examples/builder_machine_demo/assemblies.yaml`
-- `examples/builder_machine_demo/machine_base.yaml`
-- `examples/builder_machine_demo/guide_column.yaml`
-- `examples/builder_machine_demo/spindle_head.yaml`
-- `examples/builder_machine_example.py`
+1. Global dimensions define the base, profile, and tool position. The bridge
+   length is an expression derived from the base width and upright inset.
+2. A base generator publishes named left/right mounting pads as followers.
+3. Two upright assemblies reuse one structural-member resource.
+4. The generated bridge artifact is injected into the tool-carriage generator.
+   The carriage measures the bridge and sizes its slide opening from the real
+   geometry plus a configured running clearance.
+5. Ordered placement aligns the probe to the carriage locally, declares them a
+   rigid group, and then positions the complete tool unit on the bridge.
+6. A collection resource selects and colors the final scene, including the
+   non-production workpiece reference, without generating a redundant fused
+   machine solid.
 
-Run it:
+| Front view: semantic stacking and probe placement | Top view: carriage position on the bridge |
+| --- | --- |
+| ![Front preview of the builder inspection gantry](examples/builder_machine_demo/previews/machine_demo_front.png) | ![Top preview of the builder inspection gantry](examples/builder_machine_demo/previews/machine_demo_top.png) |
+
+Build the complete colored scene and three preview images:
 
 ```bash
 python examples/builder_machine_example.py
 ```
 
-The script builds a small machine-like stack (base + column + spindle head) via
-builder YAML and prints generated artifact locations.
+Or invoke the workflow CLI directly:
+
+```bash
+python -m shellforgepy build \
+  examples/builder_machine_demo/assemblies.yaml \
+  --assembly machine_demo \
+  --visualize
+```
+
+Start with these files:
+
+- `examples/builder_machine_demo/assemblies.yaml` — product graph and placement
+- `examples/builder_machine_demo/*_generator.py` — cache-isolated local geometry
+- `examples/builder_machine_demo/machine_base.yaml` — named assembly interfaces
+- `examples/builder_machine_demo/tool_carriage.yaml` — injection contract
+- `examples/builder_machine_demo/machine_demo.yaml` — curated scene root
+
+The walkthrough and expected outputs are documented near the top of
+`examples/README.md`.

@@ -1,0 +1,24 @@
+ShellforgepyBuilderVersion: "2026-03-27"
+
+Description: Purchased probe represented as a body and named tip
+
+Parameters:
+  radius:
+    Type: Float
+  length:
+    Type: Float
+  tip_length:
+    Type: Float
+
+Parts:
+  InspectionProbe:
+    Type: Shellforgepy::Assembly
+    Properties:
+      Generator: examples.builder_machine_demo.inspection_probe_generator.create_inspection_probe
+      Properties:
+        radius:
+          $ref: radius
+        length:
+          $ref: length
+        tip_length:
+          $ref: tip_length

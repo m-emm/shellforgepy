@@ -1,22 +1,32 @@
 ShellforgepyBuilderVersion: "2026-03-27"
 
+Description: Base plate with named interfaces for the two gantry uprights
+
 Parameters:
   length:
     Type: Float
-  width:
+  depth:
     Type: Float
-  height:
+  thickness:
+    Type: Float
+  profile_size:
+    Type: Float
+  upright_inset:
     Type: Float
 
 Parts:
   Base:
     Type: Shellforgepy::Assembly
     Properties:
-      Generator: shellforgepy.simple.create_box
+      Generator: examples.builder_machine_demo.machine_base_generator.create_machine_base
       Properties:
         length:
           $ref: length
-        width:
-          $ref: width
-        height:
-          $ref: height
+        depth:
+          $ref: depth
+        thickness:
+          $ref: thickness
+        profile_size:
+          $ref: profile_size
+        upright_inset:
+          $ref: upright_inset
