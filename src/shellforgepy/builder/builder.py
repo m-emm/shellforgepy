@@ -6551,6 +6551,89 @@ def _resolve_plate_process_data_map(
     return resolved_by_plate
 
 
+def _resolve_gcode_postprocessor_spec(
+    value: Any,
+    *,
+    context: Mapping[str, Any],
+    field_name: str,
+) -> Optional[Dict[str, Any]]:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise BuilderError(f"{field_name} must be a mapping")
+    resolved = _resolve_inline_mapping(value, context)
+    function_path = resolved.get("function")
+    if not isinstance(function_path, str) or not function_path.strip():
+        raise BuilderError(f"{field_name}.function must be a non-empty dotted path")
+    if "." not in function_path:
+        raise BuilderError(
+            f"{field_name}.function must be a dotted module.function path"
+        )
+    arguments = resolved.get("arguments", {})
+    if arguments is None:
+        arguments = {}
+    if not isinstance(arguments, Mapping):
+        raise BuilderError(f"{field_name}.arguments must be a mapping")
+    unsupported = sorted(set(resolved) - {"function", "arguments"})
+    if unsupported:
+        raise BuilderError(
+            f"{field_name} has unsupported keys: "
+            + ", ".join(str(key) for key in unsupported)
+        )
+    return {
+        "function": function_path.strip(),
+        "arguments": deepcopy(dict(arguments)),
+    }
+
+
+def _resolve_gcode_postprocessor_specs(
+    metadata: Mapping[str, Any],
+    resource_data: Mapping[str, Any],
+    config_data: Optional[Mapping[str, Any]] = None,
+) -> tuple[Optional[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    production_section = _builder_section(
+        resource_data,
+        "Production",
+        config_data,
+        metadata=metadata,
+    )
+    context = _metadata_resolution_context(metadata)
+    default_spec = _resolve_gcode_postprocessor_spec(
+        production_section.get("gcode_postprocessor"),
+        context=context,
+        field_name="Builder.Production.gcode_postprocessor",
+    )
+
+    arrange = production_section.get("arrange", {})
+    if arrange is None:
+        arrange = {}
+    if not isinstance(arrange, Mapping):
+        raise BuilderError("Builder.Production.arrange must be a mapping")
+    raw_plates = arrange.get("plates", [])
+    if raw_plates is None:
+        raw_plates = []
+    if not isinstance(raw_plates, list):
+        raise BuilderError("Builder.Production.arrange.plates must be a list")
+
+    per_plate: Dict[str, Dict[str, Any]] = {}
+    for index, plate in enumerate(raw_plates, start=1):
+        if not isinstance(plate, Mapping):
+            raise BuilderError(
+                "Builder.Production.arrange.plates entries must be mappings"
+            )
+        plate_name = str(plate.get("name") or f"plate_{index}")
+        spec = _resolve_gcode_postprocessor_spec(
+            plate.get("gcode_postprocessor"),
+            context=context,
+            field_name=(
+                f"Builder.Production.arrange.plates[{plate_name}].gcode_postprocessor"
+            ),
+        )
+        if spec is not None:
+            per_plate[plate_name] = spec
+    return default_spec, per_plate
+
+
 def _resolve_export_options(
     resource_data: Mapping[str, Any],
     mode: str,
@@ -8360,6 +8443,27 @@ def _export_scene_for_assembly(
     if not manifest_path.exists():
         raise BuilderError(f"Expected workflow manifest at {manifest_path}")
     manifest = _read_metadata(manifest_path)
+    if production_mode:
+        default_postprocessor, plate_postprocessors = (
+            _resolve_gcode_postprocessor_specs(
+                selected_metadata,
+                selected_resource_data,
+                config_data,
+            )
+        )
+        manifest_plates = manifest.get("plates")
+        if isinstance(manifest_plates, list):
+            for index, plate_manifest in enumerate(manifest_plates, start=1):
+                if not isinstance(plate_manifest, dict):
+                    continue
+                plate_name = str(plate_manifest.get("name") or f"plate_{index}")
+                postprocessor = plate_postprocessors.get(
+                    plate_name, default_postprocessor
+                )
+                if postprocessor is not None:
+                    plate_manifest["gcode_postprocessor"] = deepcopy(postprocessor)
+        elif default_postprocessor is not None:
+            manifest["gcode_postprocessor"] = deepcopy(default_postprocessor)
     architecture_plan_renders = _render_architecture_plan_renders(
         metadata=selected_metadata,
         resource_data=selected_resource_data,

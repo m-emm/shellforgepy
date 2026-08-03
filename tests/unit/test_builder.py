@@ -2697,6 +2697,60 @@ def test_run_builder_visualization_expands_dependents_and_exports_scene(
     assert captured["selected_assembly"] == "frame"
 
 
+def test_resolve_gcode_postprocessor_specs_inherits_and_overrides_per_plate():
+    resource_data = {
+        "Builder": {
+            "Production": {
+                "gcode_postprocessor": {
+                    "function": "example.default_transform",
+                    "arguments": {"step": 1},
+                },
+                "arrange": {
+                    "plates": [
+                        {"name": "default_plate", "parts": ["part"]},
+                        {
+                            "name": "custom_plate",
+                            "parts": ["part"],
+                            "gcode_postprocessor": {
+                                "function": "example.custom_transform",
+                                "arguments": {"step": 2},
+                            },
+                        },
+                    ]
+                },
+            }
+        }
+    }
+
+    default_spec, per_plate = builder._resolve_gcode_postprocessor_specs(
+        {}, resource_data
+    )
+
+    assert default_spec == {
+        "function": "example.default_transform",
+        "arguments": {"step": 1},
+    }
+    assert per_plate == {
+        "custom_plate": {
+            "function": "example.custom_transform",
+            "arguments": {"step": 2},
+        }
+    }
+
+
+def test_resolve_gcode_postprocessor_specs_rejects_invalid_contract():
+    resource_data = {
+        "Builder": {
+            "Production": {
+                "gcode_postprocessor": {"function": "not_dotted"},
+            }
+        }
+    }
+
+    with pytest.raises(builder.BuilderError, match="dotted module.function"):
+        builder._resolve_gcode_postprocessor_specs({}, resource_data)
+
+
 def test_resolve_preview_options_from_visualization_section():
     metadata = {
         "public_parameters": {

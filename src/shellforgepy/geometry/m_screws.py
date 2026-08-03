@@ -121,6 +121,8 @@ m_screws_table = {
         "min_thread_length": 20,
         "conical_head_diameter": 8.0,
         "conical_head_height": 2.3,
+        "thread_inset_hole_diameter": 6.3,
+        "thread_inset_length": 8.1,
     },
     "M5": {
         "nut_size": 8,

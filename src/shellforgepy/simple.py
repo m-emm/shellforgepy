@@ -182,6 +182,7 @@ from shellforgepy.shells.partitionable_spheroid_triangle_mesh import (
     PartitionableSpheroidTriangleMesh,
 )
 from shellforgepy.shells.transformed_region_view import TransformedRegionView
+from shellforgepy.workflow.gcode_postprocessing import GcodePostprocessorContext
 
 # Define what gets exported with "from simple import *"
 __all__ = [
@@ -268,6 +269,7 @@ __all__ = [
     "get_adapter_id",
     "get_bounding_box_center",
     "get_bounding_box_size",
+    "GcodePostprocessorContext",
     "get_bounding_box",
     "get_clearance_hole_diameter",
     "get_screw_info",

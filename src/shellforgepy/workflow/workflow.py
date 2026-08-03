@@ -22,6 +22,11 @@ from xml.etree import ElementTree as ET
 
 from shellforgepy.simple import LOGGING_FORMAT
 from shellforgepy.slicing.orca_slicer_settings_generator import generate_settings
+from shellforgepy.workflow.gcode_postprocessing import (
+    GcodePostprocessorError,
+    apply_gcode_postprocessor,
+    build_gcode_postprocessor_context,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -1332,6 +1337,7 @@ def complete_workflow_run(
                     "obj_path": _resolve_manifest_path(
                         run_directory, entry.get("obj_path")
                     ),
+                    "gcode_postprocessor": entry.get("gcode_postprocessor"),
                     "manifest_entry": entry,
                 }
             )
@@ -1466,6 +1472,7 @@ def complete_workflow_run(
                     "part_file_entries": job.get("part_file_entries", []),
                     "process_path": resolved_process,
                     "obj_path": job.get("obj_path"),
+                    "gcode_postprocessor": job.get("gcode_postprocessor"),
                     "manifest_entry": job.get("manifest_entry"),
                 }
             )
@@ -1487,6 +1494,7 @@ def complete_workflow_run(
                 "obj_path": _resolve_manifest_path(
                     run_directory, manifest.get("obj_path")
                 ),
+                "gcode_postprocessor": manifest.get("gcode_postprocessor"),
                 "manifest_entry": None,
             }
         ]
@@ -1680,6 +1688,53 @@ def complete_workflow_run(
             previous_snapshot=gcode_snapshot_before,
         )
         preserved_gcode_paths.extend(preserved_paths)
+        postprocessor_spec = job.get("gcode_postprocessor")
+        if postprocessor_spec is not None:
+            if not isinstance(postprocessor_spec, Mapping):
+                raise WorkflowError(
+                    f"G-code postprocessor for plate '{current_plate_name}' must be a mapping"
+                )
+            if len(preserved_paths) != 1:
+                raise WorkflowError(
+                    f"G-code postprocessor for plate '{current_plate_name}' requires exactly one generated G-code file; found {len(preserved_paths)}"
+                )
+            part_stl_paths = [
+                Path(entry["path"])
+                for entry in job.get("part_file_entries", [])
+                if isinstance(entry, Mapping) and entry.get("path") is not None
+            ]
+            try:
+                postprocessor_context = build_gcode_postprocessor_context(
+                    gcode_path=preserved_paths[0],
+                    project_path=project_path,
+                    stl_path=current_part_path,
+                    obj_path=(
+                        Path(current_obj_path) if current_obj_path is not None else None
+                    ),
+                    part_stl_paths=part_stl_paths,
+                    process_data_path=current_process_path,
+                    plate_name=current_plate_name,
+                    target_label=target_label,
+                    run_directory=run_directory,
+                    workflow_manifest=manifest,
+                    plate_manifest=(
+                        manifest_entry if isinstance(manifest_entry, Mapping) else None
+                    ),
+                )
+                postprocessor_report = apply_gcode_postprocessor(
+                    specification=postprocessor_spec,
+                    context=postprocessor_context,
+                )
+            except GcodePostprocessorError as exc:
+                raise WorkflowError(
+                    f"Failed to postprocess G-code for plate '{current_plate_name}': {exc}"
+                ) from exc
+            slicer_manifest_data["gcode_postprocessor"] = postprocessor_report
+            _logger.info(
+                "Applied G-code postprocessor for %s: %s",
+                current_plate_name,
+                postprocessor_report["function"],
+            )
         if preserved_paths:
             slicer_manifest_data["gcode_paths"] = [
                 str(path) for path in preserved_paths
