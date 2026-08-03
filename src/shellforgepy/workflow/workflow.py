@@ -1663,6 +1663,12 @@ def complete_workflow_run(
             slicer_part_paths = [current_part_path]
 
         slicer_cmd.extend(str(path) for path in slicer_part_paths)
+        slicer_manifest_data["command"] = list(slicer_cmd)
+        if isinstance(manifest_entry, dict):
+            manifest_entry["slicer"] = slicer_manifest_data
+        else:
+            manifest["slicer"] = slicer_manifest_data
+        _write_manifest(run_directory, manifest)
         _logger.info(
             "Running OrcaSlicer for %s: %s",
             current_plate_name,

@@ -5710,6 +5710,84 @@ def test_materialize_rule_parts_attaches_obj_metadata_for_assembly_grouping(
     }
 
 
+def test_materialize_rule_parts_merges_resolved_custom_obj_metadata(
+    monkeypatch, tmp_path
+):
+    leader_step = tmp_path / "bed.step"
+    leader_step.write_text("bed", encoding="utf-8")
+    metadata = {
+        "assembly_name": "print_bed_assembly",
+        "public_parameters": {"filament_slot": 2},
+        "generator_kwargs": {},
+        "artifacts": {"leader_step": str(leader_step)},
+    }
+    resource_data = {
+        "Builder": {
+            "Production": {
+                "parts": [
+                    {
+                        "source": "self",
+                        "artifact": "leader",
+                        "obj_metadata": {
+                            "slicer_filament_id": {"$ref": "filament_slot"}
+                        },
+                    }
+                ]
+            }
+        }
+    }
+    monkeypatch.setattr(builder, "_import_dependency_part", lambda path: f"part:{path}")
+
+    parts = builder._materialize_rule_parts(
+        metadata,
+        resource_data,
+        "production",
+        {"print_bed_assembly": metadata},
+        tmp_path,
+        None,
+    )
+
+    assert parts[0]["obj_metadata"]["slicer_filament_id"] == 2
+    assert parts[0]["obj_metadata"]["assembly_name"] == "print_bed_assembly"
+
+
+def test_materialize_rule_parts_rejects_builder_owned_obj_metadata(
+    monkeypatch, tmp_path
+):
+    leader_step = tmp_path / "bed.step"
+    leader_step.write_text("bed", encoding="utf-8")
+    metadata = {
+        "assembly_name": "print_bed_assembly",
+        "public_parameters": {},
+        "generator_kwargs": {},
+        "artifacts": {"leader_step": str(leader_step)},
+    }
+    resource_data = {
+        "Builder": {
+            "Production": {
+                "parts": [
+                    {
+                        "source": "self",
+                        "artifact": "leader",
+                        "obj_metadata": {"assembly_name": "not_allowed"},
+                    }
+                ]
+            }
+        }
+    }
+    monkeypatch.setattr(builder, "_import_dependency_part", lambda path: f"part:{path}")
+
+    with pytest.raises(builder.BuilderError, match="Builder-owned.*assembly_name"):
+        builder._materialize_rule_parts(
+            metadata,
+            resource_data,
+            "production",
+            {"print_bed_assembly": metadata},
+            tmp_path,
+            None,
+        )
+
+
 def test_materialize_dependency_marks_only_named_hidden_by_default_parts(
     monkeypatch, tmp_path
 ):

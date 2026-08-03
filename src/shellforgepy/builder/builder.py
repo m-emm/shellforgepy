@@ -5086,6 +5086,32 @@ def _materialize_rule_parts(
                     "animation": animation,
                     "_direction_vector_animation_keys": direction_vector_animation_keys,
                 }
+                raw_obj_metadata = rule.get("obj_metadata")
+                if raw_obj_metadata is not None:
+                    if not isinstance(raw_obj_metadata, Mapping):
+                        raise BuilderError("Scene part obj_metadata must be a mapping")
+                    resolved_obj_metadata = _resolve_inline_mapping(
+                        raw_obj_metadata,
+                        part_context,
+                    )
+                    reserved_obj_metadata_keys = {
+                        "assembly_name",
+                        "assembly_label",
+                        "builder_selector",
+                        "hierarchy",
+                        "hierarchy_labels",
+                        "visibility",
+                        "consumption",
+                    }
+                    conflicting_keys = sorted(
+                        reserved_obj_metadata_keys.intersection(resolved_obj_metadata)
+                    )
+                    if conflicting_keys:
+                        raise BuilderError(
+                            "Scene part obj_metadata cannot override Builder-owned "
+                            "key(s): " + ", ".join(conflicting_keys)
+                        )
+                    base_scene_part["obj_metadata"].update(resolved_obj_metadata)
                 if entry["artifact"] == "non_production_parts" and entry.get(
                     "name"
                 ) in _hidden_by_default_names_from_metadata(target):

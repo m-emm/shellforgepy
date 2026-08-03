@@ -440,6 +440,7 @@ def test_complete_workflow_run_passes_multi_material_parts_to_orca(
     assert "--allow-multicolor-oneplate" in slicer_cmd
     assert slicer_cmd[slicer_cmd.index("--load-filament-ids") + 1] == "1,2"
     assert slicer_cmd[-2:] == [str(tool_0_stl), str(tool_1_stl)]
+    assert manifest["plates"][0]["slicer"]["command"] == slicer_cmd
 
 
 def test_normalize_orca_3mf_filament_metadata_repairs_gui_project_fields(tmp_path):
