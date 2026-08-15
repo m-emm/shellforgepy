@@ -579,10 +579,13 @@ def create_cone(
     height,
     origin=(0.0, 0.0, 0.0),
     direction=(0.0, 0.0, 1.0),
+    angle: Optional[float] = None,
 ):
-    """Create a cone with base ``radius1`` and top ``radius2``."""
+    """Create a cone, optionally using ``angle`` for partial segments."""
     origin_vec = Base.Vector(origin[0], origin[1], origin[2])
     dir_vec = Base.Vector(direction[0], direction[1], direction[2])
+    if angle is not None:
+        return Part.makeCone(radius1, radius2, height, origin_vec, dir_vec, angle)
     return Part.makeCone(radius1, radius2, height, origin_vec, dir_vec)
 
 

@@ -638,9 +638,19 @@ def create_cone(
     height,
     origin=(0.0, 0.0, 0.0),
     direction=(0.0, 0.0, 1.0),
+    angle: Optional[float] = None,
 ):
-    """Create a cone with base ``radius1`` and top ``radius2``."""
+    """Create a cone, optionally using ``angle`` for partial segments."""
 
+    if angle is not None:
+        return cq.Solid.makeCone(
+            radius1,
+            radius2,
+            height,
+            _as_cq_vector(origin),
+            _as_cq_vector(direction),
+            angleDegrees=angle,
+        )
     return cq.Solid.makeCone(
         radius1,
         radius2,

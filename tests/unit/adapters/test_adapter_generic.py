@@ -250,6 +250,10 @@ def test_cylinder_cone_and_sphere_creation():
     cone_size = _bbox_size_tuple(cone)
     assert cone_size[2] == pytest.approx(4.0, abs=1e-6)
 
+    angled_cone = create_cone(3.0, 1.0, 4.0, angle=180.0)
+    full_cone_volume = (1 / 3) * np.pi * 4.0 * (3.0**2 + 3.0 * 1.0 + 1.0**2)
+    assert get_volume(angled_cone) == pytest.approx(full_cone_volume / 2.0, rel=1e-5)
+
     sphere = create_sphere(2.5)
     sphere_size = _bbox_size_tuple(sphere)
     assert np.allclose(sphere_size, (5.0, 5.0, 5.0), atol=1e-6)

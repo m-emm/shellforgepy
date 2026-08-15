@@ -623,8 +623,9 @@ def create_cone(
     height,
     origin=(0.0, 0.0, 0.0),
     direction=(0.0, 0.0, 1.0),
+    angle: Optional[float] = None,
 ):
-    """Create a cone with base ``radius1`` and top ``radius2``."""
+    """Create a cone, optionally using ``angle`` for partial segments."""
 
     return adapter_create_cone(
         radius1,
@@ -632,6 +633,7 @@ def create_cone(
         height,
         origin=origin,
         direction=direction,
+        angle=angle,
     )
 
 
