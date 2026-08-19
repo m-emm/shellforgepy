@@ -1,0 +1,7 @@
+ShellforgepyBuilderVersion: "2026-03-27"
+
+Description: Stage 5 supplier-style M3 threaded-hole construction-drawing example
+
+assemblies:
+  - name: m3_threaded_plate
+    resource_file: m3_threaded_plate_assembly.yaml

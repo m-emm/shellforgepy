@@ -1,3 +1,4 @@
+import math
 from typing import Optional
 
 import numpy as np
@@ -32,6 +33,174 @@ _logger = logging.getLogger(__name__)
 def get_adapter_id():
     """Return a string identifying this adapter."""
     return "freecad"
+
+
+def emit_section_svg(
+    solid,
+    section_plane,
+    parent_svg_group,
+    *,
+    section_thickness=0.0,
+    tolerance=1e-6,
+):
+    """Emit an exact planar section as standard SVG primitives."""
+
+    if Part is None or Base is None:
+        raise RuntimeError("FreeCAD core modules are not available")
+    if float(section_thickness) != 0.0:
+        raise ValueError("FreeCAD Stage 1 supports infinitely thin sections only")
+    if float(tolerance) <= 0:
+        raise ValueError("Section tolerance must be positive")
+
+    from shellforgepy.drawing.construction import append_arc, append_circle, append_line
+
+    origin = _section_vector(section_plane, "origin")
+    normal = _section_vector(section_plane, "normal")
+    right = _section_vector(section_plane, "right")
+    up = _section_vector(section_plane, "up")
+    bbox = solid.BoundBox
+    diagonal = math.sqrt(
+        (bbox.XMax - bbox.XMin) ** 2
+        + (bbox.YMax - bbox.YMin) ** 2
+        + (bbox.ZMax - bbox.ZMin) ** 2
+    )
+    extent = max(2.0 * diagonal, 1.0)
+    plane_origin = (
+        Base.Vector(*origin) - Base.Vector(*right) * extent - Base.Vector(*up) * extent
+    )
+    plane = Part.makePlane(
+        2.0 * extent,
+        2.0 * extent,
+        plane_origin,
+        Base.Vector(*normal),
+    )
+    section = solid.section(plane)
+    edges = list(section.Edges)
+    if not edges:
+        raise ValueError("Requested section does not intersect the selected solid")
+
+    primitives = []
+    for edge in edges:
+        curve = edge.Curve
+        curve_type = curve.__class__.__name__.rsplit(".", 1)[-1]
+        if curve_type == "Line":
+            vertices = list(edge.Vertexes)
+            if len(vertices) != 2:
+                raise ValueError("Section line edge did not have two vertices")
+            start = _section_point(vertices[0].Point, section_plane)
+            end = _section_point(vertices[1].Point, section_plane)
+            if end < start:
+                start, end = end, start
+            primitives.append(("line", start, end))
+        elif curve_type == "Circle":
+            center = _section_point(curve.Center, section_plane)
+            radius = float(curve.Radius)
+            if edge.isClosed():
+                primitives.append(("circle", center, radius))
+            else:
+                vertices = list(edge.Vertexes)
+                if len(vertices) != 2:
+                    raise ValueError("Section arc edge did not have two vertices")
+                start = _section_point(vertices[0].Point, section_plane)
+                end = _section_point(vertices[1].Point, section_plane)
+                first, last = (float(value) for value in edge.ParameterRange)
+                midpoint = _section_point(
+                    curve.value((first + last) / 2.0), section_plane
+                )
+                start_vector = (
+                    start[0] - center[0],
+                    start[1] - center[1],
+                )
+                midpoint_vector = (
+                    midpoint[0] - center[0],
+                    midpoint[1] - center[1],
+                )
+                cross = (
+                    start_vector[0] * midpoint_vector[1]
+                    - start_vector[1] * midpoint_vector[0]
+                )
+                primitives.append(
+                    (
+                        "arc",
+                        center,
+                        radius,
+                        start,
+                        end,
+                        abs(last - first) > math.pi,
+                        cross > 0.0,
+                    )
+                )
+        else:
+            raise NotImplementedError(
+                f"Unsupported exact section curve type from FreeCAD: {curve_type}"
+            )
+
+    primitives.sort(key=_section_primitive_sort_key)
+    for index, primitive in enumerate(primitives):
+        source_edge = f"section-edge-{index}"
+        if primitive[0] == "line":
+            _, start, end = primitive
+            append_line(
+                parent_svg_group,
+                x1=start[0],
+                y1=start[1],
+                x2=end[0],
+                y2=end[1],
+                source_edge=source_edge,
+            )
+        elif primitive[0] == "circle":
+            _, center, radius = primitive
+            append_circle(
+                parent_svg_group,
+                cx=center[0],
+                cy=center[1],
+                radius=radius,
+                source_edge=source_edge,
+            )
+        else:
+            _, center, radius, start, end, large_arc, sweep = primitive
+            append_arc(
+                parent_svg_group,
+                cx=center[0],
+                cy=center[1],
+                radius=radius,
+                start_x=start[0],
+                start_y=start[1],
+                end_x=end[0],
+                end_y=end[1],
+                large_arc=large_arc,
+                sweep=sweep,
+                source_edge=source_edge,
+            )
+
+
+def _section_vector(section_plane, name):
+    value = section_plane.get(name)
+    if value is None or len(value) != 3:
+        raise ValueError(f"Section plane {name!r} must be a 3-element vector")
+    return tuple(float(component) for component in value)
+
+
+def _section_point(point, section_plane):
+    origin = _section_vector(section_plane, "origin")
+    right = _section_vector(section_plane, "right")
+    up = _section_vector(section_plane, "up")
+    relative = tuple(
+        float(getattr(point, axis)) - origin[index]
+        for index, axis in enumerate(("x", "y", "z"))
+    )
+    return (
+        sum(relative[index] * right[index] for index in range(3)),
+        sum(relative[index] * up[index] for index in range(3)),
+    )
+
+
+def _section_primitive_sort_key(primitive):
+    if primitive[0] == "line":
+        return (0, *primitive[1], *primitive[2])
+    if primitive[0] == "circle":
+        return (1, *primitive[1], primitive[2])
+    return (2, *primitive[1], primitive[2], *primitive[3], *primitive[4])
 
 
 def _normalize_scale_factors(factor):

@@ -48,6 +48,7 @@ copy_part = selected_adapter.copy_part
 get_vertex_coordinates = selected_adapter.get_vertex_coordinates
 get_vertex_coordinates_np = selected_adapter.get_vertex_coordinates_np
 tessellate = selected_adapter.tessellate
+emit_section_svg = selected_adapter.emit_section_svg
 __all__ = [
     "apply_fillet_by_alignment",
     "apply_fillet_to_edges",

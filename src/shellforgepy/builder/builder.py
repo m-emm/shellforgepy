@@ -6885,6 +6885,341 @@ def _resolve_preview_options(
     return options
 
 
+def _resolve_construction_drawing_rules(
+    metadata: Mapping[str, Any],
+    resource_data: Mapping[str, Any],
+    mode: str,
+    config_data: Optional[Mapping[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Resolve selector-based construction-drawing requests for one resource."""
+
+    section_name = "Visualization" if mode == "visualization" else "Production"
+    section = _builder_section(
+        resource_data,
+        section_name,
+        config_data,
+        metadata=metadata,
+    )
+    raw_rules = section.get("construction_drawings")
+    if raw_rules is None:
+        return []
+    if not isinstance(raw_rules, list):
+        raise BuilderError(
+            f"Builder.{section_name}.construction_drawings must be a list"
+        )
+
+    from shellforgepy.drawing import make_construction_drawing_request
+
+    context = _metadata_resolution_context(metadata)
+    resolved_rules: List[Dict[str, Any]] = []
+    allowed_keys = {
+        "name",
+        "view",
+        "parts",
+        "units",
+        "scale",
+        "precision",
+        "section_thickness",
+        "visibility",
+        "tolerance",
+        "curve_approximation",
+        "metadata",
+        "frame",
+        "sheet",
+        "annotations",
+        "output",
+    }
+    for index, raw_rule in enumerate(raw_rules, start=1):
+        if not isinstance(raw_rule, Mapping):
+            raise BuilderError(
+                f"Builder.{section_name}.construction_drawings[{index}] must be a mapping"
+            )
+        rule = _resolve_inline_mapping(raw_rule, context)
+        unsupported = sorted(set(rule) - allowed_keys)
+        if unsupported:
+            raise BuilderError(
+                f"Builder.{section_name}.construction_drawings[{index}] has unsupported keys: "
+                + ", ".join(str(key) for key in unsupported)
+            )
+        name = str(rule.get("name") or "").strip()
+        if not name:
+            raise BuilderError(
+                f"Builder.{section_name}.construction_drawings[{index}] requires a name"
+            )
+        parts = rule.get("parts")
+        if not isinstance(parts, list) or not parts:
+            raise BuilderError(
+                f"Builder.{section_name}.construction_drawings[{index}].parts must be a non-empty list"
+            )
+        if rule.get("output", "svg") != "svg":
+            raise BuilderError(
+                f"Builder.{section_name}.construction_drawings[{index}].output supports 'svg' only"
+            )
+        frame = str(rule.get("frame", "none"))
+        if frame not in {"none", "technical"}:
+            raise BuilderError(
+                f"Builder.{section_name}.construction_drawings[{index}].frame supports 'none' or 'technical'"
+            )
+        sheet = rule.get("sheet")
+        if frame == "technical" and sheet is None:
+            sheet = {}
+        if frame == "none" and sheet is not None:
+            raise BuilderError(
+                f"Builder.{section_name}.construction_drawings[{index}].sheet requires frame='technical'"
+            )
+
+        try:
+            request = make_construction_drawing_request(
+                name=name,
+                parts=parts,
+                units=str(rule.get("units", "mm")),
+                scale=float(rule.get("scale", 1.0)),
+                precision=rule.get("precision", 2),
+                view=rule.get("view", "top"),
+                section_thickness=float(rule.get("section_thickness", 0.0)),
+                visibility=str(rule.get("visibility", "visible_edges")),
+                tolerance=float(rule.get("tolerance", 1e-6)),
+                curve_approximation=str(rule.get("curve_approximation", "reject")),
+                metadata=rule.get("metadata"),
+                sheet=sheet,
+                annotations=rule.get("annotations"),
+            )
+        except (TypeError, ValueError) as exc:
+            raise BuilderError(
+                f"Invalid Builder.{section_name}.construction_drawings[{index}]: {exc}"
+            ) from exc
+        resolved_rules.append({"request": request, "selectors": parts})
+    return resolved_rules
+
+
+def _construction_scene_part_matches_selector(
+    scene_part: Mapping[str, Any],
+    selector: Mapping[str, Any],
+    *,
+    selected_assembly: str,
+) -> bool:
+    source = str(selector.get("source", "self"))
+    assembly_name = str(scene_part.get("assembly_name") or "")
+    requested_assembly = selector.get("assembly")
+    if requested_assembly is not None:
+        if assembly_name != str(requested_assembly):
+            return False
+    elif source in {"self", "assembly"}:
+        if assembly_name != selected_assembly:
+            return False
+    elif source in {"dependencies", "dependency", "injected", "inject"}:
+        if assembly_name == selected_assembly:
+            return False
+    elif source not in {"output"}:
+        raise BuilderError(
+            f"Unsupported construction-drawing selector source '{source}'"
+        )
+
+    artifact = str(selector.get("artifact", "leader"))
+    scene_artifact = str(scene_part.get("artifact") or "")
+    if artifact == "all":
+        artifact_matches = True
+    elif "." in artifact:
+        artifact_group, artifact_name = artifact.split(".", 1)
+        artifact_matches = (
+            scene_artifact == artifact_group
+            and str(scene_part.get("name") or "") == artifact_name
+        )
+    else:
+        artifact_matches = scene_artifact == artifact
+    if not artifact_matches:
+        return False
+
+    scene_name = str(scene_part.get("name") or "")
+    requested_name = selector.get("name")
+    if requested_name is not None and scene_name != str(requested_name):
+        return False
+    requested_names = selector.get("names")
+    if requested_names is not None and scene_name not in {
+        str(name) for name in requested_names
+    }:
+        return False
+    excluded_names = selector.get("exclude_names") or []
+    return scene_name not in {str(name) for name in excluded_names}
+
+
+def _render_construction_drawings(
+    *,
+    scene_parts: Sequence[Mapping[str, Any]],
+    rules: Sequence[Mapping[str, Any]],
+    selected_assembly: str,
+    run_directory: Path,
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+    repository_dir: Path,
+    assembly_transforms: Mapping[str, Sequence[Callable[[Any], Any]]],
+) -> List[Dict[str, Any]]:
+    if not rules:
+        return []
+    from shellforgepy.drawing import render_construction_drawing_parts
+
+    rendered: List[Dict[str, Any]] = []
+    for rule in rules:
+        request = dict(rule["request"])
+        selectors = rule["selectors"]
+        selected_parts = [
+            scene_part
+            for selector in selectors
+            for scene_part in scene_parts
+            if _construction_scene_part_matches_selector(
+                scene_part,
+                selector,
+                selected_assembly=selected_assembly,
+            )
+        ]
+        deduplicated_parts = []
+        seen_part_ids = set()
+        for scene_part in selected_parts:
+            part_id = (
+                str(scene_part.get("assembly_name")),
+                str(scene_part.get("artifact")),
+                str(scene_part.get("name")),
+            )
+            if part_id in seen_part_ids:
+                continue
+            seen_part_ids.add(part_id)
+            deduplicated_parts.append(scene_part)
+        if not deduplicated_parts:
+            raise BuilderError(
+                f"Construction drawing '{request['name']}' selectors resolved no scene parts"
+            )
+
+        request["source_assembly"] = selected_assembly
+        annotation_targets = _resolve_construction_annotation_targets(
+            request=request,
+            scene_parts=scene_parts,
+            built_results_by_name=built_results_by_name,
+            repository_dir=repository_dir,
+            assembly_transforms=assembly_transforms,
+        )
+        annotation_records: List[Dict[str, Any]] = []
+        output_name = _safe_name(str(request["name"])) or "construction_drawing"
+        output_path = run_directory / "construction_drawings" / f"{output_name}.svg"
+        render_construction_drawing_parts(
+            deduplicated_parts,
+            request,
+            output_path,
+            annotation_targets=annotation_targets,
+            annotation_records=annotation_records,
+        )
+        rendered_record = {
+            "name": str(request["name"]),
+            "format": "svg",
+            "path": str(output_path.relative_to(run_directory)),
+            "source_assembly": selected_assembly,
+            "parts": [
+                {
+                    "assembly_name": str(part.get("assembly_name")),
+                    "artifact": str(part.get("artifact")),
+                    "name": str(part.get("name")),
+                }
+                for part in deduplicated_parts
+            ],
+            "request": {
+                key: value for key, value in request.items() if key != "source_assembly"
+            },
+        }
+        if annotation_records:
+            rendered_record["annotations"] = annotation_records
+        rendered.append(rendered_record)
+    return rendered
+
+
+def _resolve_construction_annotation_targets(
+    *,
+    request: Mapping[str, Any],
+    scene_parts: Sequence[Mapping[str, Any]],
+    built_results_by_name: Mapping[str, Dict[str, Any]],
+    repository_dir: Path,
+    assembly_transforms: Mapping[str, Sequence[Callable[[Any], Any]]],
+) -> Dict[str, Dict[str, Any]]:
+    raw_annotations = request.get("annotations") or []
+    if not raw_annotations:
+        return {}
+    if not isinstance(raw_annotations, Sequence) or isinstance(
+        raw_annotations, (str, bytes)
+    ):
+        raise BuilderError("Construction drawing annotations must be a list")
+
+    targets: Dict[str, Dict[str, Any]] = {}
+    for scene_part in scene_parts:
+        obj_metadata = scene_part.get("obj_metadata")
+        if not isinstance(obj_metadata, Mapping):
+            continue
+        builder_selector = str(obj_metadata.get("builder_selector") or "").strip()
+        if builder_selector:
+            targets.setdefault(builder_selector, dict(scene_part))
+
+    for annotation in raw_annotations:
+        if not isinstance(annotation, Mapping):
+            raise BuilderError("Construction drawing annotations must be mappings")
+        target_ref = str(annotation.get("target") or "").strip()
+        if not target_ref or target_ref in targets:
+            continue
+        assembly_name, artifact = _construction_annotation_target_selector(target_ref)
+        metadata = built_results_by_name.get(assembly_name)
+        if metadata is None:
+            metadata = _dependency_metadata_for_assembly(
+                assembly_name,
+                built_results_by_name,
+                repository_dir,
+            )
+        entries = _artifact_entries_for_selector(metadata, artifact)
+        if len(entries) != 1:
+            available = _addressable_artifact_selectors(metadata)
+            raise BuilderError(
+                f"Construction drawing annotation target {target_ref!r} did not resolve "
+                f"to exactly one artifact; available selectors for {assembly_name!r}: "
+                f"{available!r}"
+            )
+        entry = entries[0]
+        part = _import_artifact_entry(entry)
+        transforms = assembly_transforms.get(assembly_name, [])
+        if transforms:
+            part = _apply_translation_sequence(part, list(transforms))
+        targets[target_ref] = {
+            "part": part,
+            "name": entry.get("name") or assembly_name,
+            "assembly_name": assembly_name,
+            "artifact": entry.get("artifact"),
+            "source": target_ref,
+            "obj_metadata": {"builder_selector": target_ref},
+        }
+    return targets
+
+
+def _construction_annotation_target_selector(target_ref: str) -> tuple[str, str]:
+    components = target_ref.split(".", 2)
+    if len(components) < 2 or not components[0] or not components[1]:
+        raise BuilderError(
+            f"Construction drawing annotation target {target_ref!r} must be a canonical "
+            "part reference such as 'assembly.leader' or 'assembly.cutters.named_cutter'"
+        )
+    assembly_name, artifact_group = components[0], components[1]
+    if artifact_group in {"leader", "fused"}:
+        if len(components) != 2:
+            raise BuilderError(
+                f"Construction drawing annotation target {target_ref!r} has an invalid "
+                f"{artifact_group!r} path"
+            )
+        return assembly_name, artifact_group
+    if artifact_group not in {"followers", "cutters", "non_production_parts"}:
+        raise BuilderError(
+            f"Construction drawing annotation target {target_ref!r} has unsupported "
+            f"artifact group {artifact_group!r}"
+        )
+    if len(components) != 3 or not components[2]:
+        raise BuilderError(
+            f"Construction drawing annotation target {target_ref!r} requires a named "
+            f"{artifact_group!r} artifact"
+        )
+    return assembly_name, f"{artifact_group}.{components[2]}"
+
+
 def _apply_preview_options_to_workflow_config(
     workflow_config: Dict[str, Any],
     preview_options: Optional[Mapping[str, Any]],
@@ -8309,6 +8644,28 @@ def _export_scene_for_assembly(
             f"No scene parts resolved for assembly '{selected_assembly}' in {mode} mode"
         )
 
+    construction_drawing_rules = _resolve_construction_drawing_rules(
+        selected_metadata,
+        selected_resource_data,
+        mode,
+        config_data,
+    )
+    construction_drawing_records = _render_construction_drawings(
+        scene_parts=scene_parts,
+        rules=construction_drawing_rules,
+        selected_assembly=selected_assembly,
+        run_directory=run_directory,
+        built_results_by_name=built_results_by_name,
+        repository_dir=repository_dir,
+        assembly_transforms=applied_placement.assembly_transforms,
+    )
+    if construction_drawing_records:
+        _logger.info(
+            "Rendered %d construction drawing(s) into %s",
+            len(construction_drawing_records),
+            run_directory / "construction_drawings",
+        )
+
     placed_assemblies_debug_path = run_directory / PLACED_ASSEMBLIES_DEBUG_FILENAME
     placed_debug_start = perf_counter()
     _logger.info(
@@ -8501,6 +8858,8 @@ def _export_scene_for_assembly(
     )
     if architecture_plan_renders:
         manifest["architecture_plan_renders"] = architecture_plan_renders
+    if construction_drawing_records:
+        manifest["construction_drawings"] = construction_drawing_records
     builder_debug = manifest.get("builder_debug")
     if not isinstance(builder_debug, Mapping):
         builder_debug = {}

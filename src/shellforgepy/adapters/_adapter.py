@@ -29,6 +29,9 @@ from shellforgepy.adapters._adapter_bridge import cut_parts as adapter_cut_parts
 from shellforgepy.adapters._adapter_bridge import (
     deserialize_structured_step as adapter_deserialize_structured_step,
 )
+from shellforgepy.adapters._adapter_bridge import (
+    emit_section_svg as adapter_emit_section_svg,
+)
 from shellforgepy.adapters._adapter_bridge import expand_part as adapter_expand_part
 from shellforgepy.adapters._adapter_bridge import (
     export_colored_parts_to_obj as adapter_export_colored_parts_to_obj,
@@ -231,6 +234,25 @@ def tessellate(obj, tolerance=0.1, angular_tolerance=0.1):
     vertices = [_vertex_to_tuple(v) for v in vertices]
     triangles = [tuple(int(idx) for idx in tri) for tri in triangles]
     return vertices, triangles
+
+
+def emit_section_svg(
+    solid,
+    section_plane,
+    parent_svg_group,
+    *,
+    section_thickness=0.0,
+    tolerance=1e-6,
+):
+    """Emit exact section SVG primitives through the active CAD adapter."""
+
+    return adapter_emit_section_svg(
+        solid,
+        section_plane,
+        parent_svg_group,
+        section_thickness=section_thickness,
+        tolerance=tolerance,
+    )
 
 
 def create_solid_from_traditional_face_vertex_maps(

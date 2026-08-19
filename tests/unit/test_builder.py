@@ -2847,6 +2847,103 @@ def test_resolve_preview_options_rejects_invalid_variants(variants, error_text):
         builder._resolve_preview_options({}, resource_data, "visualization")
 
 
+def test_resolve_construction_drawing_rules_preserves_existing_selectors():
+    resource_data = {
+        "Builder": {
+            "Visualization": {
+                "construction_drawings": [
+                    {
+                        "name": "mount_top",
+                        "view": "top",
+                        "parts": [
+                            {
+                                "source": "self",
+                                "artifact": "leader",
+                                "name": "mount",
+                            }
+                        ],
+                        "frame": "technical",
+                        "sheet": {
+                            "format": "A4",
+                            "orientation": "landscape",
+                            "title_block": {"title": "Mount"},
+                        },
+                        "precision": 2,
+                        "annotations": [
+                            {
+                                "id": "mount_width",
+                                "operation": "bounding_box_x_dimension",
+                                "target": "selected.leader",
+                                "placement": {
+                                    "alignments": [
+                                        {
+                                            "alignment": "STACK_FRONT",
+                                            "stack_gap": 8,
+                                        }
+                                    ]
+                                },
+                            }
+                        ],
+                        "output": "svg",
+                    }
+                ]
+            }
+        }
+    }
+
+    rules = builder._resolve_construction_drawing_rules(
+        {}, resource_data, "visualization"
+    )
+
+    assert rules[0]["selectors"] == [
+        {"source": "self", "artifact": "leader", "name": "mount"}
+    ]
+    assert rules[0]["request"]["name"] == "mount_top"
+    assert rules[0]["request"]["curve_approximation"] == "reject"
+    assert rules[0]["request"]["sheet"]["format"] == "A4"
+    assert rules[0]["request"]["sheet"]["title_block"] == {"title": "Mount"}
+    assert rules[0]["request"]["precision"] == 2
+    assert rules[0]["request"]["annotations"] == [
+        {
+            "id": "mount_width",
+            "operation": "bounding_box_x_dimension",
+            "target": "selected.leader",
+            "placement": {
+                "alignments": [{"alignment": "STACK_FRONT", "stack_gap": 8.0}]
+            },
+        }
+    ]
+
+
+def test_construction_selector_separates_self_and_dependency_parts():
+    self_part = {
+        "assembly_name": "selected",
+        "artifact": "leader",
+        "name": "mount",
+    }
+    dependency_part = {
+        "assembly_name": "dependency",
+        "artifact": "followers",
+        "name": "plate",
+    }
+
+    assert builder._construction_scene_part_matches_selector(
+        self_part,
+        {"source": "self", "artifact": "leader", "name": "mount"},
+        selected_assembly="selected",
+    )
+    assert not builder._construction_scene_part_matches_selector(
+        dependency_part,
+        {"source": "self", "artifact": "leader"},
+        selected_assembly="selected",
+    )
+    assert builder._construction_scene_part_matches_selector(
+        dependency_part,
+        {"source": "dependencies", "artifact": "followers.plate"},
+        selected_assembly="selected",
+    )
+
+
 def test_export_scene_for_assembly_applies_preview_overrides_to_workflow_config(
     monkeypatch, tmp_path
 ):

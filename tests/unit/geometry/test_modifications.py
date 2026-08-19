@@ -3,6 +3,7 @@ import logging
 import numpy as np
 import pytest
 import shellforgepy.geometry.modifications as modifications
+import shellforgepy.simple as sf
 from shellforgepy.adapters._adapter import (
     create_box,
     create_cone,
@@ -22,6 +23,7 @@ from shellforgepy.geometry.modifications import (
     projected_footprint_area,
     projected_footprint_paths_area,
     slice_part,
+    take_bite_out_of,
     transform_with_function_tesselating,
     union_projected_footprint_paths,
 )
@@ -33,6 +35,50 @@ from shellforgepy.simple import (
     rotate,
     translate,
 )
+
+
+def test_take_bite_out_of_with_cutter_inside_part():
+    part = create_box(10, 10, 10)
+    cutter = create_box(4, 5, 6, origin=(3, 2.5, 2))
+
+    remaining_part, bite = take_bite_out_of(part, cutter)
+
+    assert np.isclose(get_volume(remaining_part), 880.0, atol=1e-6)
+    assert np.isclose(get_volume(bite), 120.0, atol=1e-6)
+    assert np.isclose(
+        get_volume(remaining_part) + get_volume(bite),
+        get_volume(part),
+        atol=1e-6,
+    )
+
+
+def test_take_bite_out_of_clips_cutter_to_part():
+    part = create_box(10, 10, 10)
+    cutter = create_box(6, 10, 10, origin=(7, 0, 0))
+
+    remaining_part, bite = take_bite_out_of(part, cutter)
+
+    assert np.isclose(get_volume(remaining_part), 700.0, atol=1e-6)
+    assert np.isclose(get_volume(bite), 300.0, atol=1e-6)
+    assert np.isclose(
+        get_volume(remaining_part) + get_volume(bite),
+        get_volume(part),
+        atol=1e-6,
+    )
+
+
+@pytest.mark.parametrize("cutter_x", [10, 11])
+def test_take_bite_out_of_rejects_cutter_that_removes_no_material(cutter_x):
+    part = create_box(10, 10, 10)
+    cutter = create_box(2, 2, 2, origin=(cutter_x, 0, 0))
+
+    with pytest.raises(ValueError, match="Cutter does not remove material from part"):
+        take_bite_out_of(part, cutter)
+
+
+def test_take_bite_out_of_is_exported_from_simple():
+    assert sf.take_bite_out_of is take_bite_out_of
+    assert "take_bite_out_of" in sf.__all__
 
 
 def test_slice_part_basic_functionality():

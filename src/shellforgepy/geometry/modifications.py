@@ -23,6 +23,7 @@ from shellforgepy.construct.construct_utils import (
     normalize,
     shortest_arc_axis_angle,
 )
+from shellforgepy.geometry.higher_order_solids import materialize_bounding_box
 from shellforgepy.geometry.mesh_utils import convert_to_traditional_face_vertex_maps
 from shellforgepy.geometry.spherical_tools import (
     coordinate_system_transform,
@@ -1241,6 +1242,48 @@ def cut_in_two(part, cut_point=None, cut_normal=None, cut_thickness=0):
     upper_part = part.cut(cutter)
     lower_part = part.cut(top_cutter)
     return upper_part, lower_part
+
+
+def take_bite_out_of(part, cutter):
+    """Cut a part and return both the remaining part and removed material.
+
+    The returned tuple is ``(remaining_part, bite)``. The bite is constructed
+    without relying on a CAD-kernel intersection operation: the cutter is
+    removed from an enlarged materialized bounding box around the part, and
+    that complement is then removed from the original part.
+
+    The temporary bounding box is enlarged on every axis by one percent of
+    the part's bounding-box diagonal to avoid coincident boundary faces.
+
+    Raises
+    ------
+    ValueError
+        If the cutter does not remove material from the part.
+    """
+    original_volume = get_volume(part)
+    remaining_part = part.cut(cutter)
+    remaining_volume = get_volume(remaining_part)
+
+    if math.isclose(
+        original_volume,
+        remaining_volume,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    ):
+        raise ValueError("Cutter does not remove material from part")
+
+    bbox_min, bbox_max = get_bounding_box(part)
+    bounding_box_enlargement = math.dist(bbox_min, bbox_max) * 0.01
+    bounding_box = materialize_bounding_box(
+        part,
+        x_enlargement=bounding_box_enlargement,
+        y_enlargement=bounding_box_enlargement,
+        z_enlargement=bounding_box_enlargement,
+    )
+    bite_sized_hole = bounding_box.cut(cutter)
+    bite = part.cut(bite_sized_hole)
+
+    return remaining_part, bite
 
 
 def _line_aabb_intersection_parameters(
