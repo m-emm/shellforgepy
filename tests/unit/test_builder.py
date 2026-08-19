@@ -2938,6 +2938,71 @@ def test_resolve_construction_drawing_rules_preserves_existing_selectors():
     ]
 
 
+def test_resolve_construction_drawing_rules_supports_view_scoped_annotations():
+    resource_data = {
+        "Builder": {
+            "Visualization": {
+                "construction_drawings": [
+                    {
+                        "name": "mount_sheet",
+                        "parts": [
+                            {
+                                "source": "self",
+                                "artifact": "leader",
+                                "name": "mount",
+                            }
+                        ],
+                        "views": [
+                            {"id": "top", "view": "top"},
+                            {
+                                "id": "front",
+                                "view": {
+                                    "normal": [0, -1, 0],
+                                    "up": [0, 0, 1],
+                                    "origin": [20, 0, 4],
+                                },
+                                "annotations": [
+                                    {
+                                        "id": "thickness",
+                                        "operation": "bounding_box_y_dimension",
+                                        "target": "selected.leader",
+                                    }
+                                ],
+                            },
+                        ],
+                        "frame": "technical",
+                        "sheet": {"format": "A4", "orientation": "landscape"},
+                    }
+                ]
+            }
+        }
+    }
+
+    rules = builder._resolve_construction_drawing_rules(
+        {}, resource_data, "visualization"
+    )
+
+    assert "view" not in rules[0]["request"]
+    assert rules[0]["request"]["views"] == [
+        {"id": "top", "view": "top"},
+        {
+            "id": "front",
+            "view": {
+                "normal": [0, -1, 0],
+                "up": [0, 0, 1],
+                "origin": [20, 0, 4],
+            },
+            "annotations": [
+                {
+                    "id": "thickness",
+                    "operation": "bounding_box_y_dimension",
+                    "target": "selected.leader",
+                }
+            ],
+        },
+    ]
+
+
 def test_construction_selector_separates_self_and_dependency_parts():
     self_part = {
         "assembly_name": "selected",

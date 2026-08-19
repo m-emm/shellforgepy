@@ -6927,6 +6927,7 @@ def _resolve_construction_drawing_rules(
         "frame",
         "sheet",
         "annotations",
+        "views",
         "output",
     }
     for index, raw_rule in enumerate(raw_rules, start=1):
@@ -6975,7 +6976,7 @@ def _resolve_construction_drawing_rules(
                 units=str(rule.get("units", "mm")),
                 scale=float(rule.get("scale", 1.0)),
                 precision=rule.get("precision", 2),
-                view=rule.get("view", "top"),
+                view=rule.get("view"),
                 section_thickness=float(rule.get("section_thickness", 0.0)),
                 visibility=str(rule.get("visibility", "visible_edges")),
                 tolerance=float(rule.get("tolerance", 1e-6)),
@@ -6983,6 +6984,7 @@ def _resolve_construction_drawing_rules(
                 metadata=rule.get("metadata"),
                 sheet=sheet,
                 annotations=rule.get("annotations"),
+                views=rule.get("views"),
             )
         except (TypeError, ValueError) as exc:
             raise BuilderError(
@@ -7097,6 +7099,7 @@ def _render_construction_drawings(
             assembly_transforms=assembly_transforms,
         )
         annotation_records: List[Dict[str, Any]] = []
+        drawing_metadata: Dict[str, Any] = {}
         output_name = _safe_name(str(request["name"])) or "construction_drawing"
         output_path = run_directory / "construction_drawings" / f"{output_name}.svg"
         render_construction_drawing_parts(
@@ -7105,6 +7108,7 @@ def _render_construction_drawings(
             output_path,
             annotation_targets=annotation_targets,
             annotation_records=annotation_records,
+            render_metadata=drawing_metadata,
         )
         rendered_record = {
             "name": str(request["name"]),
@@ -7125,6 +7129,8 @@ def _render_construction_drawings(
         }
         if annotation_records:
             rendered_record["annotations"] = annotation_records
+        if drawing_metadata:
+            rendered_record.update(drawing_metadata)
         rendered.append(rendered_record)
     return rendered
 
@@ -7138,6 +7144,16 @@ def _resolve_construction_annotation_targets(
     assembly_transforms: Mapping[str, Sequence[Callable[[Any], Any]]],
 ) -> Dict[str, Dict[str, Any]]:
     raw_annotations = request.get("annotations") or []
+    raw_views = request.get("views") or []
+    if raw_views:
+        if not isinstance(raw_views, Sequence) or isinstance(raw_views, (str, bytes)):
+            raise BuilderError("Construction drawing views must be a list")
+        raw_annotations = [
+            annotation
+            for view in raw_views
+            if isinstance(view, Mapping)
+            for annotation in (view.get("annotations") or [])
+        ]
     if not raw_annotations:
         return {}
     if not isinstance(raw_annotations, Sequence) or isinstance(

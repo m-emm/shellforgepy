@@ -1,14 +1,13 @@
 ShellforgepyBuilderVersion: "2026-03-27"
 
-Description: M3 blind and through tapped-hole construction-drawing plate
+Description: M3 top and front tapped-hole multi-view construction-drawing plate
 
 Parameters: {}
 
 Builder:
   Visualization:
     construction_drawings:
-      - name: m3_threaded_plate_top
-        view: top
+      - name: m3_threaded_plate
         parts:
           - source: self
             artifact: leader
@@ -16,46 +15,80 @@ Builder:
         units: mm
         scale: 1.0
         precision: 2
-        annotations:
-          - id: plate_width
-            operation: bounding_box_x_dimension
-            target: m3_threaded_plate.leader
-            placement:
-              alignments:
-                - alignment: STACK_FRONT
-                  stack_gap: 8
-          - id: plate_height
-            operation: bounding_box_y_dimension
-            target: m3_threaded_plate.leader
+        views:
+          - id: top
+            view:
+              normal: [0, 0, 1]
+              up: [0, 1, 0]
+              origin: [40, 25, 6]
+            annotations:
+              - id: plate_width
+                operation: bounding_box_x_dimension
+                target: m3_threaded_plate.leader
+                placement:
+                  alignments:
+                    - alignment: STACK_FRONT
+                      stack_gap: 8
+              - id: plate_height
+                operation: bounding_box_y_dimension
+                target: m3_threaded_plate.leader
+                placement:
+                  alignments:
+                    - alignment: STACK_RIGHT
+                      stack_gap: 8
+              - id: blind_m3_thread
+                operation: circle_diameter
+                target: m3_threaded_plate.cutters.m3_blind_left
+                quantity: 2
+                diameter_tolerance: "±0.05"
+                thread_size: M3
+                thread_tolerance_class: 6H
+                depth: 6
+                placement:
+                  alignments:
+                    - alignment: STACK_LEFT
+                      stack_gap: 8
+                    - alignment: EDGE_BACK
+              - id: through_m3_thread
+                operation: circle_diameter
+                target: m3_threaded_plate.cutters.m3_through_left
+                quantity: 2
+                thread_size: M3
+                thread_tolerance_class: 6H
+                through: true
+                placement:
+                  alignments:
+                    - alignment: STACK_LEFT
+                      stack_gap: 8
+                    - alignment: EDGE_FRONT
+          - id: front
             placement:
               alignments:
                 - alignment: STACK_RIGHT
-                  stack_gap: 8
-          - id: blind_m3_thread
-            operation: circle_diameter
-            target: m3_threaded_plate.cutters.m3_blind_left
-            quantity: 2
-            diameter_tolerance: "±0.05"
-            thread_size: M3
-            thread_tolerance_class: 6H
-            depth: 6
-            placement:
-              alignments:
-                - alignment: STACK_LEFT
-                  stack_gap: 8
-                - alignment: EDGE_BACK
-          - id: through_m3_thread
-            operation: circle_diameter
-            target: m3_threaded_plate.cutters.m3_through_left
-            quantity: 2
-            thread_size: M3
-            thread_tolerance_class: 6H
-            through: true
-            placement:
-              alignments:
-                - alignment: STACK_LEFT
-                  stack_gap: 8
-                - alignment: EDGE_FRONT
+                  stack_gap: 16
+            view:
+              normal: [0, -1, 0]
+              up: [0, 0, 1]
+              origin: [40, 0, 4]
+            annotations:
+              - id: plate_thickness
+                operation: bounding_box_y_dimension
+                target: m3_threaded_plate.leader
+                placement:
+                  alignments:
+                    - alignment: STACK_RIGHT
+                      stack_gap: 8
+              - id: front_m3_thread
+                operation: circle_diameter
+                target: m3_threaded_plate.cutters.m3_front_center
+                thread_size: M3
+                thread_tolerance_class: 6H
+                depth: 5
+                placement:
+                  alignments:
+                    - alignment: STACK_BACK
+                      stack_gap: 8
+                    - alignment: CENTER
         frame: technical
         sheet:
           format: A4
@@ -68,7 +101,6 @@ Builder:
             revision: A
             material: Aluminum
             units: mm
-            scale: "1:1"
             source: m3_threaded_plate
         output: svg
 

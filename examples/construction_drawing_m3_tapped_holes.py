@@ -33,7 +33,7 @@ def main() -> int:
         / "runs"
         / "m3_threaded_plate_run_latest"
         / "construction_drawings"
-        / "m3_threaded_plate_top.svg"
+        / "m3_threaded_plate.svg"
     )
     print(f"Built M3 tapped-hole drawing: {drawing_path}")
     return result

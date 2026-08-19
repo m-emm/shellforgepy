@@ -205,3 +205,61 @@ Run the M3 tapped-hole technical-sheet example with:
 ```bash
 python examples/construction_drawing_m3_tapped_holes.py
 ```
+
+## Multiple views on one sheet
+
+Use `views` instead of the legacy root-level `view` and `annotations` fields
+when one drawing contains multiple sections. Each view has a stable `id`, its
+own section frame, and only the annotations that belong to that section:
+
+```yaml
+name: m3_threaded_plate
+parts:
+  - source: self
+    artifact: leader
+    name: m3_threaded_plate
+views:
+  - id: top
+    view:
+      normal: [0, 0, 1]
+      up: [0, 1, 0]
+      origin: [40, 25, 6]
+    annotations: []
+  - id: front
+    view:
+      normal: [0, -1, 0]
+      up: [0, 0, 1]
+      origin: [40, 0, 4]
+    annotations:
+      - id: front_tap
+        operation: circle_diameter
+        target: m3_threaded_plate.cutters.m3_front_center
+        thread_size: M3
+        thread_tolerance_class: 6H
+        depth: 5
+```
+
+The first view is centred as the drawing origin. Each later view is placed
+relative to the preceding view with the same 2D `placement.alignments` syntax
+as annotations. The default is `STACK_RIGHT` with a 12 mm gap, so views lay
+out left to right. Use `STACK_LEFT`, `STACK_FRONT`, `STACK_BACK`, or the other
+planar alignments when another orthographic relationship is needed:
+
+```yaml
+- id: front
+  placement:
+    alignments:
+      - alignment: STACK_RIGHT
+        stack_gap: 16
+  view: front
+```
+
+Views share one technical-sheet scale and each annotation is measured and laid
+out only in its owning view's section frame. Technical sheets also reserve a
+5 mm white `drawing_margin` between all drawing content and the viewport frame;
+override `sheet.drawing_margin` only when a different clear border is needed.
+
+Technical sheets select the largest fitting scale from the `1:1`, `1:2`,
+`1:5`, `1:10`, `1:20`, `1:50`, `1:100`, … series. The SVG metadata, workflow
+manifest, sheet metadata, and title block all report the effective scale as
+`1:n (1 mm = n mm)`; a manually supplied title-block scale is not used.

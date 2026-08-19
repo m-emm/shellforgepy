@@ -66,6 +66,41 @@ def _make_linear_dimension_plate_for_drawing_test():
     )
 
 
+def _make_multi_view_plate_for_drawing_test():
+    top_blind_left = create_cylinder(1.25, 7.0, origin=(20.0, 35.0, 2.0))
+    top_blind_right = create_cylinder(1.25, 7.0, origin=(60.0, 35.0, 2.0))
+    top_through_left = create_cylinder(1.25, 10.0, origin=(20.0, 15.0, -1.0))
+    top_through_right = create_cylinder(1.25, 10.0, origin=(60.0, 15.0, -1.0))
+    front_center = create_cylinder(
+        1.25,
+        6.0,
+        origin=(40.0, -1.0, 4.0),
+        direction=(0.0, 1.0, 0.0),
+    )
+    cutters = [
+        top_blind_left,
+        top_blind_right,
+        top_through_left,
+        top_through_right,
+        front_center,
+    ]
+    leader = create_box(80.0, 50.0, 8.0)
+    for cutter in cutters:
+        leader = leader.cut(cutter)
+    return LeaderFollowersCuttersPart(
+        leader=leader,
+        cutters=cutters,
+        cutter_names=[
+            "top_blind_left",
+            "top_blind_right",
+            "top_through_left",
+            "top_through_right",
+            "front_center",
+        ],
+        additional_data={"part_ref_origin": {"assembly_name": "multi_view_test"}},
+    )
+
+
 def test_default_top_frame_is_centered_and_right_handed():
     request = make_construction_drawing_request(
         name="plate_top",
@@ -660,6 +695,231 @@ def test_stage5_circle_callout_uses_tilted_leader_for_arc_target():
     assert leader.attrib["marker-end"] == "url(#arrow)"
     assert float(leader.attrib["x1"]) != float(leader.attrib["x2"])
     assert float(leader.attrib["y1"]) != float(leader.attrib["y2"])
+
+
+def test_multi_view_drawing_uses_one_discrete_scale_and_view_scoped_annotations(
+    tmp_path,
+):
+    assembly = _make_multi_view_plate_for_drawing_test()
+    leader_ref = assembly.part_ref_for_leader()
+    front_ref = assembly.part_ref_for_named_cutter("front_center")
+    request = make_construction_drawing_request(
+        name="multi_view_plate",
+        parts=[{"source": "self", "artifact": "leader", "name": "plate"}],
+        scale=1.0,
+        sheet={
+            "format": "A4",
+            "orientation": "landscape",
+            "title_block": {"title": "Multi-view plate", "scale": "wrong"},
+        },
+        views=[
+            {
+                "id": "top",
+                "view": {
+                    "normal": (0.0, 0.0, 1.0),
+                    "up": (0.0, 1.0, 0.0),
+                    "origin": (40.0, 25.0, 6.0),
+                },
+            },
+            {
+                "id": "front",
+                "view": {
+                    "normal": (0.0, -1.0, 0.0),
+                    "up": (0.0, 0.0, 1.0),
+                    "origin": (40.0, 0.0, 4.0),
+                },
+                "annotations": [
+                    {
+                        "id": "thickness",
+                        "operation": "bounding_box_y_dimension",
+                        "target": leader_ref,
+                    },
+                    {
+                        "id": "front_m3",
+                        "operation": "circle_diameter",
+                        "target": front_ref,
+                        "thread_size": "M3",
+                        "thread_tolerance_class": "6H",
+                        "depth": 5,
+                    },
+                ],
+            },
+        ],
+    )
+    records = []
+    destination = tmp_path / "multi_view_plate.svg"
+
+    render_construction_drawing_parts(
+        [{"part": assembly.leader, "name": "plate", "source": leader_ref}],
+        request,
+        destination,
+        annotation_targets={
+            front_ref: {"part": assembly.get_named_cutter("front_center")}
+        },
+        annotation_records=records,
+    )
+
+    root = ET.fromstring(destination.read_bytes())
+    views = {
+        view.attrib["data-shellforgepy-view-id"]: view
+        for view in root.findall(
+            ".//svg:g[@data-shellforgepy-role='view']", {"svg": SVG_NS}
+        )
+    }
+    assert set(views) == {"top", "front"}
+    top_geometry = views["top"].find(
+        ".//svg:g[@data-shellforgepy-role='geometry']", {"svg": SVG_NS}
+    )
+    front_geometry = views["front"].find(
+        ".//svg:g[@data-shellforgepy-role='geometry']", {"svg": SVG_NS}
+    )
+    assert top_geometry is not None
+    assert front_geometry is not None
+    assert len(top_geometry.findall(f".//{{{SVG_NS}}}circle")) == 4
+    assert len(top_geometry.findall(f".//{{{SVG_NS}}}line")) == 4
+    assert len(front_geometry.findall(f".//{{{SVG_NS}}}circle")) == 1
+    assert len(front_geometry.findall(f".//{{{SVG_NS}}}line")) == 4
+    assert (
+        "scale(1 -1)"
+        in root.find(".//svg:g[@id='shellforgepy-geometry']", {"svg": SVG_NS}).attrib[
+            "transform"
+        ]
+    )
+    top_translation = views["top"].attrib["transform"]
+    front_translation = views["front"].attrib["transform"]
+    top_x = float(top_translation.removeprefix("translate(").split()[0])
+    front_x = float(front_translation.removeprefix("translate(").split()[0])
+    assert front_x > top_x
+    placed_view_bounds = []
+    for view in views.values():
+        geometry = view.find(
+            ".//svg:g[@data-shellforgepy-role='geometry']", {"svg": SVG_NS}
+        )
+        assert geometry is not None
+        elements = [
+            element
+            for element in geometry.iter()
+            if element.tag.rsplit("}", 1)[-1] in {"line", "circle", "path"}
+        ]
+        local_bounds = Bounds2D(*construction_module._section_elements_bounds(elements))
+        tx, ty = (
+            float(value)
+            for value in view.attrib["transform"]
+            .removeprefix("translate(")
+            .removesuffix(")")
+            .split()
+        )
+        placed_view_bounds.append(local_bounds.translated(tx, ty))
+        for annotation in view.findall(
+            ".//svg:g[@data-shellforgepy-role='dimension']", {"svg": SVG_NS}
+        ):
+            placed_view_bounds.append(
+                Bounds2D(
+                    *_bounds_attribute(annotation, "data-shellforgepy-placed-bounds")
+                ).translated(tx, ty)
+            )
+    merged_bounds = construction_module._merge_bounds_2d(*placed_view_bounds)
+    assert merged_bounds.center_x == pytest.approx(0.0)
+    assert merged_bounds.center_y == pytest.approx(0.0)
+    assert root.attrib["data-shellforgepy-scale-ratio"] == "1:1"
+    assert root.attrib["data-shellforgepy-scale-equivalence"] == "1 mm = 1 mm"
+    assert any(
+        text.text == "SCALE: 1:1 (1 mm = 1 mm)"
+        for text in root.findall(f".//{{{SVG_NS}}}text")
+    )
+    assert [
+        (record["id"], record["view_id"], record["formatted_value"])
+        for record in records
+    ] == [
+        ("thickness", "front", "8.00"),
+        ("front_m3", "front", "2.50"),
+    ]
+
+
+def test_multi_view_request_rejects_mixed_or_duplicate_view_declarations():
+    parts = [{"source": "self", "artifact": "leader"}]
+    with pytest.raises(ValueError, match="alternative"):
+        make_construction_drawing_request(
+            name="invalid",
+            parts=parts,
+            view="top",
+            views=[{"id": "top", "view": "top"}],
+        )
+    with pytest.raises(ValueError, match="unique"):
+        make_construction_drawing_request(
+            name="invalid",
+            parts=parts,
+            views=[{"id": "top", "view": "top"}, {"id": "top", "view": "front"}],
+        )
+
+
+@pytest.mark.parametrize(
+    ("bounds", "expected_ratio"),
+    [
+        ((0.0, 0.0, 100.0, 50.0), "1:1"),
+        ((0.0, 0.0, 300.0, 50.0), "1:2"),
+        ((0.0, 0.0, 600.0, 50.0), "1:5"),
+        ((0.0, 0.0, 1500.0, 50.0), "1:10"),
+    ],
+)
+def test_technical_sheet_scale_uses_preferred_discrete_reductions(
+    bounds, expected_ratio
+):
+    sheet = construction_module._normalize_sheet_spec(
+        {"format": "A4", "orientation": "landscape"}
+    )
+    scale = construction_module._select_discrete_sheet_scale(
+        sheet,
+        drawing_bounds=bounds,
+        requested_scale=1.0,
+    )
+    assert construction_module._scale_ratio(scale) == expected_ratio
+
+
+def test_multi_view_placement_accepts_stack_left_and_stack_front():
+    request = make_construction_drawing_request(
+        name="multi",
+        parts=[{"source": "self", "artifact": "leader"}],
+        views=[
+            {"id": "top", "view": "top"},
+            {
+                "id": "left",
+                "view": "front",
+                "placement": {
+                    "alignments": [{"alignment": "STACK_LEFT", "stack_gap": 4}]
+                },
+            },
+            {
+                "id": "front",
+                "view": "front",
+                "placement": {
+                    "alignments": [{"alignment": "STACK_FRONT", "stack_gap": 4}]
+                },
+            },
+        ],
+    )
+
+    assert request["views"][1]["placement"] == {
+        "alignments": [{"alignment": "STACK_LEFT", "stack_gap": 4.0}]
+    }
+    assert request["views"][2]["placement"] == {
+        "alignments": [{"alignment": "STACK_FRONT", "stack_gap": 4.0}]
+    }
+
+
+def test_technical_sheet_content_viewport_has_a_white_drawing_margin():
+    sheet = construction_module._normalize_sheet_spec(
+        {"format": "A4", "orientation": "landscape", "drawing_margin": 5}
+    )
+    viewport = construction_module._technical_viewport(sheet)
+    content = construction_module._technical_content_viewport(sheet)
+
+    assert content == (
+        viewport[0] + 5,
+        viewport[1] + 5,
+        viewport[2] - 10,
+        viewport[3] - 10,
+    )
 
 
 def test_drawing_layout_uses_shellforgepy_planar_alignment_semantics():

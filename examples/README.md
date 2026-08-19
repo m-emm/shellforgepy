@@ -240,16 +240,16 @@ The ultimate demonstration of coordinate transformation capabilities.
 
 #### **M3 Tapped-Hole Technical Drawing** (`construction_drawing_m3_tapped_holes.py`)
 Generate a supplier-style A4 SVG drawing from the same resolved CAD geometry
-used to build the plate. The drawing demonstrates two blind M3 tap-drill holes,
-two through M3 tap-drill holes, explicit outer dimensions, and exact
-geometry-derived diameter callouts.
+used to build the plate. The common-scale sheet demonstrates two blind M3
+tap-drill holes, two through M3 tap-drill holes, a centered 5 mm-deep front
+tap, explicit outer dimensions, and exact geometry-derived diameter callouts.
 
 ```bash
 python examples/construction_drawing_m3_tapped_holes.py
 ```
 
 **Output:**
-- `output/construction_drawing_m3_tapped_holes/runs/m3_threaded_plate_run_latest/construction_drawings/m3_threaded_plate_top.svg`
+- `output/construction_drawing_m3_tapped_holes/runs/m3_threaded_plate_run_latest/construction_drawings/m3_threaded_plate.svg`
 - A workflow manifest beside the drawing, containing each annotation's target,
   measured value, units, and placed layout bounds
 
@@ -259,6 +259,8 @@ python examples/construction_drawing_m3_tapped_holes.py
 - Each leader points to the left hole in its row: `2 X` therefore
   unambiguously identifies the matching horizontal pair, rather than an
   unspecified pair of holes.
+- The common-scale front view documents the centered 5 mm-deep M3 front tap
+  and dimensions the plate thickness.
 - `construction_drawing_m3_tapped_holes_demo/` is the complete builder
   resource, including named cutters and explicit annotation declarations.
 

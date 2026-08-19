@@ -91,12 +91,22 @@ class ConstructionDrawingRequest(TypedDict, total=False):
     scale: Required[float]
     precision: Required[int]
     view: NotRequired[ViewPreset | Mapping[str, object]]
+    views: NotRequired[list["ConstructionDrawingView"]]
     section_thickness: NotRequired[float]
     visibility: NotRequired[str]
     tolerance: NotRequired[float]
     curve_approximation: NotRequired[str]
     metadata: NotRequired[dict[str, str]]
     sheet: NotRequired[Mapping[str, object]]
+    annotations: NotRequired[list["DimensionAnnotation"]]
+
+
+class ConstructionDrawingView(TypedDict, total=False):
+    """One independently sectioned and annotated view on a shared drawing."""
+
+    id: Required[str]
+    view: Required[ViewPreset | Mapping[str, object]]
+    placement: NotRequired[AnnotationPlacement]
     annotations: NotRequired[list["DimensionAnnotation"]]
 
 
@@ -204,6 +214,7 @@ _LINEAR_DIMENSION_EDGES_BY_DIRECTION = {
     "BACK": frozenset({"EDGE_FRONT", "EDGE_BACK"}),
 }
 _LINEAR_DIMENSION_STACK_PITCH = 4.0
+_MULTI_VIEW_STACK_GAP = 12.0
 
 
 def make_construction_drawing_request(
@@ -213,7 +224,7 @@ def make_construction_drawing_request(
     units: str = "mm",
     scale: float = 1.0,
     precision: int = 2,
-    view: ViewPreset | Mapping[str, object] = DEFAULT_SECTION_VIEW,
+    view: ViewPreset | Mapping[str, object] | None = None,
     section_thickness: float = 0.0,
     visibility: str = "visible_edges",
     tolerance: float = 1e-6,
@@ -221,6 +232,7 @@ def make_construction_drawing_request(
     metadata: Mapping[str, str] | None = None,
     sheet: Mapping[str, object] | None = None,
     annotations: Sequence[Mapping[str, object]] | None = None,
+    views: Sequence[Mapping[str, object]] | None = None,
 ) -> ConstructionDrawingRequest:
     """Create and validate a construction-drawing request."""
 
@@ -253,7 +265,15 @@ def make_construction_drawing_request(
             )
         normalized_parts.append(dict(selector))  # type: ignore[arg-type]
 
-    _validate_view_spec(view)
+    if views is not None and (view is not None or annotations is not None):
+        raise ValueError(
+            "Construction drawing views are an alternative to single view/annotations"
+        )
+    if views is None:
+        resolved_view = DEFAULT_SECTION_VIEW if view is None else view
+        _validate_view_spec(resolved_view)
+    else:
+        resolved_view = None
     _validate_nonnegative("section_thickness", section_thickness)
     _validate_nonnegative("tolerance", tolerance)
     if not isinstance(visibility, str) or not visibility.strip():
@@ -272,7 +292,6 @@ def make_construction_drawing_request(
         "units": units,
         "scale": float(scale),
         "precision": precision,
-        "view": dict(view) if isinstance(view, Mapping) else view,
         "section_thickness": float(section_thickness),
         "visibility": visibility,
         "tolerance": float(tolerance),
@@ -282,9 +301,63 @@ def make_construction_drawing_request(
         request["metadata"] = dict(metadata)
     if sheet is not None:
         request["sheet"] = _normalize_sheet_spec(sheet)
+    if views is not None:
+        request["views"] = _normalize_construction_drawing_views(views)
+    else:
+        request["view"] = (
+            dict(resolved_view) if isinstance(resolved_view, Mapping) else resolved_view
+        )
     if annotations is not None:
         request["annotations"] = _normalize_annotations(annotations)
     return request
+
+
+def _normalize_construction_drawing_views(
+    views: Sequence[Mapping[str, object]],
+) -> list[ConstructionDrawingView]:
+    if isinstance(views, (str, bytes)) or not views:
+        raise TypeError("Construction drawing views must be a non-empty list")
+
+    normalized: list[ConstructionDrawingView] = []
+    ids: set[str] = set()
+    for index, raw_view in enumerate(views):
+        if not isinstance(raw_view, Mapping):
+            raise TypeError(f"Construction drawing view {index} must be a mapping")
+        unknown_keys = set(raw_view) - {"id", "view", "placement", "annotations"}
+        if unknown_keys:
+            raise ValueError(
+                f"Construction drawing view {index} contains unsupported keys: "
+                f"{sorted(unknown_keys)!r}"
+            )
+        view_id = str(raw_view.get("id") or "").strip()
+        if not view_id:
+            raise ValueError(f"Construction drawing view {index} requires an id")
+        if view_id in ids:
+            raise ValueError(
+                f"Construction drawing view ids must be unique; duplicate {view_id!r}"
+            )
+        if "view" not in raw_view:
+            raise ValueError(f"Construction drawing view {view_id!r} requires a view")
+        view = raw_view["view"]
+        _validate_view_spec(view)
+        normalized_view: ConstructionDrawingView = {
+            "id": view_id,
+            "view": dict(view) if isinstance(view, Mapping) else view,
+        }
+        if "placement" in raw_view:
+            if index == 0:
+                raise ValueError(
+                    "The first construction drawing view cannot have placement"
+                )
+            normalized_view["placement"] = _normalize_annotation_placement(
+                raw_view["placement"], annotation_id=f"view {view_id!r}"
+            )
+        annotations = raw_view.get("annotations")
+        if annotations is not None:
+            normalized_view["annotations"] = _normalize_annotations(annotations)  # type: ignore[arg-type]
+        normalized.append(normalized_view)
+        ids.add(view_id)
+    return normalized
 
 
 def _normalize_annotations(
@@ -692,9 +765,18 @@ def create_svg_document(
 
     sheet = request.get("sheet")
     sheet_spec = _normalize_sheet_spec(sheet) if sheet is not None else None
+    effective_scale = float(request.get("scale", 1.0))
+    sheet_request = request
     if sheet_spec is None:
         view_box = (min_x, min_y, width, height)
     else:
+        effective_scale = _select_discrete_sheet_scale(
+            sheet_spec,
+            drawing_bounds=(min_x, min_y, width, height),
+            requested_scale=float(request.get("scale", 1.0)),
+        )
+        sheet_request = dict(request)
+        sheet_request["_effective_scale"] = effective_scale
         view_box = (
             0.0,
             0.0,
@@ -708,8 +790,13 @@ def create_svg_document(
         "data-shellforgepy-section-normal": _format_vector(frame["normal"]),
         "data-shellforgepy-section-up": _format_vector(frame["up"]),
         "data-shellforgepy-section-origin": _format_vector(frame["origin"]),
-        "data-shellforgepy-scale": _format_number(float(request.get("scale", 1.0))),
+        "data-shellforgepy-scale": _format_number(effective_scale),
     }
+    if sheet_spec is not None:
+        attrs["data-shellforgepy-scale-ratio"] = _scale_ratio(effective_scale)
+        attrs["data-shellforgepy-scale-equivalence"] = _scale_equivalence(
+            effective_scale
+        )
     if adapter_id is not None:
         attrs["data-shellforgepy-adapter"] = adapter_id
     if source_assembly is not None:
@@ -727,12 +814,13 @@ def create_svg_document(
         _append_technical_sheet(
             root,
             sheet_spec,
-            request=request,
+            request=sheet_request,
         )
         transform = _sheet_geometry_transform(
             sheet_spec,
             drawing_bounds=(min_x, min_y, width, height),
             requested_scale=float(request.get("scale", 1.0)),
+            effective_scale=effective_scale,
         )
     else:
         transform = _svg_y_up_transform(min_y, height)
@@ -871,8 +959,40 @@ def render_construction_drawing_parts(
     *,
     annotation_targets: Mapping[str, Mapping[str, object]] | None = None,
     annotation_records: list[dict[str, object]] | None = None,
+    render_metadata: dict[str, object] | None = None,
 ) -> Path:
-    """Render selected, already-placed scene parts into one SVG document."""
+    """Render one or more selected views into one construction-drawing SVG."""
+
+    if request.get("views"):
+        tree = _render_multi_view_construction_drawing_tree(
+            scene_parts,
+            request,
+            annotation_targets=annotation_targets,
+            annotation_records=annotation_records,
+        )
+    else:
+        tree = _render_single_construction_drawing_tree(
+            scene_parts,
+            request,
+            annotation_targets=annotation_targets,
+            annotation_records=annotation_records,
+        )
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(serialize_svg(tree))
+    if render_metadata is not None:
+        render_metadata.update(_drawing_scale_metadata(tree.getroot()))
+    return destination
+
+
+def _render_single_construction_drawing_tree(
+    scene_parts: Sequence[Mapping[str, object]],
+    request: Mapping[str, object],
+    *,
+    annotation_targets: Mapping[str, Mapping[str, object]] | None = None,
+    annotation_records: list[dict[str, object]] | None = None,
+) -> ET.ElementTree:
+    """Render selected, already-placed scene parts into one SVG tree."""
 
     from shellforgepy.adapters._adapter import (
         emit_section_svg as adapter_emit_section_svg,
@@ -881,7 +1001,6 @@ def render_construction_drawing_parts(
 
     if not scene_parts:
         raise ValueError("Construction drawing requires at least one scene part")
-    destination = Path(destination)
     solids = []
     model_bounds = []
     for index, scene_part in enumerate(scene_parts):
@@ -960,9 +1079,234 @@ def render_construction_drawing_parts(
             records=annotation_records,
         )
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(serialize_svg(tree))
-    return destination
+    _update_technical_sheet_scale(tree, request=request)
+    return tree
+
+
+def _render_multi_view_construction_drawing_tree(
+    scene_parts: Sequence[Mapping[str, object]],
+    request: Mapping[str, object],
+    *,
+    annotation_targets: Mapping[str, Mapping[str, object]] | None,
+    annotation_records: list[dict[str, object]] | None,
+) -> ET.ElementTree:
+    """Compose independently sectioned views into one uniformly scaled SVG."""
+
+    raw_views = request.get("views")
+    if not isinstance(raw_views, Sequence) or isinstance(raw_views, (str, bytes)):
+        raise TypeError("Construction drawing views must be a list")
+    if not raw_views:
+        raise ValueError("Construction drawing views must not be empty")
+
+    from shellforgepy.adapters._adapter import get_adapter_id, get_bounding_box
+
+    model_bounds = [get_bounding_box(scene_part["part"]) for scene_part in scene_parts]
+    combined_model_bounds = _merge_model_bounds(model_bounds)
+    rendered_views: list[dict[str, object]] = []
+    for raw_view in raw_views:
+        assert isinstance(raw_view, Mapping)
+        view_id = str(raw_view["id"])
+        local_request = {
+            key: value
+            for key, value in request.items()
+            if key not in {"views", "sheet", "view", "annotations"}
+        }
+        local_request["name"] = f"{request['name']}_{view_id}"
+        local_request["view"] = raw_view["view"]
+        if "annotations" in raw_view:
+            local_request["annotations"] = raw_view["annotations"]
+        local_records: list[dict[str, object]] = []
+        local_tree = _render_single_construction_drawing_tree(
+            scene_parts,
+            local_request,
+            annotation_targets=annotation_targets,
+            annotation_records=local_records,
+        )
+        local_root = local_tree.getroot()
+        local_geometry = local_root.find(
+            f"./{{{SVG_NS}}}g[@id='shellforgepy-geometry']"
+        )
+        if local_geometry is None:
+            raise RuntimeError(
+                "Construction drawing view geometry group was not emitted"
+            )
+        local_annotations = local_root.find(
+            f"./{{{SVG_NS}}}g[@id='shellforgepy-annotations']"
+        )
+        bounds = _multi_view_content_bounds(local_geometry, local_annotations)
+        frame = resolve_view_frame(local_request, combined_model_bounds)
+        rendered_views.append(
+            {
+                "id": view_id,
+                "frame": frame,
+                "geometry": local_geometry,
+                "annotations": local_annotations,
+                "bounds": bounds,
+                "records": local_records,
+                "view": raw_view["view"],
+                "placement": raw_view.get("placement"),
+            }
+        )
+
+    previous_bounds: Bounds2D | None = None
+    for index, rendered_view in enumerate(rendered_views):
+        bounds = rendered_view["bounds"]
+        assert isinstance(bounds, Bounds2D)
+        if index == 0:
+            placed_bounds = bounds.translated(-bounds.center_x, -bounds.center_y)
+        else:
+            assert previous_bounds is not None
+            placement = rendered_view.get("placement") or {
+                "alignments": [
+                    {
+                        "alignment": Alignment.STACK_RIGHT.name,
+                        "stack_gap": _MULTI_VIEW_STACK_GAP,
+                    }
+                ]
+            }
+            operations = _annotation_layout_operations(
+                placement,
+                default_alignment=Alignment.STACK_RIGHT,
+            )
+            placed_bounds = align_bounds_sequence_2d(
+                bounds, previous_bounds, operations
+            )
+        dx = placed_bounds.min_x - bounds.min_x
+        dy = placed_bounds.min_y - bounds.min_y
+        rendered_view["translation"] = (dx, dy)
+        rendered_view["placed_bounds"] = placed_bounds
+        previous_bounds = placed_bounds
+
+    placed_bounds = [item["placed_bounds"] for item in rendered_views]
+    assert all(isinstance(item, Bounds2D) for item in placed_bounds)
+    merged_bounds = _merge_bounds_2d(*placed_bounds)  # type: ignore[arg-type]
+    # Treat all placed views as one drawing, rather than preserving the first
+    # view as an implicit origin.  This makes the group intrinsically centered
+    # before the common sheet transform centers it in the framed viewport.
+    for rendered_view in rendered_views:
+        dx, dy = rendered_view["translation"]  # type: ignore[misc]
+        rendered_view["translation"] = (
+            dx - merged_bounds.center_x,
+            dy - merged_bounds.center_y,
+        )
+        rendered_view["placed_bounds"] = rendered_view["placed_bounds"].translated(
+            -merged_bounds.center_x,
+            -merged_bounds.center_y,
+        )
+    placed_bounds = [item["placed_bounds"] for item in rendered_views]
+    assert all(isinstance(item, Bounds2D) for item in placed_bounds)
+    drawing_bounds_2d = _merge_bounds_2d(*placed_bounds)  # type: ignore[arg-type]
+    drawing_bounds = (
+        drawing_bounds_2d.min_x,
+        drawing_bounds_2d.min_y,
+        drawing_bounds_2d.max_x - drawing_bounds_2d.min_x,
+        drawing_bounds_2d.max_y - drawing_bounds_2d.min_y,
+    )
+    first_frame = rendered_views[0]["frame"]
+    assert isinstance(first_frame, Mapping)
+    root_request = {
+        key: value for key, value in request.items() if key not in {"views", "view"}
+    }
+    root_request["view"] = "multiple"
+    tree, root_geometry = create_svg_document(
+        root_request,
+        first_frame,  # type: ignore[arg-type]
+        drawing_bounds,
+        adapter_id=get_adapter_id(),
+        source_assembly=(
+            str(request["source_assembly"])
+            if request.get("source_assembly") is not None
+            else None
+        ),
+    )
+    root = tree.getroot()
+    root.set(
+        "data-shellforgepy-views", ",".join(str(item["id"]) for item in rendered_views)
+    )
+    root.set("data-shellforgepy-view-count", str(len(rendered_views)))
+    if any(item["annotations"] is not None for item in rendered_views):
+        _ensure_dimension_arrow_marker(root)
+
+    for rendered_view in rendered_views:
+        view_id = str(rendered_view["id"])
+        dx, dy = rendered_view["translation"]  # type: ignore[misc]
+        group = ET.SubElement(
+            root_geometry,
+            _svg_tag("g"),
+            {
+                "id": _safe_svg_id(f"view-{view_id}"),
+                "data-shellforgepy-role": "view",
+                "data-shellforgepy-view-id": view_id,
+                "data-shellforgepy-view": _view_metadata(rendered_view["view"]),
+                "data-shellforgepy-section-normal": _format_vector(
+                    rendered_view["frame"]["normal"]  # type: ignore[index]
+                ),
+                "data-shellforgepy-section-up": _format_vector(
+                    rendered_view["frame"]["up"]  # type: ignore[index]
+                ),
+                "data-shellforgepy-section-origin": _format_vector(
+                    rendered_view["frame"]["origin"]  # type: ignore[index]
+                ),
+                "transform": f"translate({_format_number(dx)} {_format_number(dy)})",
+            },
+        )
+        view_content = [rendered_view["geometry"]]
+        if rendered_view["annotations"] is not None:
+            view_content.append(rendered_view["annotations"])
+        _prefix_svg_ids(view_content, prefix=f"view-{view_id}-")
+        for content in view_content:
+            assert isinstance(content, ET.Element)
+            content.attrib.pop("transform", None)
+            group.append(content)
+        if annotation_records is not None:
+            for record in rendered_view["records"]:  # type: ignore[union-attr]
+                record["view_id"] = view_id
+                annotation_records.append(record)
+
+    # ``drawing_bounds`` above already represents the placed union of every
+    # view and annotation.  ``create_svg_document`` therefore centers that
+    # complete, merged footprint in the technical viewport.  Do not recompute
+    # it from nested SVG elements here: their per-view translations are local
+    # transforms and would incorrectly center only their unplaced coordinates.
+    return tree
+
+
+def _multi_view_content_bounds(
+    geometry: ET.Element,
+    annotations: ET.Element | None,
+) -> Bounds2D:
+    elements = [
+        element
+        for element in geometry.iter()
+        if _local_name(element.tag) in {"line", "circle", "path"}
+    ]
+    bounds = [Bounds2D(*_section_elements_bounds(elements))]
+    if annotations is not None:
+        for annotation in annotations.findall(
+            f".//{{{SVG_NS}}}g[@data-shellforgepy-role='dimension']"
+        ):
+            placed = annotation.attrib.get("data-shellforgepy-placed-bounds")
+            if placed is not None:
+                bounds.append(Bounds2D(*_parse_bounds(placed)))
+    return _merge_bounds_2d(*bounds)
+
+
+def _prefix_svg_ids(elements: Sequence[ET.Element], *, prefix: str) -> None:
+    replacements: dict[str, str] = {}
+    for element in elements:
+        for child in element.iter():
+            identifier = child.attrib.get("id")
+            if identifier:
+                replacements[identifier] = _safe_svg_id(f"{prefix}{identifier}")
+    for element in elements:
+        for child in element.iter():
+            identifier = child.attrib.get("id")
+            if identifier:
+                child.attrib["id"] = replacements[identifier]
+            for key, value in tuple(child.attrib.items()):
+                for old, new in replacements.items():
+                    value = value.replace(f"url(#{old})", f"url(#{new})")
+                child.attrib[key] = value
 
 
 def _annotation_target_map(
@@ -2454,6 +2798,97 @@ def _format_bounds(bounds: tuple[float, float, float, float]) -> str:
     return ",".join(_format_number(value) for value in bounds)
 
 
+def _parse_bounds(value: str) -> tuple[float, float, float, float]:
+    parsed = tuple(float(item) for item in value.split(","))
+    if len(parsed) != 4:
+        raise ValueError(f"Expected four drawing bounds values; got {value!r}")
+    return parsed  # type: ignore[return-value]
+
+
+def _effective_scale_label(request: Mapping[str, object]) -> str:
+    scale = float(request.get("_effective_scale", request.get("scale", 1.0)))
+    return f"{_scale_ratio(scale)} ({_scale_equivalence(scale)})"
+
+
+def _drawing_scale_metadata(root: ET.Element) -> dict[str, object]:
+    return {
+        "effective_scale": float(root.attrib["data-shellforgepy-scale"]),
+        "scale_ratio": root.attrib.get("data-shellforgepy-scale-ratio", "1:1"),
+        "scale_equivalence": root.attrib.get(
+            "data-shellforgepy-scale-equivalence", "1 mm = 1 mm"
+        ),
+    }
+
+
+def _update_technical_sheet_scale(
+    tree: ET.ElementTree,
+    *,
+    request: Mapping[str, object],
+) -> None:
+    """Apply the shared discrete scale after all annotation footprints exist."""
+
+    sheet = request.get("sheet")
+    if sheet is None:
+        return
+    sheet_spec = _normalize_sheet_spec(sheet)
+    root = tree.getroot()
+    geometry = root.find(f"./{{{SVG_NS}}}g[@id='shellforgepy-geometry']")
+    if geometry is None:
+        return
+    content_bounds = _drawing_tree_content_bounds(root, geometry)
+    drawing_bounds = (
+        content_bounds.min_x,
+        content_bounds.min_y,
+        content_bounds.max_x - content_bounds.min_x,
+        content_bounds.max_y - content_bounds.min_y,
+    )
+    scale = _select_discrete_sheet_scale(
+        sheet_spec,
+        drawing_bounds=drawing_bounds,
+        requested_scale=float(request.get("scale", 1.0)),
+    )
+    transform = _sheet_geometry_transform(
+        sheet_spec,
+        drawing_bounds=drawing_bounds,
+        requested_scale=float(request.get("scale", 1.0)),
+        effective_scale=scale,
+    )
+    geometry.attrib["transform"] = transform
+    annotations = root.find(f"./{{{SVG_NS}}}g[@id='shellforgepy-annotations']")
+    if annotations is not None:
+        annotations.attrib["transform"] = transform
+    root.attrib["data-shellforgepy-scale"] = _format_number(scale)
+    root.attrib["data-shellforgepy-scale-ratio"] = _scale_ratio(scale)
+    root.attrib["data-shellforgepy-scale-equivalence"] = _scale_equivalence(scale)
+    effective_request = dict(request)
+    effective_request["_effective_scale"] = scale
+    for text in root.findall(f".//{{{SVG_NS}}}text"):
+        role = text.attrib.get("data-shellforgepy-role")
+        if role == "metadata-text" and (text.text or "").startswith("UNITS:"):
+            text.text = (
+                f"UNITS: {request.get('units', 'mm')}   "
+                f"SCALE: {_effective_scale_label(effective_request)}"
+            )
+        elif role == "title-block-field" and (text.text or "").startswith("SCALE:"):
+            text.text = f"SCALE: {_effective_scale_label(effective_request)}"
+
+
+def _drawing_tree_content_bounds(root: ET.Element, geometry: ET.Element) -> Bounds2D:
+    elements = [
+        element
+        for element in geometry.iter()
+        if _local_name(element.tag) in {"line", "circle", "path"}
+    ]
+    bounds = [Bounds2D(*_section_elements_bounds(elements))]
+    for annotation in root.findall(
+        f".//{{{SVG_NS}}}g[@data-shellforgepy-role='dimension']"
+    ):
+        placed = annotation.attrib.get("data-shellforgepy-placed-bounds")
+        if placed is not None:
+            bounds.append(Bounds2D(*_parse_bounds(placed)))
+    return _merge_bounds_2d(*bounds)
+
+
 def _local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
@@ -2497,6 +2932,7 @@ def _normalize_sheet_spec(sheet: Mapping[str, object]) -> dict[str, object]:
         "title_block",
         "width",
         "height",
+        "drawing_margin",
     }
     unknown = set(sheet) - allowed_keys
     if unknown:
@@ -2517,6 +2953,11 @@ def _normalize_sheet_spec(sheet: Mapping[str, object]) -> dict[str, object]:
     border = sheet.get("border", True)
     if not isinstance(border, bool):
         raise TypeError("Technical drawing sheet border must be boolean")
+    drawing_margin = float(sheet.get("drawing_margin", 5.0))
+    if not math.isfinite(drawing_margin) or drawing_margin < 0:
+        raise ValueError(
+            "Technical drawing sheet drawing_margin must be non-negative and finite"
+        )
     title_block = sheet.get("title_block", {})
     if not isinstance(title_block, Mapping):
         raise TypeError("Technical drawing sheet title_block must be a mapping")
@@ -2532,6 +2973,7 @@ def _normalize_sheet_spec(sheet: Mapping[str, object]) -> dict[str, object]:
         "orientation": orientation,
         "margin": margin,
         "border": border,
+        "drawing_margin": drawing_margin,
         "title_block": normalized_title_block,
         "width": width,
         "height": height,
@@ -2624,7 +3066,10 @@ def _append_technical_sheet(
         group,
         x=info_x + 2.0,
         y=info_y + 9.0,
-        value=f"UNITS: {request.get('units', 'mm')}   SCALE: {request.get('scale', 1.0)}",
+        value=(
+            f"UNITS: {request.get('units', 'mm')}   "
+            f"SCALE: {_effective_scale_label(request)}"
+        ),
         role="metadata-text",
         size=2.7,
         anchor="start",
@@ -2669,20 +3114,45 @@ def _technical_viewport(
     return (x, y, viewport_width, viewport_height)
 
 
+def _technical_content_viewport(
+    sheet: Mapping[str, object],
+) -> tuple[float, float, float, float]:
+    """Return the white-margin inset where drawing content may be placed."""
+
+    x, y, width, height = _technical_viewport(sheet)
+    drawing_margin = float(sheet["drawing_margin"])
+    content_width = width - 2.0 * drawing_margin
+    content_height = height - 2.0 * drawing_margin
+    if content_width <= 0 or content_height <= 0:
+        raise ValueError(
+            "Technical drawing sheet drawing_margin leaves no content area"
+        )
+    return (
+        x + drawing_margin,
+        y + drawing_margin,
+        content_width,
+        content_height,
+    )
+
+
 def _sheet_geometry_transform(
     sheet: Mapping[str, object],
     *,
     drawing_bounds: DrawingBounds,
     requested_scale: float,
+    effective_scale: float | None = None,
 ) -> str:
     min_x, min_y, drawing_width, drawing_height = drawing_bounds
-    viewport_x, viewport_y, viewport_width, viewport_height = _technical_viewport(sheet)
-    # The drawing remains at the requested scale unless it cannot fit the sheet
-    # viewport. Geometry element coordinates remain unchanged.
-    fit_scale = min(viewport_width / drawing_width, viewport_height / drawing_height)
-    scale = min(requested_scale, fit_scale)
-    if requested_scale > fit_scale:
-        scale *= 0.92
+    viewport_x, viewport_y, viewport_width, viewport_height = (
+        _technical_content_viewport(sheet)
+    )
+    scale = effective_scale
+    if scale is None:
+        scale = _select_discrete_sheet_scale(
+            sheet,
+            drawing_bounds=drawing_bounds,
+            requested_scale=requested_scale,
+        )
     offset_x = viewport_x + (viewport_width - drawing_width * scale) / 2.0
     offset_y = viewport_y + (viewport_height - drawing_height * scale) / 2.0
     return (
@@ -2690,6 +3160,40 @@ def _sheet_geometry_transform(
         f"{_format_number(offset_y + scale * (min_y + drawing_height))}) "
         f"scale({_format_number(scale)} {_format_number(-scale)})"
     )
+
+
+def _select_discrete_sheet_scale(
+    sheet: Mapping[str, object],
+    *,
+    drawing_bounds: DrawingBounds,
+    requested_scale: float,
+) -> float:
+    """Select the largest fitting reduction from the preferred 1-2-5 series."""
+
+    _, _, drawing_width, drawing_height = drawing_bounds
+    viewport = _technical_content_viewport(sheet)
+    fit_scale = min(viewport[2] / drawing_width, viewport[3] / drawing_height)
+    limit = min(float(requested_scale), fit_scale)
+    if not math.isfinite(limit) or limit <= 0:
+        raise ValueError("Construction drawing cannot fit the technical sheet")
+    multiplier = 1
+    while True:
+        for base in (1, 2, 5):
+            denominator = base * multiplier
+            scale = 1.0 / denominator
+            if scale <= limit + 1e-12:
+                return scale
+        multiplier *= 10
+
+
+def _scale_ratio(scale: float) -> str:
+    denominator = round(1.0 / scale)
+    return f"1:{denominator}"
+
+
+def _scale_equivalence(scale: float) -> str:
+    denominator = round(1.0 / scale)
+    return f"1 mm = {denominator} mm"
 
 
 def _append_sheet_rect(
@@ -2774,7 +3278,7 @@ def _append_sheet_title_block(
     revision = title_block.get("revision", "-")
     material = title_block.get("material", "-")
     units = title_block.get("units", str(request.get("units", "mm")))
-    scale = title_block.get("scale", str(request.get("scale", 1.0)))
+    scale = _effective_scale_label(request)
     source = _truncate_sheet_value(
         title_block.get("source", str(request.get("source_assembly", "-"))),
         max_chars=24,
