@@ -54,6 +54,18 @@ def _make_annotation_plate_for_drawing_test():
     )
 
 
+def _make_linear_dimension_plate_for_drawing_test():
+    cutout_reference = create_box(30.0, 20.0, 7.0, origin=(25.0, 5.0, -1.0))
+    leader = create_box(80.0, 30.0, 5.0).cut(cutout_reference)
+    return LeaderFollowersCuttersPart(
+        leader=leader,
+        non_production_parts=[cutout_reference],
+        non_production_names=["cutout_reference"],
+        hidden_by_default_names=["cutout_reference"],
+        additional_data={"part_ref_origin": {"assembly_name": "linear_drawing_test"}},
+    )
+
+
 def test_default_top_frame_is_centered_and_right_handed():
     request = make_construction_drawing_request(
         name="plate_top",
@@ -666,6 +678,242 @@ def test_stage5_plain_circle_callout_supports_through_and_depth_suffixes():
         annotation={"depth": 4},
         precision=2,
     ) == ("⌀3.60 ↧ 4.00",)
+
+
+def test_stage6_linear_dimensions_resolve_hidden_references_and_nest_by_span(tmp_path):
+    assembly = _make_linear_dimension_plate_for_drawing_test()
+    leader_ref = assembly.part_ref_for_leader()
+    cutout_ref = assembly.part_ref_for_named_non_production_part("cutout_reference")
+    assert "cutout_reference" in assembly.hidden_by_default_names
+    request = make_construction_drawing_request(
+        name="linear_web_dimensions",
+        parts=[{"source": "self", "artifact": "leader", "name": "plate"}],
+        annotations=[
+            {
+                "id": "overall_width",
+                "operation": "bounding_box_x_dimension",
+                "target": leader_ref,
+                "placement": {
+                    "alignments": [{"alignment": "STACK_FRONT", "stack_gap": 8.0}]
+                },
+            },
+            {
+                "id": "left_web",
+                "operation": "linear_dimension",
+                "from": {"target": leader_ref, "edge": "EDGE_LEFT"},
+                "to": {"target": cutout_ref, "edge": "EDGE_LEFT"},
+                "dimension_direction": "RIGHT",
+                "placement": {
+                    "alignments": [{"alignment": "STACK_FRONT", "stack_gap": 6.0}]
+                },
+            },
+            {
+                "id": "right_web",
+                "operation": "linear_dimension",
+                "from": {"target": cutout_ref, "edge": "EDGE_RIGHT"},
+                "to": {"target": leader_ref, "edge": "EDGE_RIGHT"},
+                "dimension_direction": "RIGHT",
+                "placement": {
+                    "alignments": [{"alignment": "STACK_FRONT", "stack_gap": 6.0}]
+                },
+            },
+        ],
+    )
+    records = []
+    destination = tmp_path / "linear_web_dimensions.svg"
+
+    render_construction_drawing_parts(
+        [{"part": assembly.leader, "name": "plate", "source": leader_ref}],
+        request,
+        destination,
+        annotation_targets={
+            cutout_ref: {
+                "part": assembly.get_named_non_production_part("cutout_reference"),
+                "source": cutout_ref,
+            }
+        },
+        annotation_records=records,
+    )
+
+    root = ET.fromstring(destination.read_bytes())
+    dimensions = {
+        element.attrib["data-shellforgepy-annotation-id"]: element
+        for element in root.findall(
+            ".//svg:g[@data-shellforgepy-role='dimension']", {"svg": SVG_NS}
+        )
+    }
+    left_web = dimensions["left_web"]
+    right_web = dimensions["right_web"]
+    overall_width = dimensions["overall_width"]
+    assert left_web.attrib["data-shellforgepy-from-target"] == leader_ref
+    assert left_web.attrib["data-shellforgepy-to-target"] == cutout_ref
+    assert left_web.attrib["data-shellforgepy-from-edge"] == "EDGE_LEFT"
+    assert left_web.attrib["data-shellforgepy-to-edge"] == "EDGE_LEFT"
+    assert left_web.attrib["data-shellforgepy-dimension-direction"] == "RIGHT"
+    assert left_web.attrib["data-shellforgepy-value"] == "25.00"
+    assert right_web.attrib["data-shellforgepy-value"] == "25.00"
+    assert overall_width.attrib["data-shellforgepy-value"] == "80.00"
+
+    overall_rule = overall_width.find(".//svg:line[@marker-start]", {"svg": SVG_NS})
+    left_rule = left_web.find(".//svg:line[@marker-start]", {"svg": SVG_NS})
+    right_rule = right_web.find(".//svg:line[@marker-start]", {"svg": SVG_NS})
+    assert overall_rule is not None
+    assert left_rule is not None
+    assert right_rule is not None
+    assert float(overall_rule.attrib["y1"]) < float(left_rule.attrib["y1"])
+    assert float(overall_rule.attrib["y1"]) < float(right_rule.attrib["y1"])
+    overall_extensions = overall_width.findall(
+        ".//svg:line[@data-shellforgepy-role='dimension-extension']",
+        {"svg": SVG_NS},
+    )
+    left_extensions = left_web.findall(
+        ".//svg:line[@data-shellforgepy-role='dimension-extension']",
+        {"svg": SVG_NS},
+    )
+    assert min(
+        abs(float(line.attrib["y2"]) - float(line.attrib["y1"]))
+        for line in overall_extensions
+    ) > max(
+        abs(float(line.attrib["y2"]) - float(line.attrib["y1"]))
+        for line in left_extensions
+    )
+    assert records[1]["from"] == {
+        "target": leader_ref,
+        "edge": "EDGE_LEFT",
+        "projected_coordinate": -40.0,
+    }
+    assert records[1]["to"] == {
+        "target": cutout_ref,
+        "edge": "EDGE_LEFT",
+        "projected_coordinate": -15.0,
+    }
+    assert records[1]["dimension_direction"] == "RIGHT"
+    assert records[1]["from_target_bounds"] == [-40.0, -15.0, 40.0, 15.0]
+    assert records[1]["to_target_bounds"] == [-15.0, -10.0, 15.0, 10.0]
+    assert records[1]["visible_scene_layout_bounds"] == [-40.0, -15.0, 40.0, 15.0]
+    assert records[1]["rule_bounds"] == [-40.0, -21.0, -15.0, -21.0]
+
+
+def test_stage6_linear_dimension_rejects_wrong_direction_edge_and_endpoint_order(
+    tmp_path,
+):
+    parts = [{"source": "self", "artifact": "leader", "name": "plate"}]
+    with pytest.raises(ValueError, match="dimension_direction must be one of"):
+        make_construction_drawing_request(
+            name="invalid_direction",
+            parts=parts,
+            annotations=[
+                {
+                    "id": "invalid",
+                    "operation": "linear_dimension",
+                    "from": {"target": "test.leader", "edge": "EDGE_LEFT"},
+                    "to": {"target": "test.leader", "edge": "EDGE_RIGHT"},
+                    "dimension_direction": "LEFT",
+                }
+            ],
+        )
+    with pytest.raises(ValueError, match="must be one of"):
+        make_construction_drawing_request(
+            name="invalid_edge",
+            parts=parts,
+            annotations=[
+                {
+                    "id": "invalid",
+                    "operation": "linear_dimension",
+                    "from": {"target": "test.leader", "edge": "EDGE_FRONT"},
+                    "to": {"target": "test.leader", "edge": "EDGE_RIGHT"},
+                    "dimension_direction": "RIGHT",
+                }
+            ],
+        )
+    request = make_construction_drawing_request(
+        name="invalid_order",
+        parts=parts,
+        annotations=[
+            {
+                "id": "invalid",
+                "operation": "linear_dimension",
+                "from": {"target": "test.leader", "edge": "EDGE_RIGHT"},
+                "to": {"target": "test.reference", "edge": "EDGE_LEFT"},
+                "dimension_direction": "RIGHT",
+            }
+        ],
+    )
+    with pytest.raises(ValueError, match="requires from_x <= to_x"):
+        render_construction_drawing_parts(
+            [{"part": create_box(20.0, 10.0, 5.0), "source": "test.leader"}],
+            request,
+            tmp_path / "invalid_order.svg",
+            annotation_targets={"test.reference": {"part": create_box(5.0, 5.0, 5.0)}},
+        )
+
+
+def test_stage6_back_dimensions_use_projected_y_edges_and_vertical_nesting(tmp_path):
+    assembly = _make_linear_dimension_plate_for_drawing_test()
+    leader_ref = assembly.part_ref_for_leader()
+    cutout_ref = assembly.part_ref_for_named_non_production_part("cutout_reference")
+    request = make_construction_drawing_request(
+        name="back_dimension",
+        parts=[{"source": "self", "artifact": "leader", "name": "plate"}],
+        annotations=[
+            {
+                "id": "overall_height",
+                "operation": "bounding_box_y_dimension",
+                "target": leader_ref,
+                "placement": {
+                    "alignments": [{"alignment": "STACK_LEFT", "stack_gap": 8.0}]
+                },
+            },
+            {
+                "id": "cutout_to_front",
+                "operation": "linear_dimension",
+                "from": {"target": cutout_ref, "edge": "EDGE_BACK"},
+                "to": {"target": leader_ref, "edge": "EDGE_FRONT"},
+                "dimension_direction": "BACK",
+                "placement": {
+                    "alignments": [{"alignment": "STACK_LEFT", "stack_gap": 6.0}]
+                },
+            },
+        ],
+    )
+    records = []
+    destination = tmp_path / "back_dimension.svg"
+
+    render_construction_drawing_parts(
+        [{"part": assembly.leader, "name": "plate", "source": leader_ref}],
+        request,
+        destination,
+        annotation_targets={
+            cutout_ref: {
+                "part": assembly.get_named_non_production_part("cutout_reference"),
+                "source": cutout_ref,
+            }
+        },
+        annotation_records=records,
+    )
+
+    root = ET.fromstring(destination.read_bytes())
+    dimensions = {
+        element.attrib["data-shellforgepy-annotation-id"]: element
+        for element in root.findall(
+            ".//svg:g[@data-shellforgepy-role='dimension']", {"svg": SVG_NS}
+        )
+    }
+    cutout_to_front = dimensions["cutout_to_front"]
+    overall_height = dimensions["overall_height"]
+    assert cutout_to_front.attrib["data-shellforgepy-dimension-direction"] == "BACK"
+    assert cutout_to_front.attrib["data-shellforgepy-from-edge"] == "EDGE_BACK"
+    assert cutout_to_front.attrib["data-shellforgepy-to-edge"] == "EDGE_FRONT"
+    assert cutout_to_front.attrib["data-shellforgepy-from-coordinate"] == "10"
+    assert cutout_to_front.attrib["data-shellforgepy-to-coordinate"] == "-15"
+    assert cutout_to_front.attrib["data-shellforgepy-value"] == "25.00"
+    back_rule = cutout_to_front.find(".//svg:line[@marker-start]", {"svg": SVG_NS})
+    overall_rule = overall_height.find(".//svg:line[@marker-start]", {"svg": SVG_NS})
+    assert back_rule is not None
+    assert overall_rule is not None
+    assert float(overall_rule.attrib["x1"]) < float(back_rule.attrib["x1"])
+    assert records[1]["dimension_direction"] == "BACK"
+    assert records[1]["value"] == 25.0
 
 
 @pytest.mark.parametrize(

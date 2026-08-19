@@ -2882,7 +2882,20 @@ def test_resolve_construction_drawing_rules_preserves_existing_selectors():
                                         }
                                     ]
                                 },
-                            }
+                            },
+                            {
+                                "id": "left_web",
+                                "operation": "linear_dimension",
+                                "from": {
+                                    "target": "selected.leader",
+                                    "edge": "EDGE_LEFT",
+                                },
+                                "to": {
+                                    "target": "selected.non_production_parts.cutout",
+                                    "edge": "EDGE_LEFT",
+                                },
+                                "dimension_direction": "RIGHT",
+                            },
                         ],
                         "output": "svg",
                     }
@@ -2911,7 +2924,17 @@ def test_resolve_construction_drawing_rules_preserves_existing_selectors():
             "placement": {
                 "alignments": [{"alignment": "STACK_FRONT", "stack_gap": 8.0}]
             },
-        }
+        },
+        {
+            "id": "left_web",
+            "operation": "linear_dimension",
+            "from": {"target": "selected.leader", "edge": "EDGE_LEFT"},
+            "to": {
+                "target": "selected.non_production_parts.cutout",
+                "edge": "EDGE_LEFT",
+            },
+            "dimension_direction": "RIGHT",
+        },
     ]
 
 

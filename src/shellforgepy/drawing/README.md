@@ -1,4 +1,4 @@
-# Construction drawing Stages 0-5
+# Construction drawing Stages 0-6
 
 Stage 0 established the request and coordinate boundary for the SVG
 construction-drawing pipeline. Stage 1 adds the first exact section
@@ -164,6 +164,40 @@ non-circular geometry is rejected.
 The SVG dimension group and workflow manifest both retain the canonical target
 path, operation, exact value, target bounds, visible layout bounds, and placed
 annotation bounds.
+
+## Linear dimensions between named projected parts
+
+Stage 6 adds `linear_dimension` for two explicitly named projected envelopes.
+It is deliberately not a CAD-edge selector. `RIGHT` accepts `EDGE_LEFT` and
+`EDGE_RIGHT`, measures `to_x - from_x`, and requires the endpoints to be
+left-to-right. `BACK` accepts `EDGE_FRONT` and `EDGE_BACK`, measures
+`from_y - to_y`, and requires the endpoints to be back-to-front. The renderer
+rejects a reversed pair instead of silently swapping it.
+
+```yaml
+  - id: left_web_width
+    operation: linear_dimension
+    from:
+      target: tool_head_mount_machined_bottom_assembly.leader
+      edge: EDGE_LEFT
+    to:
+      target: tool_head_mount_machined_bottom_assembly.non_production_parts.extruder_cutout_reference
+      edge: EDGE_LEFT
+    dimension_direction: RIGHT
+    placement:
+      alignments:
+        - alignment: STACK_FRONT
+          stack_gap: 6
+```
+
+Named non-production parts are valid endpoints even when their viewer metadata
+marks them hidden by default; they are not added to the visible drawing
+geometry. For horizontal dimensions on the same `STACK_FRONT` or `STACK_BACK`
+side, shorter spans are nearest the visible part and longer spans move outward
+by a fixed drawing-style pitch. This includes explicit outer X dimensions, so
+an overall width remains outside the shorter web dimensions. SVG metadata and
+the workflow manifest retain both endpoint paths, edge selectors, projected
+coordinates, visible layout bounds, and final rule/label bounds.
 
 Run the user-facing pinch-through with:
 

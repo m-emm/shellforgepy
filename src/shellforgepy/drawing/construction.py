@@ -113,8 +113,15 @@ class AnnotationPlacement(TypedDict):
     alignments: list[AnnotationAlignment]
 
 
+class LinearDimensionEndpoint(TypedDict):
+    """One explicit projected-envelope endpoint for a linear dimension."""
+
+    target: str
+    edge: str
+
+
 class DimensionAnnotation(TypedDict, total=False):
-    """Stage 5 dimension declaration.
+    """Explicit construction-drawing dimension declaration.
 
     The callout fields deliberately live on ``circle_diameter`` annotations
     rather than introducing a second target or selector language.  They
@@ -124,7 +131,10 @@ class DimensionAnnotation(TypedDict, total=False):
 
     id: Required[str]
     operation: Required[str]
-    target: Required[str]
+    target: NotRequired[str]
+    from_: NotRequired[LinearDimensionEndpoint]
+    to: NotRequired[LinearDimensionEndpoint]
+    dimension_direction: NotRequired[str]
     placement: NotRequired[AnnotationPlacement]
     quantity: NotRequired[int]
     diameter_tolerance: NotRequired[str]
@@ -169,6 +179,7 @@ _ANNOTATION_OPERATIONS = {
     "bounding_box_x_dimension",
     "bounding_box_y_dimension",
     "circle_diameter",
+    "linear_dimension",
 }
 _CIRCLE_DIAMETER_CALLOUT_KEYS = {
     "quantity",
@@ -187,6 +198,12 @@ _EXTENSION_LINE_PART_GAP = 0.8
 _EXTENSION_LINE_DIMENSION_OVERRUN = 1.5
 _EXTENSION_LINE_STROKE_WIDTH = 0.12
 _ANNOTATION_2D_ALIGNMENTS = PLANAR_ALIGNMENTS
+_LINEAR_DIMENSION_DIRECTIONS = frozenset({"RIGHT", "BACK"})
+_LINEAR_DIMENSION_EDGES_BY_DIRECTION = {
+    "RIGHT": frozenset({"EDGE_LEFT", "EDGE_RIGHT"}),
+    "BACK": frozenset({"EDGE_FRONT", "EDGE_BACK"}),
+}
+_LINEAR_DIMENSION_STACK_PITCH = 4.0
 
 
 def make_construction_drawing_request(
@@ -287,6 +304,9 @@ def _normalize_annotations(
             "id",
             "operation",
             "target",
+            "from",
+            "to",
+            "dimension_direction",
             "placement",
             *_CIRCLE_DIAMETER_CALLOUT_KEYS,
         }
@@ -308,17 +328,33 @@ def _normalize_annotations(
                 f"Construction drawing annotation {annotation_id!r} has unsupported "
                 f"operation {operation!r}; expected one of {sorted(_ANNOTATION_OPERATIONS)!r}"
             )
-        target = str(annotation.get("target") or "").strip()
-        if not target:
-            raise ValueError(
-                f"Construction drawing annotation {annotation_id!r} requires a target"
-            )
-
         normalized_annotation: DimensionAnnotation = {
             "id": annotation_id,
             "operation": operation,
-            "target": target,
         }
+        if operation == "linear_dimension":
+            if "target" in annotation:
+                raise ValueError(
+                    f"Construction drawing annotation {annotation_id!r} linear_dimension "
+                    "uses explicit from/to endpoints instead of target"
+                )
+            normalized_annotation.update(
+                _normalize_linear_dimension_declaration(
+                    annotation, annotation_id=annotation_id
+                )
+            )
+        else:
+            target = str(annotation.get("target") or "").strip()
+            if not target:
+                raise ValueError(
+                    f"Construction drawing annotation {annotation_id!r} requires a target"
+                )
+            if any(key in annotation for key in ("from", "to", "dimension_direction")):
+                raise ValueError(
+                    f"Construction drawing annotation {annotation_id!r} endpoint fields only "
+                    "apply to operation 'linear_dimension'"
+                )
+            normalized_annotation["target"] = target
         if "placement" in annotation:
             normalized_annotation["placement"] = _normalize_annotation_placement(
                 annotation["placement"], annotation_id=annotation_id
@@ -332,6 +368,67 @@ def _normalize_annotations(
         normalized.append(normalized_annotation)
         annotation_ids.add(annotation_id)
     return normalized
+
+
+def _normalize_linear_dimension_declaration(
+    annotation: Mapping[str, object], *, annotation_id: str
+) -> dict[str, object]:
+    direction = str(annotation.get("dimension_direction") or "").strip()
+    if direction not in _LINEAR_DIMENSION_DIRECTIONS:
+        raise ValueError(
+            f"Construction drawing annotation {annotation_id!r} linear_dimension "
+            "dimension_direction must be one of "
+            f"{sorted(_LINEAR_DIMENSION_DIRECTIONS)!r}"
+        )
+    return {
+        "from": _normalize_linear_dimension_endpoint(
+            annotation.get("from"),
+            annotation_id=annotation_id,
+            endpoint_name="from",
+            dimension_direction=direction,
+        ),
+        "to": _normalize_linear_dimension_endpoint(
+            annotation.get("to"),
+            annotation_id=annotation_id,
+            endpoint_name="to",
+            dimension_direction=direction,
+        ),
+        "dimension_direction": direction,
+    }
+
+
+def _normalize_linear_dimension_endpoint(
+    value: object,
+    *,
+    annotation_id: str,
+    endpoint_name: str,
+    dimension_direction: str,
+) -> LinearDimensionEndpoint:
+    if not isinstance(value, Mapping):
+        raise TypeError(
+            f"Construction drawing annotation {annotation_id!r} {endpoint_name} endpoint "
+            "must be a mapping"
+        )
+    unknown_keys = set(value) - {"target", "edge"}
+    if unknown_keys:
+        raise ValueError(
+            f"Construction drawing annotation {annotation_id!r} {endpoint_name} endpoint "
+            f"has unsupported keys: {sorted(unknown_keys)!r}"
+        )
+    target = str(value.get("target") or "").strip()
+    if not target:
+        raise ValueError(
+            f"Construction drawing annotation {annotation_id!r} {endpoint_name} endpoint "
+            "requires a target"
+        )
+    edge = str(value.get("edge") or "").strip()
+    allowed_edges = _LINEAR_DIMENSION_EDGES_BY_DIRECTION[dimension_direction]
+    if edge not in allowed_edges:
+        raise ValueError(
+            f"Construction drawing annotation {annotation_id!r} {endpoint_name} endpoint "
+            f"edge must be one of {sorted(allowed_edges)!r} for {dimension_direction}"
+        )
+    return {"target": target, "edge": edge}
 
 
 def _normalize_circle_diameter_callout(
@@ -934,28 +1031,118 @@ def _append_dimension_annotations(
     precision = int(request.get("precision", 2))
     units = str(request.get("units", "mm"))
 
+    resolved_annotations: list[dict[str, object]] = []
     for annotation in normalized_annotations:
         annotation_id = annotation["id"]
-        target_ref = annotation["target"]
-        target = targets.get(target_ref)
-        if target is None:
-            available = ", ".join(sorted(targets)) or "none"
-            raise ValueError(
-                f"Construction drawing annotation {annotation_id!r} target "
-                f"{target_ref!r} did not resolve; available targets: {available}"
+        operation = annotation["operation"]
+        if operation == "linear_dimension":
+            from_endpoint = annotation["from"]
+            to_endpoint = annotation["to"]
+            assert isinstance(from_endpoint, Mapping)
+            assert isinstance(to_endpoint, Mapping)
+            from_target, from_bounds, _ = _resolve_annotation_target_section(
+                targets,
+                str(from_endpoint["target"]),
+                annotation_id=annotation_id,
+                endpoint_name="from",
+                adapter_emit_section_svg=adapter_emit_section_svg,
+                frame=frame,
+                section_thickness=section_thickness,
+                tolerance=tolerance,
             )
-        target_geometry = target["part"]
-        target_elements_parent = ET.Element(_svg_tag("g"))
-        adapter_emit_section_svg(
-            target_geometry,
-            frame,
-            target_elements_parent,
+            to_target, to_bounds, _ = _resolve_annotation_target_section(
+                targets,
+                str(to_endpoint["target"]),
+                annotation_id=annotation_id,
+                endpoint_name="to",
+                adapter_emit_section_svg=adapter_emit_section_svg,
+                frame=frame,
+                section_thickness=section_thickness,
+                tolerance=tolerance,
+            )
+            dimension_direction = str(annotation["dimension_direction"])
+            from_coordinate = _projected_endpoint_coordinate(
+                from_bounds, str(from_endpoint["edge"]), dimension_direction
+            )
+            to_coordinate = _projected_endpoint_coordinate(
+                to_bounds, str(to_endpoint["edge"]), dimension_direction
+            )
+            if dimension_direction == "RIGHT":
+                value = to_coordinate - from_coordinate
+            else:
+                value = from_coordinate - to_coordinate
+            if value < 0:
+                comparison = (
+                    "from_x <= to_x"
+                    if dimension_direction == "RIGHT"
+                    else "from_y >= to_y"
+                )
+                raise ValueError(
+                    f"Construction drawing annotation {annotation_id!r} "
+                    f"{dimension_direction} dimension requires {comparison}; got "
+                    f"{from_coordinate:g}, {to_coordinate:g}"
+                )
+            resolved_annotations.append(
+                {
+                    "annotation": annotation,
+                    "from_target": from_target,
+                    "to_target": to_target,
+                    "from_bounds": from_bounds,
+                    "to_bounds": to_bounds,
+                    "dimension_direction": dimension_direction,
+                    "from_coordinate": from_coordinate,
+                    "to_coordinate": to_coordinate,
+                    "value": value,
+                }
+            )
+            continue
+
+        target_ref = annotation["target"]
+        target, target_bounds, target_elements = _resolve_annotation_target_section(
+            targets,
+            target_ref,
+            annotation_id=annotation_id,
+            endpoint_name="target",
+            adapter_emit_section_svg=adapter_emit_section_svg,
+            frame=frame,
             section_thickness=section_thickness,
             tolerance=tolerance,
         )
-        target_elements = list(target_elements_parent)
-        target_bounds = _section_elements_bounds(target_elements)
-        operation = annotation["operation"]
+        resolved_annotations.append(
+            {
+                "annotation": annotation,
+                "target": target,
+                "target_bounds": target_bounds,
+                "target_elements": target_elements,
+            }
+        )
+
+    dimension_stack_offsets = _linear_dimension_stack_offsets(resolved_annotations)
+    for annotation_index, resolved in enumerate(resolved_annotations):
+        annotation = resolved["annotation"]
+        assert isinstance(annotation, Mapping)
+        annotation_id = str(annotation["id"])
+        operation = str(annotation["operation"])
+        stack_side, stack_offset = dimension_stack_offsets.get(
+            annotation_index, (None, 0.0)
+        )
+        placement = annotation.get("placement")
+        if stack_side is not None and stack_offset:
+            default_alignment = (
+                Alignment.STACK_FRONT
+                if operation == "bounding_box_x_dimension"
+                or (
+                    operation == "linear_dimension"
+                    and annotation["dimension_direction"] == "RIGHT"
+                )
+                else Alignment.STACK_RIGHT
+            )
+            placement = _placement_with_extra_stack_gap(
+                placement,
+                default_alignment=default_alignment,
+                stack_alignment=stack_side,
+                extra_stack_gap=stack_offset,
+            )
         annotation_group = ET.SubElement(
             annotation_layer,
             _svg_tag("g"),
@@ -964,41 +1151,135 @@ def _append_dimension_annotations(
                 "data-shellforgepy-role": "dimension",
                 "data-shellforgepy-annotation-id": annotation_id,
                 "data-shellforgepy-operation": operation,
-                "data-shellforgepy-target": target_ref,
                 "data-shellforgepy-value-source": "exact-geometry",
-                "data-shellforgepy-target-bounds": _format_bounds(target_bounds),
                 "data-shellforgepy-layout-bounds": _format_bounds(visible_bounds),
             },
         )
 
         if operation == "bounding_box_x_dimension":
+            target_bounds = resolved["target_bounds"]
+            assert isinstance(target_bounds, tuple)
+            target_ref = str(annotation["target"])
+            annotation_group.set("data-shellforgepy-target", target_ref)
+            annotation_group.set(
+                "data-shellforgepy-target-bounds", _format_bounds(target_bounds)
+            )
             value, placed_bounds = _append_x_dimension(
                 annotation_group,
                 target_bounds=target_bounds,
                 layout_bounds=visible_bounds,
-                placement=annotation.get("placement"),
+                placement=placement,
                 marker_id=marker_id,
                 precision=precision,
             )
         elif operation == "bounding_box_y_dimension":
+            target_bounds = resolved["target_bounds"]
+            assert isinstance(target_bounds, tuple)
+            target_ref = str(annotation["target"])
+            annotation_group.set("data-shellforgepy-target", target_ref)
+            annotation_group.set(
+                "data-shellforgepy-target-bounds", _format_bounds(target_bounds)
+            )
             value, placed_bounds = _append_y_dimension(
                 annotation_group,
                 target_bounds=target_bounds,
                 layout_bounds=visible_bounds,
-                placement=annotation.get("placement"),
+                placement=placement,
                 marker_id=marker_id,
                 precision=precision,
             )
         elif operation == "circle_diameter":
+            target_bounds = resolved["target_bounds"]
+            target_elements = resolved["target_elements"]
+            assert isinstance(target_bounds, tuple)
+            assert isinstance(target_elements, list)
+            target_ref = str(annotation["target"])
+            annotation_group.set("data-shellforgepy-target", target_ref)
+            annotation_group.set(
+                "data-shellforgepy-target-bounds", _format_bounds(target_bounds)
+            )
             value, placed_bounds = _append_circle_diameter_dimension(
                 annotation_group,
                 target_elements=target_elements,
                 target_bounds=target_bounds,
                 layout_bounds=visible_bounds,
-                placement=annotation.get("placement"),
+                placement=placement,
                 marker_id=marker_id,
                 precision=precision,
                 annotation=annotation,
+            )
+        elif operation == "linear_dimension":
+            from_endpoint = annotation["from"]
+            to_endpoint = annotation["to"]
+            from_bounds = resolved["from_bounds"]
+            to_bounds = resolved["to_bounds"]
+            dimension_direction = str(resolved["dimension_direction"])
+            from_coordinate = float(resolved["from_coordinate"])
+            to_coordinate = float(resolved["to_coordinate"])
+            assert isinstance(from_endpoint, Mapping)
+            assert isinstance(to_endpoint, Mapping)
+            assert isinstance(from_bounds, tuple)
+            assert isinstance(to_bounds, tuple)
+            annotation_group.set(
+                "data-shellforgepy-from-target", str(from_endpoint["target"])
+            )
+            annotation_group.set(
+                "data-shellforgepy-from-edge", str(from_endpoint["edge"])
+            )
+            annotation_group.set(
+                "data-shellforgepy-to-target", str(to_endpoint["target"])
+            )
+            annotation_group.set("data-shellforgepy-to-edge", str(to_endpoint["edge"]))
+            annotation_group.set(
+                "data-shellforgepy-dimension-direction",
+                dimension_direction,
+            )
+            annotation_group.set(
+                "data-shellforgepy-from-target-bounds", _format_bounds(from_bounds)
+            )
+            annotation_group.set(
+                "data-shellforgepy-to-target-bounds", _format_bounds(to_bounds)
+            )
+            annotation_group.set(
+                "data-shellforgepy-from-coordinate",
+                _format_number(from_coordinate),
+            )
+            annotation_group.set(
+                "data-shellforgepy-to-coordinate", _format_number(to_coordinate)
+            )
+            if dimension_direction == "RIGHT":
+                value, placed_bounds, rule_bounds, label_bounds = (
+                    _append_linear_x_dimension(
+                        annotation_group,
+                        from_x=from_coordinate,
+                        to_x=to_coordinate,
+                        from_bounds=from_bounds,
+                        to_bounds=to_bounds,
+                        layout_bounds=visible_bounds,
+                        placement=placement,
+                        marker_id=marker_id,
+                        precision=precision,
+                    )
+                )
+            else:
+                value, placed_bounds, rule_bounds, label_bounds = (
+                    _append_linear_y_dimension(
+                        annotation_group,
+                        from_y=from_coordinate,
+                        to_y=to_coordinate,
+                        from_bounds=from_bounds,
+                        to_bounds=to_bounds,
+                        layout_bounds=visible_bounds,
+                        placement=placement,
+                        marker_id=marker_id,
+                        precision=precision,
+                    )
+                )
+            annotation_group.set(
+                "data-shellforgepy-rule-bounds", _format_bounds(rule_bounds)
+            )
+            annotation_group.set(
+                "data-shellforgepy-label-bounds", _format_bounds(label_bounds)
             )
         else:  # _normalize_annotations keeps this defensive branch unreachable.
             raise ValueError(
@@ -1021,19 +1302,181 @@ def _append_dimension_annotations(
         if records is not None:
             record: dict[str, object] = {
                 "id": annotation_id,
-                "target": target_ref,
                 "operation": operation,
                 "value": value,
                 "formatted_value": formatted_value,
                 "units": units,
                 "precision": precision,
-                "target_bounds": list(target_bounds),
                 "layout_bounds": list(visible_bounds),
                 "placed_bounds": list(placed_bounds),
             }
+            if operation == "linear_dimension":
+                record.update(
+                    {
+                        "from": {
+                            "target": annotation["from"]["target"],
+                            "edge": annotation["from"]["edge"],
+                            "projected_coordinate": float(resolved["from_coordinate"]),
+                        },
+                        "to": {
+                            "target": annotation["to"]["target"],
+                            "edge": annotation["to"]["edge"],
+                            "projected_coordinate": float(resolved["to_coordinate"]),
+                        },
+                        "dimension_direction": annotation["dimension_direction"],
+                        "from_target_bounds": list(from_bounds),
+                        "to_target_bounds": list(to_bounds),
+                        "visible_scene_layout_bounds": list(visible_bounds),
+                        "rule_bounds": list(rule_bounds),
+                        "label_bounds": list(label_bounds),
+                    }
+                )
+            else:
+                record["target"] = annotation["target"]
+                record["target_bounds"] = list(target_bounds)
             if callout:
                 record["callout"] = callout
             records.append(record)
+
+
+def _resolve_annotation_target_section(
+    targets: Mapping[str, Mapping[str, object]],
+    target_ref: str,
+    *,
+    annotation_id: str,
+    endpoint_name: str,
+    adapter_emit_section_svg,
+    frame: SectionViewFrame,
+    section_thickness: float,
+    tolerance: float,
+) -> tuple[Mapping[str, object], tuple[float, float, float, float], list[ET.Element]]:
+    target = targets.get(target_ref)
+    if target is None:
+        available = ", ".join(sorted(targets)) or "none"
+        raise ValueError(
+            f"Construction drawing annotation {annotation_id!r} {endpoint_name} target "
+            f"{target_ref!r} did not resolve; available targets: {available}"
+        )
+    target_elements_parent = ET.Element(_svg_tag("g"))
+    adapter_emit_section_svg(
+        target["part"],
+        frame,
+        target_elements_parent,
+        section_thickness=section_thickness,
+        tolerance=tolerance,
+    )
+    target_elements = list(target_elements_parent)
+    return target, _section_elements_bounds(target_elements), target_elements
+
+
+def _projected_endpoint_coordinate(
+    bounds: tuple[float, float, float, float], edge: str, dimension_direction: str
+) -> float:
+    if dimension_direction == "RIGHT":
+        if edge == "EDGE_LEFT":
+            return bounds[0]
+        if edge == "EDGE_RIGHT":
+            return bounds[2]
+    elif dimension_direction == "BACK":
+        if edge == "EDGE_FRONT":
+            return bounds[1]
+        if edge == "EDGE_BACK":
+            return bounds[3]
+    raise ValueError(
+        f"{dimension_direction} linear dimensions do not support edge {edge!r}"
+    )
+
+
+def _linear_dimension_stack_offsets(
+    resolved_annotations: Sequence[Mapping[str, object]],
+) -> dict[int, tuple[Alignment, float]]:
+    """Assign deterministic outside nesting to same-side axial dimensions."""
+
+    grouped: dict[Alignment, list[tuple[int, float]]] = {}
+    for index, resolved in enumerate(resolved_annotations):
+        annotation = resolved["annotation"]
+        assert isinstance(annotation, Mapping)
+        operation = annotation["operation"]
+        if operation == "bounding_box_x_dimension":
+            bounds = resolved["target_bounds"]
+            assert isinstance(bounds, tuple)
+            span = bounds[2] - bounds[0]
+            dimension_direction = "RIGHT"
+        elif operation == "bounding_box_y_dimension":
+            bounds = resolved["target_bounds"]
+            assert isinstance(bounds, tuple)
+            span = bounds[3] - bounds[1]
+            dimension_direction = "BACK"
+        elif operation == "linear_dimension":
+            span = float(resolved["value"])
+            dimension_direction = str(resolved["dimension_direction"])
+        else:
+            continue
+        stack_side = _linear_dimension_stack_side(annotation, dimension_direction)
+        if stack_side is not None:
+            grouped.setdefault(stack_side, []).append((index, span))
+
+    offsets: dict[int, tuple[Alignment, float]] = {}
+    for stack_side, items in grouped.items():
+        for nesting_index, (annotation_index, _) in enumerate(
+            sorted(items, key=lambda item: (item[1], item[0]))
+        ):
+            offsets[annotation_index] = (
+                stack_side,
+                nesting_index * _LINEAR_DIMENSION_STACK_PITCH,
+            )
+    return offsets
+
+
+def _linear_dimension_stack_side(
+    annotation: Mapping[str, object], dimension_direction: str
+) -> Alignment | None:
+    operations = _annotation_layout_operations(
+        annotation.get("placement"),
+        default_alignment=(
+            Alignment.STACK_FRONT
+            if dimension_direction == "RIGHT"
+            else Alignment.STACK_RIGHT
+        ),
+    )
+    eligible_sides = (
+        {Alignment.STACK_FRONT, Alignment.STACK_BACK}
+        if dimension_direction == "RIGHT"
+        else {Alignment.STACK_LEFT, Alignment.STACK_RIGHT}
+    )
+    stack_sides = [
+        alignment for alignment, _ in operations if alignment in eligible_sides
+    ]
+    return stack_sides[-1] if stack_sides else None
+
+
+def _placement_with_extra_stack_gap(
+    placement: object,
+    *,
+    default_alignment: Alignment,
+    stack_alignment: Alignment,
+    extra_stack_gap: float,
+) -> AnnotationPlacement:
+    if placement is None:
+        return {
+            "alignments": [
+                {
+                    "alignment": default_alignment.name,
+                    "stack_gap": 5.0 + extra_stack_gap,
+                }
+            ]
+        }
+    assert isinstance(placement, Mapping)
+    alignments = placement["alignments"]
+    assert isinstance(alignments, Sequence)
+    normalized_alignments = [dict(item) for item in alignments]
+    for alignment in reversed(normalized_alignments):
+        if alignment.get("alignment") == stack_alignment.name:
+            alignment["stack_gap"] = (
+                float(alignment.get("stack_gap", 0.0)) + extra_stack_gap
+            )
+            break
+    return {"alignments": normalized_alignments}  # type: ignore[return-value]
 
 
 def _append_x_dimension(
@@ -1100,6 +1543,168 @@ def _append_x_dimension(
                 anchor="middle",
             ),
         ).as_tuple(),
+    )
+
+
+def _append_linear_x_dimension(
+    parent: ET.Element,
+    *,
+    from_x: float,
+    to_x: float,
+    from_bounds: tuple[float, float, float, float],
+    to_bounds: tuple[float, float, float, float],
+    layout_bounds: tuple[float, float, float, float],
+    placement: object,
+    marker_id: str,
+    precision: int,
+) -> tuple[
+    float,
+    tuple[float, float, float, float],
+    tuple[float, float, float, float],
+    tuple[float, float, float, float],
+]:
+    """Render a RIGHT dimension from two explicitly selected projected edges."""
+
+    placed_line = _place_annotation_bounds(
+        Bounds2D(from_x, 0.0, to_x, 0.0),
+        layout_bounds,
+        placement,
+        default_alignment=Alignment.STACK_FRONT,
+    )
+    line_y = placed_line.min_y
+    witness_y_from = (
+        from_bounds[1]
+        if line_y <= (from_bounds[1] + from_bounds[3]) / 2
+        else from_bounds[3]
+    )
+    witness_y_to = (
+        to_bounds[1] if line_y <= (to_bounds[1] + to_bounds[3]) / 2 else to_bounds[3]
+    )
+    from_start_y = witness_y_from + math.copysign(
+        _EXTENSION_LINE_PART_GAP, line_y - witness_y_from
+    )
+    to_start_y = witness_y_to + math.copysign(
+        _EXTENSION_LINE_PART_GAP, line_y - witness_y_to
+    )
+    extension_end_y = line_y + math.copysign(
+        _EXTENSION_LINE_DIMENSION_OVERRUN, line_y - witness_y_from
+    )
+    _append_extension_line(parent, from_x, from_start_y, from_x, extension_end_y)
+    _append_extension_line(parent, to_x, to_start_y, to_x, extension_end_y)
+    _append_annotation_line(
+        parent,
+        from_x,
+        line_y,
+        to_x,
+        line_y,
+        marker_start=marker_id,
+        marker_end=marker_id,
+    )
+    text_y = (
+        line_y + _annotation_text_baseline_below_line()
+        if line_y <= min(witness_y_from, witness_y_to)
+        else line_y + _annotation_text_baseline_above_line()
+    )
+    value = to_x - from_x
+    formatted_value = _format_dimension_value(value, precision)
+    label_bounds = _annotation_text_bounds(
+        x=(from_x + to_x) / 2.0,
+        y=text_y,
+        value=formatted_value,
+        anchor="middle",
+    )
+    _append_annotation_text(
+        parent,
+        x=(from_x + to_x) / 2.0,
+        y=text_y,
+        value=formatted_value,
+        anchor="middle",
+    )
+    return (
+        value,
+        _merge_bounds_2d(placed_line, label_bounds).as_tuple(),
+        placed_line.as_tuple(),
+        label_bounds.as_tuple(),
+    )
+
+
+def _append_linear_y_dimension(
+    parent: ET.Element,
+    *,
+    from_y: float,
+    to_y: float,
+    from_bounds: tuple[float, float, float, float],
+    to_bounds: tuple[float, float, float, float],
+    layout_bounds: tuple[float, float, float, float],
+    placement: object,
+    marker_id: str,
+    precision: int,
+) -> tuple[
+    float,
+    tuple[float, float, float, float],
+    tuple[float, float, float, float],
+    tuple[float, float, float, float],
+]:
+    """Render a BACK dimension from named back and front projected edges."""
+
+    placed_line = _place_annotation_bounds(
+        Bounds2D(0.0, to_y, 0.0, from_y),
+        layout_bounds,
+        placement,
+        default_alignment=Alignment.STACK_RIGHT,
+    )
+    line_x = placed_line.min_x
+    witness_x_from = (
+        from_bounds[0]
+        if line_x <= (from_bounds[0] + from_bounds[2]) / 2
+        else from_bounds[2]
+    )
+    witness_x_to = (
+        to_bounds[0] if line_x <= (to_bounds[0] + to_bounds[2]) / 2 else to_bounds[2]
+    )
+    from_start_x = witness_x_from + math.copysign(
+        _EXTENSION_LINE_PART_GAP, line_x - witness_x_from
+    )
+    to_start_x = witness_x_to + math.copysign(
+        _EXTENSION_LINE_PART_GAP, line_x - witness_x_to
+    )
+    extension_end_x = line_x + math.copysign(
+        _EXTENSION_LINE_DIMENSION_OVERRUN, line_x - witness_x_from
+    )
+    _append_extension_line(parent, from_start_x, from_y, extension_end_x, from_y)
+    _append_extension_line(parent, to_start_x, to_y, extension_end_x, to_y)
+    _append_annotation_line(
+        parent,
+        line_x,
+        from_y,
+        line_x,
+        to_y,
+        marker_start=marker_id,
+        marker_end=marker_id,
+    )
+    text_anchor = "end" if line_x <= min(witness_x_from, witness_x_to) else "start"
+    text_x = line_x - 2.0 if text_anchor == "end" else line_x + 2.0
+    value = from_y - to_y
+    formatted_value = _format_dimension_value(value, precision)
+    text_y = (from_y + to_y) / 2.0
+    label_bounds = _annotation_text_bounds(
+        x=text_x,
+        y=text_y,
+        value=formatted_value,
+        anchor=text_anchor,
+    )
+    _append_annotation_text(
+        parent,
+        x=text_x,
+        y=text_y,
+        value=formatted_value,
+        anchor=text_anchor,
+    )
+    return (
+        value,
+        _merge_bounds_2d(placed_line, label_bounds).as_tuple(),
+        placed_line.as_tuple(),
+        label_bounds.as_tuple(),
     )
 
 

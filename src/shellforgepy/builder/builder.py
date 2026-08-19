@@ -7157,39 +7157,59 @@ def _resolve_construction_annotation_targets(
     for annotation in raw_annotations:
         if not isinstance(annotation, Mapping):
             raise BuilderError("Construction drawing annotations must be mappings")
-        target_ref = str(annotation.get("target") or "").strip()
-        if not target_ref or target_ref in targets:
-            continue
-        assembly_name, artifact = _construction_annotation_target_selector(target_ref)
-        metadata = built_results_by_name.get(assembly_name)
-        if metadata is None:
-            metadata = _dependency_metadata_for_assembly(
-                assembly_name,
-                built_results_by_name,
-                repository_dir,
+        target_refs = _construction_annotation_references(annotation)
+        for target_ref in target_refs:
+            if target_ref in targets:
+                continue
+            assembly_name, artifact = _construction_annotation_target_selector(
+                target_ref
             )
-        entries = _artifact_entries_for_selector(metadata, artifact)
-        if len(entries) != 1:
-            available = _addressable_artifact_selectors(metadata)
-            raise BuilderError(
-                f"Construction drawing annotation target {target_ref!r} did not resolve "
-                f"to exactly one artifact; available selectors for {assembly_name!r}: "
-                f"{available!r}"
-            )
-        entry = entries[0]
-        part = _import_artifact_entry(entry)
-        transforms = assembly_transforms.get(assembly_name, [])
-        if transforms:
-            part = _apply_translation_sequence(part, list(transforms))
-        targets[target_ref] = {
-            "part": part,
-            "name": entry.get("name") or assembly_name,
-            "assembly_name": assembly_name,
-            "artifact": entry.get("artifact"),
-            "source": target_ref,
-            "obj_metadata": {"builder_selector": target_ref},
-        }
+            metadata = built_results_by_name.get(assembly_name)
+            if metadata is None:
+                metadata = _dependency_metadata_for_assembly(
+                    assembly_name,
+                    built_results_by_name,
+                    repository_dir,
+                )
+            entries = _artifact_entries_for_selector(metadata, artifact)
+            if len(entries) != 1:
+                available = _addressable_artifact_selectors(metadata)
+                raise BuilderError(
+                    f"Construction drawing annotation target {target_ref!r} did not resolve "
+                    f"to exactly one artifact; available selectors for {assembly_name!r}: "
+                    f"{available!r}"
+                )
+            entry = entries[0]
+            part = _import_artifact_entry(entry)
+            transforms = assembly_transforms.get(assembly_name, [])
+            if transforms:
+                part = _apply_translation_sequence(part, list(transforms))
+            targets[target_ref] = {
+                "part": part,
+                "name": entry.get("name") or assembly_name,
+                "assembly_name": assembly_name,
+                "artifact": entry.get("artifact"),
+                "source": target_ref,
+                "obj_metadata": {"builder_selector": target_ref},
+            }
     return targets
+
+
+def _construction_annotation_references(annotation: Mapping[str, Any]) -> List[str]:
+    """Return the canonical geometry references required by one annotation."""
+
+    if annotation.get("operation") != "linear_dimension":
+        target_ref = str(annotation.get("target") or "").strip()
+        return [target_ref] if target_ref else []
+    references: List[str] = []
+    for endpoint_name in ("from", "to"):
+        endpoint = annotation.get(endpoint_name)
+        if not isinstance(endpoint, Mapping):
+            continue
+        target_ref = str(endpoint.get("target") or "").strip()
+        if target_ref:
+            references.append(target_ref)
+    return references
 
 
 def _construction_annotation_target_selector(target_ref: str) -> tuple[str, str]:
