@@ -1,6 +1,6 @@
 ShellforgepyBuilderVersion: "2026-03-27"
 
-Description: Stage 5 M3 blind and through tapped-hole construction-drawing plate
+Description: M3 blind and through tapped-hole construction-drawing plate
 
 Parameters: {}
 
@@ -76,5 +76,5 @@ Parts:
   M3ThreadedPlate:
     Type: Shellforgepy::Assembly
     Properties:
-      Generator: examples.construction_drawing_stage5_demo.m3_threaded_plate_generator.create_m3_threaded_plate_assembly
+      Generator: examples.construction_drawing_m3_tapped_holes_demo.m3_threaded_plate_generator.create_m3_threaded_plate_assembly
       Properties: {}

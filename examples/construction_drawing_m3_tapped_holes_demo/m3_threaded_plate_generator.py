@@ -1,4 +1,4 @@
-"""M3 tapped-hole plate used only by the user-facing Stage 5 example."""
+"""M3 tapped-hole plate used only by the user-facing drawing example."""
 
 from shellforgepy.geometry.m_screws import get_core_hole_diameter
 from shellforgepy.simple import LeaderFollowersCuttersPart, create_box, create_cylinder

@@ -2,7 +2,7 @@
 
 This directory contains working examples of ShellForgePy geometry, assembly, and
 production workflows. The examples generate inspectable 3D artifacts such as
-STL and OBJ files.
+STL, OBJ, and technical-drawing SVG files.
 
 ## 🎯 Quick Start
 
@@ -238,6 +238,29 @@ The ultimate demonstration of coordinate transformation capabilities.
 
 ### 🧠 Advanced Examples
 
+#### **M3 Tapped-Hole Technical Drawing** (`construction_drawing_m3_tapped_holes.py`)
+Generate a supplier-style A4 SVG drawing from the same resolved CAD geometry
+used to build the plate. The drawing demonstrates two blind M3 tap-drill holes,
+two through M3 tap-drill holes, explicit outer dimensions, and exact
+geometry-derived diameter callouts.
+
+```bash
+python examples/construction_drawing_m3_tapped_holes.py
+```
+
+**Output:**
+- `output/construction_drawing_m3_tapped_holes/runs/m3_threaded_plate_run_latest/construction_drawings/m3_threaded_plate_top.svg`
+- A workflow manifest beside the drawing, containing each annotation's target,
+  measured value, units, and placed layout bounds
+
+**What to look at:**
+- Blind taps render `2 X M3 - 6H ↧ 6.00` above `⌀2.50 ±0.05`.
+- Through taps render `2 X M3 - 6H THRU` above `⌀2.50`.
+- `construction_drawing_m3_tapped_holes_demo/` is the complete builder
+  resource, including named cutters and explicit annotation declarations.
+
+---
+
 #### **Hawaii Bottle Cap** (`bottle_cap_example.py`)
 Real-world functional part with screw threads and grip textures.
 
@@ -347,15 +370,19 @@ Want to see everything in action?
 ```bash
 # Run each example individually
 python examples/filleted_boxes_example.py
+python examples/builder_machine_example.py
 python examples/rotate_alignment_demo.py
+python examples/complete_screw_assembly_board_demo.py
 python examples/create_cylinder_stl.py
 python examples/straight_snake.py
 python examples/curved_snake.py
 python examples/cylindrical_coil.py
 python examples/conical_coil.py
 python examples/mobius_strip.py
+python examples/construction_drawing_m3_tapped_holes.py
 python examples/bottle_cap_example.py
 python examples/m_screws_production_example.py
+python examples/process_and_workflow.py
 python examples/create_face_stl.py
 ```
 
@@ -402,6 +429,9 @@ Examples create STL files in these locations:
 | `cylindrical_coil.py` | 🔶 Intermediate | Helical geometries | 1 STL file |
 | `conical_coil.py` | 🔶 Intermediate | Advanced helical paths | 1 STL file |
 | `mobius_strip.py` | 🔶 Intermediate | Topological surfaces | 1 STL file |
+| `builder_machine_example.py` | 🔶 Intermediate | Declarative multi-assembly builder | OBJ, previews, manifest |
+| `complete_screw_assembly_board_demo.py` | 🔶 Intermediate | Semantic fastener mounting | STL and OBJ |
+| `construction_drawing_m3_tapped_holes.py` | 🔴 Advanced | Explicit tapped-hole callouts | A4 SVG and manifest |
 | `bottle_cap_example.py` | 🔴 Advanced | Functional parts, screw threads, production | 2 files |
 | `m_screws_production_example.py` | 🔴 Advanced | Metric fasteners, dual-mode production | 15 files |
 | `process_and_workflow.py` | 🔴 Advanced | Geometry → OrcaSlicer workflow integration | `runs/<script>_run_*` bundle |

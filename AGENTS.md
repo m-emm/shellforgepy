@@ -28,6 +28,14 @@ This repository (`shellforgepy`) hosts the Python runtime for the ShellForge too
 - `tests/`: unit tests mirroring the structure above.
 - ShellForge-specific scripts (e.g., `freecad_python.sh`, `freecad_python.FCMacro`) live at the repo root for adapter integration.
 
+## Examples Are User-Facing
+
+- `examples/` is a clean, authoritative, user-facing collection—not a playground or junkyard for feature experiments.
+- Every runnable example in `examples/` must be final-quality and clearly named, mentioned, and explained in `examples/README.md` (including how to run it and what it demonstrates).
+- Do not add staged, exploratory, preview-only, or half-baked feature experiments to `examples/`.
+- Put experiments for new features in a focused fixture subdirectory under `tests/`, alongside proper pytest coverage.
+- For every larger feature that reaches a stable, user-relevant state, create a polished user-facing example in `examples/` and document it in `examples/README.md`.
+
 ## Environment Notes
 - The project expects Python ≥3.11. Create a virtual environment and install with `pip install -e ".[testing]"` for development.
 - Optional extras: `[cadquery]`, `[freecad]`, or `[all]` pull in adapter dependencies. Install them if you need the corresponding backend.

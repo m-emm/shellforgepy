@@ -199,17 +199,8 @@ an overall width remains outside the shorter web dimensions. SVG metadata and
 the workflow manifest retain both endpoint paths, edge selectors, projected
 coordinates, visible layout bounds, and final rule/label bounds.
 
-Run the user-facing pinch-through with:
+Run the M3 tapped-hole technical-sheet example with:
 
 ```bash
-python examples/construction_drawing_stage1.py
-```
-
-The generated borderless artifact is written to
-`output/construction_drawing_stage1/plate_top.svg`.
-
-Run the independent Stage 5 M3 tapped-hole technical-sheet example with:
-
-```bash
-python examples/construction_drawing_stage5.py
+python examples/construction_drawing_m3_tapped_holes.py
 ```

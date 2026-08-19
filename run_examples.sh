@@ -41,7 +41,9 @@ run_example() {
 echo ""
 echo "🔰 Beginner Examples:"
 run_example "filleted_boxes_example.py"
+run_example "builder_machine_example.py"
 run_example "rotate_alignment_demo.py"
+run_example "complete_screw_assembly_board_demo.py"
 run_example "create_cylinder_stl.py"
 
 echo ""
@@ -54,7 +56,10 @@ run_example "mobius_strip.py"
 
 echo ""
 echo "🧠 Advanced Examples:"
+run_example "construction_drawing_m3_tapped_holes.py"
 run_example "bottle_cap_example.py"
+run_example "m_screws_production_example.py"
+run_example "process_and_workflow.py"
 run_example "create_face_stl.py"
 
 # Summary
