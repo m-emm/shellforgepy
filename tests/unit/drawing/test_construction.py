@@ -584,6 +584,20 @@ def test_stage5_threaded_circle_callouts_emit_supplier_style_labels_and_leaders(
     assert float(blind_lines[0].attrib["x1"]) != float(blind_lines[0].attrib["x2"])
     assert float(blind_lines[0].attrib["y1"]) != float(blind_lines[0].attrib["y2"])
     assert float(blind_lines[1].attrib["y1"]) == float(blind_lines[1].attrib["y2"])
+    for callout_lines in (blind_lines, through_lines):
+        assert (
+            float(callout_lines[0].attrib["x1"]),
+            float(callout_lines[0].attrib["y1"]),
+        ) in {
+            (
+                float(callout_lines[1].attrib["x1"]),
+                float(callout_lines[1].attrib["y1"]),
+            ),
+            (
+                float(callout_lines[1].attrib["x2"]),
+                float(callout_lines[1].attrib["y2"]),
+            ),
+        }
     assert abs(
         float(blind_lines[1].attrib["x2"]) - float(blind_lines[1].attrib["x1"])
     ) >= construction_module._estimated_annotation_text_width("2 X M3 - 6H ↧ 6.00")

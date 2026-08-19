@@ -134,15 +134,16 @@ This renders the supplier-style two-line label `2 X M3 - 6H ↧ 6.00` and
 `quantity` is author-supplied and does not infer a hole pattern.
 
 The horizontal callout rule runs beneath the full width of the longest label
-and joins the elbow, even when that means crossing the visible part. For a
-threaded callout it separates the thread text above from the diameter below
-with a fixed 0.8 mm visible-ink gap on each side; a plain diameter or
-clearance-hole label is stacked on the rule's `STACK_BACK` (drawing-up) side.
-The label text is laid out outside the visible part bounds; only the attached
-diagonal leader and landing rule may cross them.
+from the elbow outward. The elbow is always one endpoint of that rule, never
+an intermediate point. For a threaded callout it separates the thread text
+above from the diameter below with a fixed 0.8 mm visible-ink gap on each
+side; a plain diameter or clearance-hole label is stacked on the rule's
+`STACK_BACK` (drawing-up) side. The label text is laid out outside the visible
+part bounds; only the attached diagonal leader and landing rule may cross them.
 
-The leader defaults to a 30-degree tilt and a 6 mm first leg. Override only
-when the explicit alignment placement needs refinement:
+The leader defaults to a 30-degree tilt and a 6 mm nominal first leg. The
+endpoint is adjusted as needed to keep the elbow at the landing endpoint.
+Override only when the explicit alignment placement needs refinement:
 
 ```yaml
 leader_tilt_degrees: 20

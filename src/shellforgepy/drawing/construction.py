@@ -1869,6 +1869,15 @@ def _append_circle_diameter_dimension(
     # Explicit non-stacking placement can intentionally request a nearer
     # landing.  Keep its annotation footprint attached to the actual elbow.
     callout_bounds = callout_bounds.translated(0.0, elbow_y - rule_y)
+    line_direction = _circle_callout_line_direction(
+        callout_bounds.center_x - center_x,
+        fallback=unit_x,
+    )
+    # A leader elbow is the end of its horizontal landing, never an
+    # intermediate point on it.  Preserve the requested external label bounds
+    # and route the diagonal leg to the label-side endpoint; this is more
+    # important than maintaining an exact nominal leader tilt after placement.
+    elbow_x = callout_bounds.min_x if line_direction > 0 else callout_bounds.max_x
     _append_annotation_line(
         parent,
         elbow_x,
@@ -1877,20 +1886,16 @@ def _append_circle_diameter_dimension(
         arrow_y,
         marker_end=marker_id,
     )
-    line_direction = _circle_callout_line_direction(
-        callout_bounds.center_x - center_x,
-        fallback=unit_x,
-    )
     text_anchor = "start" if line_direction > 0 else "end"
     text_x = callout_bounds.min_x if line_direction > 0 else callout_bounds.max_x
-    # The landing must both join the elbow and run under the complete longest
-    # label.  The elbow is allowed to be inside that text span, especially for
-    # a STACK_BACK callout, so use the union rather than a single endpoint.
+    # The landing runs beneath the complete longest label and starts at its
+    # elbow.  Its other endpoint follows the label away from the measured
+    # feature, so the elbow cannot appear inside the landing.
     _append_annotation_line(
         parent,
-        min(elbow_x, callout_bounds.min_x),
+        elbow_x,
         elbow_y,
-        max(elbow_x, callout_bounds.max_x),
+        callout_bounds.max_x if line_direction > 0 else callout_bounds.min_x,
         elbow_y,
     )
     if len(labels) == 1:

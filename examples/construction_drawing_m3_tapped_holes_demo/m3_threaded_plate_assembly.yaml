@@ -41,19 +41,19 @@ Builder:
             depth: 6
             placement:
               alignments:
-                - alignment: STACK_BACK
+                - alignment: STACK_LEFT
                   stack_gap: 8
-                - alignment: EDGE_LEFT
+                - alignment: EDGE_BACK
           - id: through_m3_thread
             operation: circle_diameter
-            target: m3_threaded_plate.cutters.m3_through_right
+            target: m3_threaded_plate.cutters.m3_through_left
             quantity: 2
             thread_size: M3
             thread_tolerance_class: 6H
             through: true
             placement:
               alignments:
-                - alignment: STACK_RIGHT
+                - alignment: STACK_LEFT
                   stack_gap: 8
                 - alignment: EDGE_FRONT
         frame: technical
@@ -64,7 +64,7 @@ Builder:
           border: true
           title_block:
             title: M3 Tapped Hole Demonstrator
-            drawing_number: SFP-STAGE5-M3
+            drawing_number: SFP-M3-TAPPED
             revision: A
             material: Aluminum
             units: mm

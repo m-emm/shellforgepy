@@ -256,6 +256,9 @@ python examples/construction_drawing_m3_tapped_holes.py
 **What to look at:**
 - Blind taps render `2 X M3 - 6H ↧ 6.00` above `⌀2.50 ±0.05`.
 - Through taps render `2 X M3 - 6H THRU` above `⌀2.50`.
+- Each leader points to the left hole in its row: `2 X` therefore
+  unambiguously identifies the matching horizontal pair, rather than an
+  unspecified pair of holes.
 - `construction_drawing_m3_tapped_holes_demo/` is the complete builder
   resource, including named cutters and explicit annotation declarations.
 
