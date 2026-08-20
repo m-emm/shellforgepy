@@ -1,6 +1,6 @@
 ShellforgepyBuilderVersion: "2026-03-27"
 
-Description: Supplier-style M3 tapped-hole construction-drawing example
+Description: Supplier-style three-view M3 tapped-hole construction-drawing example
 
 assemblies:
   - name: m3_threaded_plate

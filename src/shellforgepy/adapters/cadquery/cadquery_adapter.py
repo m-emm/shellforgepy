@@ -1,5 +1,6 @@
 import logging
 import math
+from collections.abc import Mapping, Sequence
 from typing import Dict, List, Optional, Tuple
 
 import cadquery as cq
@@ -180,6 +181,428 @@ def emit_section_svg(
                 sweep=sweep,
                 source_edge=source_edge,
             )
+
+
+def emit_projection_svg(
+    scene_parts: Sequence[Mapping[str, object]],
+    view_frame,
+    parent_svg_group,
+    *,
+    include: Sequence[str],
+    tolerance=1e-6,
+):
+    """Emit an exact scene-aware orthographic HLR projection as SVG.
+
+    One HLR data structure contains every selected solid.  Asking its result
+    converter for each original shape preserves source-part identity while the
+    visibility classification still accounts for all occluding scene geometry.
+    """
+
+    if not scene_parts:
+        raise ValueError("Projection requires at least one scene part")
+    if float(tolerance) <= 0:
+        raise ValueError("Projection tolerance must be positive")
+    categories = {str(value) for value in include}
+    if "visible_outline" not in categories:
+        raise ValueError("Projection requires visible_outline")
+
+    from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
+    from OCP.HLRAlgo import HLRAlgo_Projector
+    from OCP.HLRBRep import HLRBRep_Algo, HLRBRep_HLRToShape
+    from shellforgepy.drawing.construction import append_part_group
+
+    origin = _section_vector(view_frame, "origin")
+    normal = _section_vector(view_frame, "normal")
+    right = _section_vector(view_frame, "right")
+    algorithm = HLRBRep_Algo()
+    shapes: list[cq.Shape] = []
+    for scene_part in scene_parts:
+        solid = scene_part.get("part")
+        if solid is None:
+            raise ValueError("Projection scene part has no geometry")
+        shape = _as_shape(solid)
+        shapes.append(shape)
+        algorithm.Add(shape.wrapped)
+    algorithm.Projector(
+        HLRAlgo_Projector(gp_Ax2(gp_Pnt(*origin), gp_Dir(*normal), gp_Dir(*right)))
+    )
+    algorithm.Update()
+    algorithm.Hide()
+    converted = HLRBRep_HLRToShape(algorithm)
+
+    for part_index, (scene_part, shape) in enumerate(zip(scene_parts, shapes), start=1):
+        part_name = str(scene_part.get("name") or f"part_{part_index}")
+        part_group = append_part_group(
+            parent_svg_group,
+            part_identity=part_name,
+            role="projection",
+            source=(str(scene_part["source"]) if scene_part.get("source") else None),
+            exact=True,
+            representation="projection",
+        )
+        visible_shape = converted.VCompound(shape.wrapped)
+        visible_keys = _emit_hlr_compound(
+            visible_shape,
+            view_frame,
+            part_group,
+            part_index=part_index,
+            visibility="visible",
+            categories=categories,
+            source_kind="edge",
+        )
+        if "hidden_feature_edges" in categories:
+            cylinder_keys = _emit_edge_on_cylinder_side_lines(
+                shape, view_frame, part_group, part_index=part_index
+            )
+            _emit_hlr_compound(
+                converted.HCompound(shape.wrapped),
+                view_frame,
+                part_group,
+                part_index=part_index,
+                visibility="hidden",
+                categories=categories,
+                source_kind="edge",
+                skip_keys=visible_keys | cylinder_keys,
+            )
+        if "tangent_edges" in categories:
+            for compound in (
+                converted.Rg1LineVCompound(shape.wrapped),
+                converted.RgNLineVCompound(shape.wrapped),
+            ):
+                _emit_hlr_compound(
+                    compound,
+                    view_frame,
+                    part_group,
+                    part_index=part_index,
+                    visibility="visible",
+                    categories=categories,
+                    source_kind="edge",
+                    force_feature=True,
+                )
+
+
+def _emit_hlr_compound(
+    compound,
+    view_frame,
+    parent_svg_group,
+    *,
+    part_index: int,
+    visibility: str,
+    categories: set[str],
+    source_kind: str,
+    force_feature: bool = False,
+    skip_keys: set[tuple] | None = None,
+):
+    """Convert one exact HLR compound into deterministic SVG primitives."""
+
+    if compound.IsNull():
+        return
+    from shellforgepy.drawing.construction import (
+        append_arc,
+        append_circle,
+        append_ellipse,
+        append_line,
+    )
+
+    primitives = []
+    for edge in cq.Shape(compound).Edges():
+        geometry_type = edge.geomType()
+        if geometry_type == "LINE":
+            start = _hlr_point(edge.startPoint(), view_frame)
+            end = _hlr_point(edge.endPoint(), view_frame)
+            if end < start:
+                start, end = end, start
+            primitives.append(("line", start, end))
+        elif geometry_type == "CIRCLE":
+            adaptor = edge._geomAdaptor()
+            circle = adaptor.Circle()
+            center = _hlr_point(circle.Position().Location(), view_frame)
+            radius = float(circle.Radius())
+            if edge.IsClosed():
+                primitives.append(("circle", center, radius))
+            else:
+                start = _hlr_point(edge.startPoint(), view_frame)
+                end = _hlr_point(edge.endPoint(), view_frame)
+                first, last = float(adaptor.FirstParameter()), float(
+                    adaptor.LastParameter()
+                )
+                midpoint = _hlr_point(adaptor.Value((first + last) / 2.0), view_frame)
+                cross = (start[0] - center[0]) * (midpoint[1] - center[1]) - (
+                    start[1] - center[1]
+                ) * (midpoint[0] - center[0])
+                primitives.append(
+                    (
+                        "arc",
+                        center,
+                        radius,
+                        start,
+                        end,
+                        abs(last - first) > math.pi,
+                        cross > 0.0,
+                    )
+                )
+        elif geometry_type == "ELLIPSE":
+            adaptor = edge._geomAdaptor()
+            ellipse = adaptor.Ellipse()
+            center = _hlr_point(ellipse.Position().Location(), view_frame)
+            x_direction = ellipse.Position().XDirection()
+            angle = math.degrees(
+                math.atan2(
+                    sum(
+                        float(x_direction.Coord(i + 1)) * view_frame["up"][i]
+                        for i in range(3)
+                    ),
+                    sum(
+                        float(x_direction.Coord(i + 1)) * view_frame["right"][i]
+                        for i in range(3)
+                    ),
+                )
+            )
+            if not edge.IsClosed():
+                raise NotImplementedError(
+                    "Exact projected elliptical arcs are not supported"
+                )
+            primitives.append(
+                (
+                    "ellipse",
+                    center,
+                    float(ellipse.MajorRadius()),
+                    float(ellipse.MinorRadius()),
+                    angle,
+                )
+            )
+        elif geometry_type == "BSPLINE":
+            primitives.append(_degenerate_bspline_as_line(edge, view_frame))
+        else:
+            raise NotImplementedError(
+                f"Unsupported exact projection curve type from CadQuery: {geometry_type}"
+            )
+
+    primitives.sort(key=_projection_primitive_sort_key)
+    emitted_keys: set[tuple] = set()
+    for edge_index, primitive in enumerate(primitives, start=1):
+        primitive_key = _projection_primitive_key(primitive)
+        if skip_keys and primitive_key in skip_keys:
+            continue
+        emitted_keys.add(primitive_key)
+        kind = primitive[0]
+        is_feature = force_feature or kind in {"circle", "arc", "ellipse"}
+        role = (
+            "projection-hidden"
+            if visibility == "hidden"
+            else ("projection-feature" if is_feature else "projection-outline")
+        )
+        metadata = {
+            "data-shellforgepy-role": role,
+            "data-shellforgepy-visibility": visibility,
+            "data-shellforgepy-source-kind": source_kind,
+            "data-shellforgepy-source-reference": f"projection-{part_index}-{visibility}-{edge_index}",
+        }
+        if visibility == "hidden":
+            metadata.update({"stroke-dasharray": "1.2 0.8"})
+        source_edge = metadata["data-shellforgepy-source-reference"]
+        if kind == "line":
+            _, start, end = primitive
+            append_line(
+                parent_svg_group,
+                x1=start[0],
+                y1=start[1],
+                x2=end[0],
+                y2=end[1],
+                source_edge=source_edge,
+                projection_metadata=metadata,
+            )
+        elif kind == "circle":
+            _, center, radius = primitive
+            append_circle(
+                parent_svg_group,
+                cx=center[0],
+                cy=center[1],
+                radius=radius,
+                source_edge=source_edge,
+                projection_metadata=metadata,
+            )
+        elif kind == "ellipse":
+            _, center, radius_x, radius_y, angle = primitive
+            append_ellipse(
+                parent_svg_group,
+                cx=center[0],
+                cy=center[1],
+                radius_x=radius_x,
+                radius_y=radius_y,
+                rotation_degrees=angle,
+                source_edge=source_edge,
+                projection_metadata=metadata,
+            )
+        else:
+            _, center, radius, start, end, large_arc, sweep = primitive
+            append_arc(
+                parent_svg_group,
+                cx=center[0],
+                cy=center[1],
+                radius=radius,
+                start_x=start[0],
+                start_y=start[1],
+                end_x=end[0],
+                end_y=end[1],
+                large_arc=large_arc,
+                sweep=sweep,
+                source_edge=source_edge,
+                projection_metadata=metadata,
+            )
+    return emitted_keys
+
+
+def _projection_primitive_sort_key(primitive):
+    if primitive[0] == "line":
+        return (0, *primitive[1], *primitive[2])
+    if primitive[0] == "circle":
+        return (1, *primitive[1], primitive[2])
+    if primitive[0] == "ellipse":
+        return (2, *primitive[1], primitive[2], primitive[3], primitive[4])
+    return (3, *primitive[1], primitive[2], *primitive[3], *primitive[4])
+
+
+def _projection_primitive_key(primitive):
+    if primitive[0] == "line":
+        start, end = sorted((primitive[1], primitive[2]))
+        return ("line", *(round(value, 8) for value in (*start, *end)))
+    if primitive[0] == "circle":
+        return ("circle", *(round(value, 8) for value in (*primitive[1], primitive[2])))
+    return tuple(primitive)
+
+
+def _degenerate_bspline_as_line(edge, view_frame):
+    """Keep an edge-on analytic circle as its exact collinear HLR line."""
+
+    adaptor = edge._geomAdaptor()
+    first, last = float(adaptor.FirstParameter()), float(adaptor.LastParameter())
+    points = [
+        _hlr_point(adaptor.Value(first + (last - first) * index / 8.0), view_frame)
+        for index in range(9)
+    ]
+    start, end = points[0], points[-1]
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    length = math.hypot(dx, dy)
+    if length <= 1e-9:
+        raise NotImplementedError("Projected B-spline collapses to a point")
+    if any(
+        abs(dx * (point[1] - start[1]) - dy * (point[0] - start[0])) > 1e-7 * length
+        for point in points[1:-1]
+    ):
+        raise NotImplementedError("Unsupported non-linear exact projection B-spline")
+    if end < start:
+        start, end = end, start
+    return ("line", start, end)
+
+
+def _emit_edge_on_cylinder_side_lines(
+    shape, view_frame, parent_svg_group, *, part_index: int
+):
+    """Emit hidden B-rep cylinder side walls which HLR can omit edge-on."""
+
+    from shellforgepy.drawing.construction import append_line
+
+    normal = _section_vector(view_frame, "normal")
+    emitted: set[tuple] = set()
+    for face_index, face in enumerate(shape.Faces(), start=1):
+        if face.geomType() != "CYLINDER" or "REVERSED" not in str(
+            face.wrapped.Orientation()
+        ):
+            continue
+        cylinder = face._geomAdaptor().Cylinder()
+        axis = tuple(
+            float(cylinder.Axis().Direction().Coord(index + 1)) for index in range(3)
+        )
+        if abs(sum(axis[index] * normal[index] for index in range(3))) > 1e-7:
+            continue
+        centers = []
+        for edge in face.Edges():
+            if edge.geomType() != "CIRCLE":
+                continue
+            center = edge._geomAdaptor().Circle().Position().Location()
+            point = tuple(float(center.Coord(index + 1)) for index in range(3))
+            if point not in centers:
+                centers.append(point)
+        if len(centers) != 2:
+            continue
+        radial = _normalize_projection_vector(_cross_product(axis, normal))
+        radius = float(cylinder.Radius())
+        for sign in (-1.0, 1.0):
+            start = _model_point_to_projection(
+                tuple(
+                    centers[0][index] + sign * radius * radial[index]
+                    for index in range(3)
+                ),
+                view_frame,
+            )
+            end = _model_point_to_projection(
+                tuple(
+                    centers[1][index] + sign * radius * radial[index]
+                    for index in range(3)
+                ),
+                view_frame,
+            )
+            key = _projection_primitive_key(("line", start, end))
+            if key in emitted:
+                continue
+            emitted.add(key)
+            source = f"projection-{part_index}-hidden-cylinder-{face_index}-{int(sign)}"
+            append_line(
+                parent_svg_group,
+                x1=start[0],
+                y1=start[1],
+                x2=end[0],
+                y2=end[1],
+                source_edge=source,
+                projection_metadata={
+                    "data-shellforgepy-role": "projection-hidden",
+                    "data-shellforgepy-visibility": "hidden",
+                    "data-shellforgepy-source-kind": "edge",
+                    "data-shellforgepy-source-reference": source,
+                    "stroke-dasharray": "1.2 0.8",
+                },
+            )
+    return emitted
+
+
+def _model_point_to_projection(point, view_frame):
+    origin = _section_vector(view_frame, "origin")
+    right = _section_vector(view_frame, "right")
+    up = _section_vector(view_frame, "up")
+    relative = tuple(point[index] - origin[index] for index in range(3))
+    return (
+        sum(relative[index] * right[index] for index in range(3)),
+        sum(relative[index] * up[index] for index in range(3)),
+    )
+
+
+def _cross_product(left, right):
+    return (
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    )
+
+
+def _normalize_projection_vector(vector):
+    length = math.sqrt(sum(value * value for value in vector))
+    if length <= 1e-12:
+        raise ValueError("Cannot derive edge-on cylinder projection")
+    return tuple(value / length for value in vector)
+
+
+def _hlr_point(point, view_frame):
+    """Map OCP HLR output, already expressed in projector-local 2D space."""
+
+    if hasattr(point, "toTuple"):
+        point = point.toTuple()
+    elif all(hasattr(point, component) for component in ("X", "Y", "Z")):
+        point = (point.X(), point.Y(), point.Z())
+    # ``HLRBRep_HLRToShape`` applies the gp_Ax2 projector transform itself.
+    # Its X/Y coordinates are therefore already the drawing right/up axes;
+    # applying the model frame again collapses non-top views to a line.
+    return float(point[0]), float(point[1])
 
 
 def _section_vector(section_plane, name):

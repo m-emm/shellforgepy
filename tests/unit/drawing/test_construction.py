@@ -122,6 +122,17 @@ def _make_multi_view_plate_for_drawing_test():
     )
 
 
+def _make_projection_plate_for_drawing_test():
+    """One compact final-solid fixture with remote, visible cut features."""
+
+    through = create_cylinder(2.0, 7.0, origin=(10.0, 10.0, -1.0))
+    blind_pocket = create_cylinder(3.0, 3.0, origin=(20.0, 10.0, 3.0))
+    counterbore = create_cylinder(4.0, 3.0, origin=(30.0, 10.0, 3.0)).fuse(
+        create_cylinder(2.0, 7.0, origin=(30.0, 10.0, -1.0))
+    )
+    return create_box(40.0, 20.0, 5.0).cut(through.fuse(blind_pocket).fuse(counterbore))
+
+
 def test_default_top_frame_is_centered_and_right_handed():
     request = make_construction_drawing_request(
         name="plate_top",
@@ -1102,6 +1113,157 @@ def test_multi_view_request_rejects_mixed_or_duplicate_view_declarations():
             parts=parts,
             views=[{"id": "top", "view": "top"}, {"id": "top", "view": "front"}],
         )
+
+
+def test_stage7_projection_emits_visible_final_solid_features_without_section(
+    tmp_path, monkeypatch
+):
+    from shellforgepy.adapters import _adapter as adapter_module
+
+    def section_must_not_run(*args, **kwargs):
+        raise AssertionError("Projection must not invoke section extraction")
+
+    monkeypatch.setattr(adapter_module, "emit_section_svg", section_must_not_run)
+    request = make_construction_drawing_request(
+        name="projection_features",
+        parts=[{"source": "self", "artifact": "leader", "name": "plate"}],
+        view={
+            "normal": (0.0, 0.0, 1.0),
+            "up": (0.0, 1.0, 0.0),
+            "origin": (20.0, 10.0, -50.0),
+        },
+        representation={"mode": "projection"},
+    )
+    output = render_construction_drawing(
+        _make_projection_plate_for_drawing_test(),
+        request,
+        tmp_path / "projection_features.svg",
+        part_identity="plate",
+        source="projection_test.leader",
+    )
+    root = ET.fromstring(output.read_bytes())
+    projection = root.find(
+        ".//svg:g[@data-shellforgepy-role='projection']", {"svg": SVG_NS}
+    )
+    assert root.attrib["data-shellforgepy-representation"] == "projection"
+    assert projection is not None
+    assert len(projection.findall(f".//{{{SVG_NS}}}line")) == 4
+    assert len(projection.findall(f".//{{{SVG_NS}}}circle")) == 4
+    primitives = [
+        element
+        for element in projection.iter()
+        if element.attrib.get("data-shellforgepy-visibility") == "visible"
+    ]
+    assert all(
+        element.attrib["data-shellforgepy-source-kind"] == "edge"
+        and element.attrib["data-shellforgepy-source-reference"].startswith(
+            "projection-1-visible-"
+        )
+        for element in primitives
+    )
+
+
+def test_stage7_projection_front_view_retains_orthographic_height(tmp_path):
+    request = make_construction_drawing_request(
+        name="front_projection",
+        parts=[{"source": "self", "artifact": "leader", "name": "plate"}],
+        view="front",
+        representation={"mode": "projection"},
+    )
+    output = render_construction_drawing(
+        create_box(80.0, 50.0, 8.0),
+        request,
+        tmp_path / "front_projection.svg",
+        part_identity="plate",
+    )
+    root = ET.fromstring(output.read_bytes())
+    lines = root.findall(
+        ".//svg:line[@data-shellforgepy-role='projection-outline']",
+        {"svg": SVG_NS},
+    )
+    x_values = [float(line.attrib[key]) for line in lines for key in ("x1", "x2")]
+    y_values = [float(line.attrib[key]) for line in lines for key in ("y1", "y2")]
+    assert max(x_values) - min(x_values) == pytest.approx(80.0)
+    assert max(y_values) - min(y_values) == pytest.approx(8.0)
+
+
+def test_stage7_projection_hidden_edges_are_opt_in_and_dashed(tmp_path):
+    # The front-axis blind bore is genuinely occluded in a top projection.
+    solid = _make_multi_view_plate_for_drawing_test().leader
+    base = {"name": "hidden", "parts": [{"source": "self", "artifact": "leader"}]}
+    visible_request = make_construction_drawing_request(
+        **base, representation={"mode": "projection"}
+    )
+    hidden_request = make_construction_drawing_request(
+        **base,
+        representation={
+            "mode": "projection",
+            "include": ["visible_outline", "hidden_feature_edges"],
+        },
+    )
+    visible_path = render_construction_drawing(
+        solid, visible_request, tmp_path / "visible.svg", part_identity="plate"
+    )
+    hidden_path = render_construction_drawing(
+        solid, hidden_request, tmp_path / "hidden.svg", part_identity="plate"
+    )
+    visible_root = ET.fromstring(visible_path.read_bytes())
+    hidden_root = ET.fromstring(hidden_path.read_bytes())
+    assert not visible_root.findall(".//*[@data-shellforgepy-visibility='hidden']")
+    hidden = hidden_root.findall(".//*[@data-shellforgepy-visibility='hidden']")
+    assert hidden
+    assert all(
+        element.attrib["data-shellforgepy-role"] == "projection-hidden"
+        and element.attrib["stroke-dasharray"] == "1.2 0.8"
+        for element in hidden
+    )
+    side_lines = [
+        element
+        for element in hidden
+        if element.tag == f"{{{SVG_NS}}}line"
+        and abs(float(element.attrib["x1"]) - float(element.attrib["x2"])) < 1e-9
+        and abs(float(element.attrib["y1"]) - float(element.attrib["y2"]))
+        == pytest.approx(5.0)
+    ]
+    assert len(side_lines) == 2
+
+
+def test_stage7_front_projection_shows_hidden_tapped_hole_profiles(tmp_path):
+    request = make_construction_drawing_request(
+        name="front_taps",
+        parts=[{"source": "self", "artifact": "leader", "name": "plate"}],
+        view="front",
+        representation={
+            "mode": "projection",
+            "include": [
+                "visible_outline",
+                "visible_feature_edges",
+                "hidden_feature_edges",
+            ],
+        },
+    )
+    output = render_construction_drawing(
+        _make_multi_view_plate_for_drawing_test().leader,
+        request,
+        tmp_path / "front_taps.svg",
+        part_identity="plate",
+    )
+    root = ET.fromstring(output.read_bytes())
+    hidden = root.findall(".//*[@data-shellforgepy-visibility='hidden']")
+    verticals = [
+        element
+        for element in hidden
+        if element.tag == f"{{{SVG_NS}}}line"
+        and abs(float(element.attrib["x1"]) - float(element.attrib["x2"])) < 1e-9
+        and abs(float(element.attrib["y1"]) - float(element.attrib["y2"]))
+        == pytest.approx(8.0)
+    ]
+    assert {round(float(element.attrib["x1"]), 2) for element in verticals} == {
+        -21.25,
+        -18.75,
+        18.75,
+        21.25,
+    }
 
 
 @pytest.mark.parametrize(

@@ -15,7 +15,12 @@ import re
 import xml.etree.ElementTree as ET
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Literal, NotRequired, Required, TypedDict
+from typing import Literal, TypedDict
+
+try:  # FreeCAD 0.21 embeds Python 3.10, where these live in typing_extensions.
+    from typing import NotRequired, Required
+except ImportError:  # pragma: no cover - exercised by the FreeCAD runner.
+    from typing_extensions import NotRequired, Required
 
 from shellforgepy.construct.alignment import Alignment
 from shellforgepy.drawing.layout import (
@@ -35,6 +40,10 @@ _GEOMETRY_STYLE = {
     "stroke": "#000000",
     "stroke-width": "0.2",
 }
+_HIDDEN_GEOMETRY_STYLE = {
+    **_GEOMETRY_STYLE,
+    "stroke-dasharray": "1.2 0.8",
+}
 DEFAULT_SECTION_VIEW: ViewPreset = "top"
 SUPPORTED_VIEW_PRESETS: tuple[ViewPreset, ...] = (
     "top",
@@ -53,11 +62,13 @@ CONSTRUCTION_DRAWING_BACKEND_SUPPORT = {
         "fixture_construction": True,
         "step_artifact": True,
         "section_extraction": True,
+        "projection_extraction": True,
     },
     "freecad": {
         "fixture_construction": True,
         "step_artifact": True,
         "section_extraction": True,
+        "projection_extraction": True,
     },
 }
 
@@ -72,6 +83,13 @@ class PartSelector(TypedDict, total=False):
     names: NotRequired[list[str]]
     exclude_names: NotRequired[list[str]]
     name_template: NotRequired[str]
+
+
+class ProjectionRepresentation(TypedDict, total=False):
+    """Exact orthographic-projection policy for one construction view."""
+
+    mode: Required[Literal["section", "projection"]]
+    include: NotRequired[list[str]]
 
 
 class ConstructionDrawingRequest(TypedDict, total=False):
@@ -92,6 +110,7 @@ class ConstructionDrawingRequest(TypedDict, total=False):
     precision: Required[int]
     view: NotRequired[ViewPreset | Mapping[str, object]]
     views: NotRequired[list["ConstructionDrawingView"]]
+    representation: NotRequired[ProjectionRepresentation]
     section_thickness: NotRequired[float]
     visibility: NotRequired[str]
     tolerance: NotRequired[float]
@@ -106,6 +125,7 @@ class ConstructionDrawingView(TypedDict, total=False):
 
     id: Required[str]
     view: Required[ViewPreset | Mapping[str, object]]
+    representation: NotRequired[ProjectionRepresentation]
     placement: NotRequired[AnnotationPlacement]
     annotations: NotRequired[list["DimensionAnnotation"]]
 
@@ -215,6 +235,15 @@ _LINEAR_DIMENSION_EDGES_BY_DIRECTION = {
 }
 _LINEAR_DIMENSION_STACK_PITCH = 4.0
 _MULTI_VIEW_STACK_GAP = 12.0
+_PROJECTION_INCLUDE_DEFAULT = ("visible_outline", "visible_feature_edges")
+_PROJECTION_INCLUDE_VALUES = frozenset(
+    {
+        "visible_outline",
+        "visible_feature_edges",
+        "hidden_feature_edges",
+        "tangent_edges",
+    }
+)
 
 
 def make_construction_drawing_request(
@@ -225,6 +254,7 @@ def make_construction_drawing_request(
     scale: float = 1.0,
     precision: int = 2,
     view: ViewPreset | Mapping[str, object] | None = None,
+    representation: Mapping[str, object] | None = None,
     section_thickness: float = 0.0,
     visibility: str = "visible_edges",
     tolerance: float = 1e-6,
@@ -265,7 +295,9 @@ def make_construction_drawing_request(
             )
         normalized_parts.append(dict(selector))  # type: ignore[arg-type]
 
-    if views is not None and (view is not None or annotations is not None):
+    if views is not None and (
+        view is not None or annotations is not None or representation is not None
+    ):
         raise ValueError(
             "Construction drawing views are an alternative to single view/annotations"
         )
@@ -307,6 +339,7 @@ def make_construction_drawing_request(
         request["view"] = (
             dict(resolved_view) if isinstance(resolved_view, Mapping) else resolved_view
         )
+        request["representation"] = _normalize_representation(representation)
     if annotations is not None:
         request["annotations"] = _normalize_annotations(annotations)
     return request
@@ -323,7 +356,13 @@ def _normalize_construction_drawing_views(
     for index, raw_view in enumerate(views):
         if not isinstance(raw_view, Mapping):
             raise TypeError(f"Construction drawing view {index} must be a mapping")
-        unknown_keys = set(raw_view) - {"id", "view", "placement", "annotations"}
+        unknown_keys = set(raw_view) - {
+            "id",
+            "view",
+            "representation",
+            "placement",
+            "annotations",
+        }
         if unknown_keys:
             raise ValueError(
                 f"Construction drawing view {index} contains unsupported keys: "
@@ -344,6 +383,10 @@ def _normalize_construction_drawing_views(
             "id": view_id,
             "view": dict(view) if isinstance(view, Mapping) else view,
         }
+        if "representation" in raw_view:
+            normalized_view["representation"] = _normalize_representation(
+                raw_view["representation"]  # type: ignore[arg-type]
+            )
         if "placement" in raw_view:
             if index == 0:
                 raise ValueError(
@@ -358,6 +401,55 @@ def _normalize_construction_drawing_views(
         normalized.append(normalized_view)
         ids.add(view_id)
     return normalized
+
+
+def _normalize_representation(
+    representation: Mapping[str, object] | None,
+) -> ProjectionRepresentation:
+    """Normalize the explicit Stage 7 representation without changing sections."""
+
+    if representation is None:
+        return {"mode": "section"}
+    if not isinstance(representation, Mapping):
+        raise TypeError("Construction drawing representation must be a mapping")
+    unknown = set(representation) - {"mode", "include"}
+    if unknown:
+        raise ValueError(
+            "Construction drawing representation contains unsupported keys: "
+            f"{sorted(unknown)!r}"
+        )
+    mode = str(representation.get("mode") or "").strip()
+    if mode not in {"section", "projection"}:
+        raise ValueError(
+            "Construction drawing representation mode must be 'section' or 'projection'"
+        )
+    include = representation.get("include")
+    if mode == "section":
+        if include is not None:
+            raise ValueError(
+                "Section representation does not accept projection include categories"
+            )
+        return {"mode": "section"}
+    if include is None:
+        normalized_include = list(_PROJECTION_INCLUDE_DEFAULT)
+    elif isinstance(include, Sequence) and not isinstance(include, (str, bytes)):
+        normalized_include = [str(value).strip() for value in include]
+    else:
+        raise TypeError("Projection representation include must be a list")
+    if not normalized_include or any(not value for value in normalized_include):
+        raise ValueError(
+            "Projection representation include must contain non-empty categories"
+        )
+    if len(set(normalized_include)) != len(normalized_include):
+        raise ValueError("Projection representation include categories must be unique")
+    unsupported = set(normalized_include) - _PROJECTION_INCLUDE_VALUES
+    if unsupported:
+        raise ValueError(
+            f"Projection representation includes unsupported categories: {sorted(unsupported)!r}"
+        )
+    if "visible_outline" not in normalized_include:
+        raise ValueError("Projection representation requires 'visible_outline'")
+    return {"mode": "projection", "include": normalized_include}
 
 
 def _normalize_annotations(
@@ -870,6 +962,9 @@ def create_svg_document(
         "data-shellforgepy-section-up": _format_vector(frame["up"]),
         "data-shellforgepy-section-origin": _format_vector(frame["origin"]),
         "data-shellforgepy-scale": _format_number(effective_scale),
+        "data-shellforgepy-representation": _normalize_representation(
+            request.get("representation")
+        )["mode"],
     }
     if sheet_spec is not None:
         attrs["data-shellforgepy-scale-ratio"] = _scale_ratio(effective_scale)
@@ -923,6 +1018,7 @@ def append_line(
     x2: float,
     y2: float,
     source_edge: str | None = None,
+    projection_metadata: Mapping[str, str] | None = None,
 ) -> ET.Element:
     """Append a standard SVG line with exact-geometry provenance."""
 
@@ -936,6 +1032,8 @@ def append_line(
     }
     if source_edge is not None:
         attrs["data-shellforgepy-source-edge"] = source_edge
+    if projection_metadata:
+        attrs.update(projection_metadata)
     return ET.SubElement(parent, _svg_tag("line"), attrs)
 
 
@@ -946,6 +1044,7 @@ def append_circle(
     cy: float,
     radius: float,
     source_edge: str | None = None,
+    projection_metadata: Mapping[str, str] | None = None,
 ) -> ET.Element:
     """Append a standard analytic SVG circle with exact provenance."""
 
@@ -958,6 +1057,8 @@ def append_circle(
     }
     if source_edge is not None:
         attrs["data-shellforgepy-source-edge"] = source_edge
+    if projection_metadata:
+        attrs.update(projection_metadata)
     return ET.SubElement(parent, _svg_tag("circle"), attrs)
 
 
@@ -974,6 +1075,7 @@ def append_arc(
     large_arc: bool,
     sweep: bool,
     source_edge: str | None = None,
+    projection_metadata: Mapping[str, str] | None = None,
 ) -> ET.Element:
     """Append an exact circular arc using the SVG elliptical-arc command."""
 
@@ -995,7 +1097,41 @@ def append_arc(
     }
     if source_edge is not None:
         attrs["data-shellforgepy-source-edge"] = source_edge
+    if projection_metadata:
+        attrs.update(projection_metadata)
     return ET.SubElement(parent, _svg_tag("path"), attrs)
+
+
+def append_ellipse(
+    parent: ET.Element,
+    *,
+    cx: float,
+    cy: float,
+    radius_x: float,
+    radius_y: float,
+    rotation_degrees: float = 0.0,
+    source_edge: str | None = None,
+    projection_metadata: Mapping[str, str] | None = None,
+) -> ET.Element:
+    """Append an exact projected ellipse, retaining analytic provenance."""
+
+    attrs = {
+        "cx": _format_number(cx),
+        "cy": _format_number(cy),
+        "rx": _format_number(radius_x),
+        "ry": _format_number(radius_y),
+        "data-shellforgepy-geometry": "exact",
+        **_GEOMETRY_STYLE,
+    }
+    if rotation_degrees:
+        attrs["transform"] = (
+            f"rotate({_format_number(rotation_degrees)} {_format_number(cx)} {_format_number(cy)})"
+        )
+    if source_edge is not None:
+        attrs["data-shellforgepy-source-edge"] = source_edge
+    if projection_metadata:
+        attrs.update(projection_metadata)
+    return ET.SubElement(parent, _svg_tag("ellipse"), attrs)
 
 
 def render_construction_drawing(
@@ -1074,6 +1210,9 @@ def _render_single_construction_drawing_tree(
     """Render selected, already-placed scene parts into one SVG tree."""
 
     from shellforgepy.adapters._adapter import (
+        emit_projection_svg as adapter_emit_projection_svg,
+    )
+    from shellforgepy.adapters._adapter import (
         emit_section_svg as adapter_emit_section_svg,
     )
     from shellforgepy.adapters._adapter import get_adapter_id, get_bounding_box
@@ -1103,35 +1242,55 @@ def _render_single_construction_drawing_tree(
             else None
         ),
     )
+    representation = _normalize_representation(request.get("representation"))
+    representation_mode = representation["mode"]
     section_thickness = float(request.get("section_thickness", 0.0))
-    if section_thickness != 0.0:
+    if representation_mode == "projection" and section_thickness != 0.0:
+        raise ValueError("Projection representation does not accept section_thickness")
+    if representation_mode == "section" and section_thickness != 0.0:
         raise ValueError("Stage 1 supports infinitely thin sections only")
     if request.get("curve_approximation", "reject") != "reject":
         raise ValueError("Stage 1 supports exact curves only")
 
-    for index, (solid, scene_part) in enumerate(solids):
-        part_name = str(scene_part.get("name") or f"part_{index + 1}")
-        part_group = append_part_group(
-            geometry,
-            part_identity=part_name,
-            source=_scene_part_reference(scene_part),
-            exact=True,
-        )
-        adapter_emit_section_svg(
-            solid,
+    if representation_mode == "projection":
+        adapter_emit_projection_svg(
+            [
+                {
+                    "part": solid,
+                    "name": str(scene_part.get("name") or f"part_{index + 1}"),
+                    "source": _scene_part_reference(scene_part),
+                }
+                for index, (solid, scene_part) in enumerate(solids)
+            ],
             frame,
-            part_group,
-            section_thickness=section_thickness,
+            geometry,
+            include=representation["include"],
             tolerance=float(request.get("tolerance", 1e-6)),
         )
+    else:
+        for index, (solid, scene_part) in enumerate(solids):
+            part_name = str(scene_part.get("name") or f"part_{index + 1}")
+            part_group = append_part_group(
+                geometry,
+                part_identity=part_name,
+                source=_scene_part_reference(scene_part),
+                exact=True,
+            )
+            adapter_emit_section_svg(
+                solid,
+                frame,
+                part_group,
+                section_thickness=section_thickness,
+                tolerance=float(request.get("tolerance", 1e-6)),
+            )
 
     # Layout deliberately follows what is visible in this drawing, rather than
     # an annotation target which may be a hidden cutter or a named sub-part.
-    visible_bounds = _section_elements_bounds(
+    visible_bounds = _drawing_elements_bounds(
         [
             element
             for element in geometry.iter()
-            if _local_name(element.tag) in {"line", "circle", "path"}
+            if _local_name(element.tag) in {"line", "circle", "ellipse", "path"}
         ]
     )
 
@@ -1192,6 +1351,7 @@ def _render_multi_view_construction_drawing_tree(
         }
         local_request["name"] = f"{request['name']}_{view_id}"
         local_request["view"] = raw_view["view"]
+        local_request["representation"] = raw_view.get("representation")
         if "annotations" in raw_view:
             local_request["annotations"] = raw_view["annotations"]
         local_records: list[dict[str, object]] = []
@@ -1223,6 +1383,9 @@ def _render_multi_view_construction_drawing_tree(
                 "bounds": bounds,
                 "records": local_records,
                 "view": raw_view["view"],
+                "representation": _normalize_representation(
+                    raw_view.get("representation")
+                ),
                 "placement": raw_view.get("placement"),
             }
         )
@@ -1299,6 +1462,13 @@ def _render_multi_view_construction_drawing_tree(
         ),
     )
     root = tree.getroot()
+    representations = {
+        item["representation"]["mode"] for item in rendered_views  # type: ignore[index]
+    }
+    root.set(
+        "data-shellforgepy-representation",
+        representations.pop() if len(representations) == 1 else "multiple",
+    )
     root.set(
         "data-shellforgepy-views", ",".join(str(item["id"]) for item in rendered_views)
     )
@@ -1317,6 +1487,9 @@ def _render_multi_view_construction_drawing_tree(
                 "data-shellforgepy-role": "view",
                 "data-shellforgepy-view-id": view_id,
                 "data-shellforgepy-view": _view_metadata(rendered_view["view"]),
+                "data-shellforgepy-representation": rendered_view["representation"][  # type: ignore[index]
+                    "mode"
+                ],
                 "data-shellforgepy-section-normal": _format_vector(
                     rendered_view["frame"]["normal"]  # type: ignore[index]
                 ),
@@ -1357,9 +1530,9 @@ def _multi_view_content_bounds(
     elements = [
         element
         for element in geometry.iter()
-        if _local_name(element.tag) in {"line", "circle", "path"}
+        if _local_name(element.tag) in {"line", "circle", "ellipse", "path"}
     ]
-    bounds = [Bounds2D(*_section_elements_bounds(elements))]
+    bounds = [Bounds2D(*_drawing_elements_bounds(elements))]
     if annotations is not None:
         for annotation in annotations.findall(
             f".//{{{SVG_NS}}}g[@data-shellforgepy-role='dimension']"
@@ -1437,6 +1610,9 @@ def _append_dimension_annotations(
     records: list[dict[str, object]] | None,
 ) -> None:
     from shellforgepy.adapters._adapter import (
+        emit_projection_svg as adapter_emit_projection_svg,
+    )
+    from shellforgepy.adapters._adapter import (
         emit_section_svg as adapter_emit_section_svg,
     )
 
@@ -1463,22 +1639,26 @@ def _append_dimension_annotations(
             to_endpoint = annotation["to"]
             assert isinstance(from_endpoint, Mapping)
             assert isinstance(to_endpoint, Mapping)
-            from_target, from_bounds, _ = _resolve_annotation_target_section(
+            from_target, from_bounds, _ = _resolve_annotation_target_geometry(
                 targets,
                 str(from_endpoint["target"]),
                 annotation_id=annotation_id,
                 endpoint_name="from",
                 adapter_emit_section_svg=adapter_emit_section_svg,
+                adapter_emit_projection_svg=adapter_emit_projection_svg,
+                representation=_normalize_representation(request.get("representation")),
                 frame=frame,
                 section_thickness=section_thickness,
                 tolerance=tolerance,
             )
-            to_target, to_bounds, _ = _resolve_annotation_target_section(
+            to_target, to_bounds, _ = _resolve_annotation_target_geometry(
                 targets,
                 str(to_endpoint["target"]),
                 annotation_id=annotation_id,
                 endpoint_name="to",
                 adapter_emit_section_svg=adapter_emit_section_svg,
+                adapter_emit_projection_svg=adapter_emit_projection_svg,
+                representation=_normalize_representation(request.get("representation")),
                 frame=frame,
                 section_thickness=section_thickness,
                 tolerance=tolerance,
@@ -1521,12 +1701,14 @@ def _append_dimension_annotations(
             continue
 
         target_ref = annotation["target"]
-        target, target_bounds, target_elements = _resolve_annotation_target_section(
+        target, target_bounds, target_elements = _resolve_annotation_target_geometry(
             targets,
             target_ref,
             annotation_id=annotation_id,
             endpoint_name="target",
             adapter_emit_section_svg=adapter_emit_section_svg,
+            adapter_emit_projection_svg=adapter_emit_projection_svg,
+            representation=_normalize_representation(request.get("representation")),
             frame=frame,
             section_thickness=section_thickness,
             tolerance=tolerance,
@@ -1762,13 +1944,15 @@ def _append_dimension_annotations(
             records.append(record)
 
 
-def _resolve_annotation_target_section(
+def _resolve_annotation_target_geometry(
     targets: Mapping[str, Mapping[str, object]],
     target_ref: str,
     *,
     annotation_id: str,
     endpoint_name: str,
     adapter_emit_section_svg,
+    adapter_emit_projection_svg,
+    representation: ProjectionRepresentation,
     frame: SectionViewFrame,
     section_thickness: float,
     tolerance: float,
@@ -1781,15 +1965,28 @@ def _resolve_annotation_target_section(
             f"{target_ref!r} did not resolve; available targets: {available}"
         )
     target_elements_parent = ET.Element(_svg_tag("g"))
-    adapter_emit_section_svg(
-        target["part"],
-        frame,
-        target_elements_parent,
-        section_thickness=section_thickness,
-        tolerance=tolerance,
-    )
-    target_elements = list(target_elements_parent)
-    return target, _section_elements_bounds(target_elements), target_elements
+    if representation["mode"] == "projection":
+        adapter_emit_projection_svg(
+            [{"part": target["part"], "name": target_ref, "source": target_ref}],
+            frame,
+            target_elements_parent,
+            include=representation["include"],
+            tolerance=tolerance,
+        )
+    else:
+        adapter_emit_section_svg(
+            target["part"],
+            frame,
+            target_elements_parent,
+            section_thickness=section_thickness,
+            tolerance=tolerance,
+        )
+    target_elements = [
+        element
+        for element in target_elements_parent.iter()
+        if _local_name(element.tag) in {"line", "circle", "ellipse", "path"}
+    ]
+    return target, _drawing_elements_bounds(target_elements), target_elements
 
 
 def _projected_endpoint_coordinate(
@@ -2622,7 +2819,7 @@ def _ensure_dimension_arrow_marker(root: ET.Element) -> str:
     return marker_id
 
 
-def _section_elements_bounds(
+def _drawing_elements_bounds(
     elements: Sequence[ET.Element],
 ) -> tuple[float, float, float, float]:
     bounds: list[tuple[float, float, float, float]] = []
@@ -2638,6 +2835,11 @@ def _section_elements_bounds(
             cx = float(element.attrib["cx"])
             cy = float(element.attrib["cy"])
             radius = float(element.attrib["r"])
+            bounds.append((cx - radius, cy - radius, cx + radius, cy + radius))
+        elif tag == "ellipse":
+            cx = float(element.attrib["cx"])
+            cy = float(element.attrib["cy"])
+            radius = max(float(element.attrib["rx"]), float(element.attrib["ry"]))
             bounds.append((cx - radius, cy - radius, cx + radius, cy + radius))
         elif tag == "path" and _circle_or_arc_geometry(element) is not None:
             bounds.append(_arc_bounds(element))
@@ -2655,6 +2857,10 @@ def _section_elements_bounds(
         max(item[2] for item in bounds),
         max(item[3] for item in bounds),
     )
+
+
+# Existing annotation helpers and Stage 0-6 tests use this private name.
+_section_elements_bounds = _drawing_elements_bounds
 
 
 def _circle_or_arc_geometry(
@@ -2927,6 +3133,7 @@ def append_part_group(
     role: str = "section-contour",
     source: str | None = None,
     exact: bool | None = None,
+    representation: str | None = None,
 ) -> ET.Element:
     """Append the semantic group that will contain one selected part's edges."""
 
@@ -2939,6 +3146,8 @@ def append_part_group(
         attrs["data-shellforgepy-source"] = source
     if exact is not None:
         attrs["data-shellforgepy-geometry"] = "exact" if exact else "approximate"
+    if representation is not None:
+        attrs["data-shellforgepy-representation"] = representation
     return ET.SubElement(parent, _svg_tag("g"), attrs)
 
 

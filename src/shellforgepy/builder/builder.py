@@ -6915,6 +6915,7 @@ def _resolve_construction_drawing_rules(
     allowed_keys = {
         "name",
         "view",
+        "representation",
         "parts",
         "units",
         "scale",
@@ -6977,6 +6978,7 @@ def _resolve_construction_drawing_rules(
                 scale=float(rule.get("scale", 1.0)),
                 precision=rule.get("precision", 2),
                 view=rule.get("view"),
+                representation=rule.get("representation"),
                 section_thickness=float(rule.get("section_thickness", 0.0)),
                 visibility=str(rule.get("visibility", "visible_edges")),
                 tolerance=float(rule.get("tolerance", 1e-6)),

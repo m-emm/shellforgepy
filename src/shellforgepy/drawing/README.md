@@ -1,4 +1,4 @@
-# Construction drawing Stages 0-6
+# Construction drawing Stages 0-7
 
 Stage 0 established the request and coordinate boundary for the SVG
 construction-drawing pipeline. Stage 1 adds the first exact section
@@ -11,6 +11,8 @@ can therefore provide a hole diameter without being visible in the drawing.
 Circle-diameter callouts use an angled arrow, elbow, and horizontal text
 landing so they remain readable on a technical sheet. Their measurement target
 may remain hidden; their label layout always follows the visible section.
+Stage 7 adds exact orthographic projections, including dashed hidden feature
+edges, alongside the existing exact-section representation.
 
 ## Coordinate and metadata contract
 
@@ -23,8 +25,8 @@ may remain hidden; their label layout always follows the visible section.
   derived as `up x normal`.
 - The canonical in-memory and serialized representation is standard
   `xml.etree.ElementTree` SVG. Geometry belongs below the
-  `g[data-shellforgepy-role="geometry"]` group and each selected part gets a
-  `g[data-shellforgepy-role="section-contour"]` group.
+  `g[data-shellforgepy-role="geometry"]` group. Each selected part gets a
+  `section-contour` or `projection` group according to its representation.
 - Application metadata uses `data-shellforgepy-*` attributes. Backend objects
   never cross this boundary.
 - The geometry group applies one Y inversion transform so model-space positive
@@ -37,11 +39,42 @@ may remain hidden; their label layout always follows the visible section.
 | Build the plate fixture through the adapter bridge | yes | yes |
 | Produce the existing STEP artifact | yes | yes |
 | Construct and resolve a drawing request/view frame | backend independent | backend independent |
-| Extract Stage 1 section edges and circles | implemented | implemented, unverified here |
+| Extract exact section edges and circles | implemented | implemented |
+| Extract exact Stage 7 HLR projection | implemented | implemented |
 
 The extractor uses the existing adapter seam and preserves exact geometry
 provenance. It rejects unsupported curves instead of silently tessellating
 them.
+
+## Orthographic projections
+
+Use an explicit per-view representation for an ordinary model projection:
+
+```yaml
+views:
+  - id: top
+    view: top
+    representation:
+      mode: projection
+      include:
+        - visible_outline
+        - visible_feature_edges
+        - hidden_feature_edges
+  - id: front
+    view: front
+    representation:
+      mode: projection
+      include: [visible_outline, visible_feature_edges, hidden_feature_edges]
+```
+
+`visible_outline` is required. The default include list is
+`visible_outline, visible_feature_edges`; hidden edges and tangent edges are
+opt-in. Projection works from the final selected B-rep, not the original
+cutters: a blind or through cut therefore appears wherever its resulting
+feature faces are visible or requested as hidden geometry. Hidden primitives
+are dashed and carry `data-shellforgepy-visibility="hidden"`; every projection
+primitive also carries its role, source kind, and stable extractor-local source
+reference. A projection rejects a nonzero `section_thickness`.
 
 ## Technical drawing sheets
 

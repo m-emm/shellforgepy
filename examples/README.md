@@ -240,9 +240,14 @@ The ultimate demonstration of coordinate transformation capabilities.
 
 #### **M3 Tapped-Hole Technical Drawing** (`construction_drawing_m3_tapped_holes.py`)
 Generate a supplier-style A4 SVG drawing from the same resolved CAD geometry
-used to build the plate. The common-scale sheet demonstrates two blind M3
+used to build the plate. The common-scale sheet demonstrates three exact
+orthographic projections: top, front, and right-side. It includes two blind M3
 tap-drill holes, two through M3 tap-drill holes, a centered 5 mm-deep front
 tap, explicit outer dimensions, and exact geometry-derived diameter callouts.
+
+![Rendered three-view M3 tapped-hole technical drawing](construction_drawing_m3_tapped_holes_demo/previews/m3_threaded_plate_drawing.png)
+
+![Isometric preview of the M3 tapped-hole plate](construction_drawing_m3_tapped_holes_demo/previews/m3_threaded_plate_isometric.png)
 
 ```bash
 python examples/construction_drawing_m3_tapped_holes.py
@@ -250,6 +255,7 @@ python examples/construction_drawing_m3_tapped_holes.py
 
 **Output:**
 - `output/construction_drawing_m3_tapped_holes/runs/m3_threaded_plate_run_latest/construction_drawings/m3_threaded_plate.svg`
+- `output/construction_drawing_m3_tapped_holes/runs/m3_threaded_plate_run_latest/previews/m3_threaded_plate_isometric.png`
 - A workflow manifest beside the drawing, containing each annotation's target,
   measured value, units, and placed layout bounds
 
@@ -259,10 +265,19 @@ python examples/construction_drawing_m3_tapped_holes.py
 - Each leader points to the left hole in its row: `2 X` therefore
   unambiguously identifies the matching horizontal pair, rather than an
   unspecified pair of holes.
-- The common-scale front view documents the centered 5 mm-deep M3 front tap
-  and dimensions the plate thickness.
+- The top view shows the hole pattern and plate outline; the front view
+  documents the centered 5 mm-deep M3 front tap and dimensions the plate
+  thickness.
+- The right-side projection separates the blind and through tap depths that
+  overlap in the front view. Dashed profiles are requested hidden feature
+  edges, so the plate silhouette stays solid while the internal bores remain
+  legible.
+- The model uses a `right` view (the conventional side-view choice for a
+  third-angle drawing); this compact sheet places it below the front view to
+  retain a readable 1:1 scale.
 - `construction_drawing_m3_tapped_holes_demo/` is the complete builder
-  resource, including named cutters and explicit annotation declarations.
+  resource, including per-view projection declarations, named cutters, and
+  explicit annotation declarations.
 
 ---
 

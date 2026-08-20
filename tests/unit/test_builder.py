@@ -3003,6 +3003,51 @@ def test_resolve_construction_drawing_rules_supports_view_scoped_annotations():
     ]
 
 
+def test_resolve_construction_drawing_rules_normalizes_projection_representation():
+    resource_data = {
+        "Builder": {
+            "Visualization": {
+                "construction_drawings": [
+                    {
+                        "name": "projection_sheet",
+                        "parts": [{"source": "self", "artifact": "leader"}],
+                        "views": [
+                            {
+                                "id": "top",
+                                "view": "top",
+                                "representation": {
+                                    "mode": "projection",
+                                    "include": [
+                                        "visible_outline",
+                                        "hidden_feature_edges",
+                                    ],
+                                },
+                            },
+                            {"id": "front", "view": "front"},
+                        ],
+                    }
+                ]
+            }
+        }
+    }
+
+    rules = builder._resolve_construction_drawing_rules(
+        {}, resource_data, "visualization"
+    )
+
+    assert rules[0]["request"]["views"] == [
+        {
+            "id": "top",
+            "view": "top",
+            "representation": {
+                "mode": "projection",
+                "include": ["visible_outline", "hidden_feature_edges"],
+            },
+        },
+        {"id": "front", "view": "front"},
+    ]
+
+
 def test_construction_selector_separates_self_and_dependency_parts():
     self_part = {
         "assembly_name": "selected",

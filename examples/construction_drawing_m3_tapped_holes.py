@@ -1,4 +1,4 @@
-"""Build the M3 tapped-hole technical drawing example."""
+"""Build a three-view M3 tapped-hole technical drawing with exact projections."""
 
 from pathlib import Path
 

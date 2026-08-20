@@ -1,4 +1,5 @@
 import math
+from collections.abc import Mapping, Sequence
 from typing import Optional
 
 import numpy as np
@@ -172,6 +173,372 @@ def emit_section_svg(
                 sweep=sweep,
                 source_edge=source_edge,
             )
+
+
+def emit_projection_svg(
+    scene_parts: Sequence[Mapping[str, object]],
+    view_frame,
+    parent_svg_group,
+    *,
+    include: Sequence[str],
+    tolerance=1e-6,
+):
+    """Emit an exact scene-aware orthographic HLR projection as SVG."""
+
+    if Part is None or Base is None:
+        raise RuntimeError("FreeCAD core modules are not available")
+    if not scene_parts:
+        raise ValueError("Projection requires at least one scene part")
+    if float(tolerance) <= 0:
+        raise ValueError("Projection tolerance must be positive")
+    categories = {str(value) for value in include}
+    if "visible_outline" not in categories:
+        raise ValueError("Projection requires visible_outline")
+
+    from shellforgepy.drawing.construction import append_part_group
+
+    normal = _section_vector(view_frame, "normal")
+    algorithm = Part.HLRBRep.Algo()
+    shapes = []
+    for scene_part in scene_parts:
+        solid = scene_part.get("part")
+        if solid is None:
+            raise ValueError("Projection scene part has no geometry")
+        shapes.append(solid)
+        algorithm.add(solid)
+    algorithm.setProjector(Base.Vector(*normal))
+    algorithm.update()
+    algorithm.hide()
+    converted = Part.HLRBRep.HLRToShape(algorithm)
+
+    for part_index, (scene_part, shape) in enumerate(zip(scene_parts, shapes), start=1):
+        part_group = append_part_group(
+            parent_svg_group,
+            part_identity=str(scene_part.get("name") or f"part_{part_index}"),
+            role="projection",
+            source=(str(scene_part["source"]) if scene_part.get("source") else None),
+            exact=True,
+            representation="projection",
+        )
+        visible_keys = _emit_hlr_compound(
+            converted.vCompound(shape),
+            view_frame,
+            part_group,
+            part_index=part_index,
+            visibility="visible",
+            categories=categories,
+        )
+        if "hidden_feature_edges" in categories:
+            cylinder_keys = _emit_edge_on_cylinder_side_lines(
+                shape, view_frame, part_group, part_index=part_index
+            )
+            _emit_hlr_compound(
+                converted.hCompound(shape),
+                view_frame,
+                part_group,
+                part_index=part_index,
+                visibility="hidden",
+                categories=categories,
+                skip_keys=visible_keys | cylinder_keys,
+            )
+        if "tangent_edges" in categories:
+            for compound in (
+                converted.Rg1LineVCompound(shape),
+                converted.RgNLineVCompound(shape),
+            ):
+                _emit_hlr_compound(
+                    compound,
+                    view_frame,
+                    part_group,
+                    part_index=part_index,
+                    visibility="visible",
+                    categories=categories,
+                    force_feature=True,
+                )
+
+
+def _emit_hlr_compound(
+    compound,
+    view_frame,
+    parent_svg_group,
+    *,
+    part_index: int,
+    visibility: str,
+    categories: set[str],
+    force_feature: bool = False,
+    skip_keys: set[tuple] | None = None,
+):
+    """Convert a FreeCAD HLR compound into exact SVG primitives."""
+
+    from shellforgepy.drawing.construction import (
+        append_arc,
+        append_circle,
+        append_ellipse,
+        append_line,
+    )
+
+    primitives = []
+    for edge in compound.Edges:
+        curve = edge.Curve
+        curve_type = curve.__class__.__name__.rsplit(".", 1)[-1]
+        if curve_type == "Line":
+            vertices = list(edge.Vertexes)
+            if len(vertices) != 2:
+                raise ValueError("Projection line edge did not have two vertices")
+            start = _section_point(vertices[0].Point, view_frame)
+            end = _section_point(vertices[1].Point, view_frame)
+            if end < start:
+                start, end = end, start
+            primitives.append(("line", start, end))
+        elif curve_type == "Circle":
+            center = _section_point(curve.Center, view_frame)
+            radius = float(curve.Radius)
+            if edge.isClosed():
+                primitives.append(("circle", center, radius))
+            else:
+                vertices = list(edge.Vertexes)
+                if len(vertices) != 2:
+                    raise ValueError("Projection arc edge did not have two vertices")
+                start = _section_point(vertices[0].Point, view_frame)
+                end = _section_point(vertices[1].Point, view_frame)
+                first, last = (float(value) for value in edge.ParameterRange)
+                midpoint = _section_point(curve.value((first + last) / 2.0), view_frame)
+                cross = (start[0] - center[0]) * (midpoint[1] - center[1]) - (
+                    start[1] - center[1]
+                ) * (midpoint[0] - center[0])
+                primitives.append(
+                    (
+                        "arc",
+                        center,
+                        radius,
+                        start,
+                        end,
+                        abs(last - first) > math.pi,
+                        cross > 0.0,
+                    )
+                )
+        elif curve_type == "Ellipse":
+            if not edge.isClosed():
+                raise NotImplementedError(
+                    "Exact projected elliptical arcs are not supported"
+                )
+            center = _section_point(curve.Center, view_frame)
+            primitives.append(
+                (
+                    "ellipse",
+                    center,
+                    float(curve.MajorRadius),
+                    float(curve.MinorRadius),
+                    0.0,
+                )
+            )
+        elif curve_type == "BSplineCurve":
+            primitives.append(_degenerate_bspline_as_line(edge, view_frame))
+        else:
+            raise NotImplementedError(
+                f"Unsupported exact projection curve type from FreeCAD: {curve_type}"
+            )
+
+    primitives.sort(key=_projection_primitive_sort_key)
+    emitted_keys: set[tuple] = set()
+    for edge_index, primitive in enumerate(primitives, start=1):
+        primitive_key = _projection_primitive_key(primitive)
+        if skip_keys and primitive_key in skip_keys:
+            continue
+        emitted_keys.add(primitive_key)
+        kind = primitive[0]
+        role = (
+            "projection-hidden"
+            if visibility == "hidden"
+            else (
+                "projection-feature"
+                if force_feature or kind in {"circle", "arc", "ellipse"}
+                else "projection-outline"
+            )
+        )
+        metadata = {
+            "data-shellforgepy-role": role,
+            "data-shellforgepy-visibility": visibility,
+            "data-shellforgepy-source-kind": "edge",
+            "data-shellforgepy-source-reference": f"projection-{part_index}-{visibility}-{edge_index}",
+        }
+        if visibility == "hidden":
+            metadata["stroke-dasharray"] = "1.2 0.8"
+        source_edge = metadata["data-shellforgepy-source-reference"]
+        if kind == "line":
+            _, start, end = primitive
+            append_line(
+                parent_svg_group,
+                x1=start[0],
+                y1=start[1],
+                x2=end[0],
+                y2=end[1],
+                source_edge=source_edge,
+                projection_metadata=metadata,
+            )
+        elif kind == "circle":
+            _, center, radius = primitive
+            append_circle(
+                parent_svg_group,
+                cx=center[0],
+                cy=center[1],
+                radius=radius,
+                source_edge=source_edge,
+                projection_metadata=metadata,
+            )
+        elif kind == "ellipse":
+            _, center, radius_x, radius_y, angle = primitive
+            append_ellipse(
+                parent_svg_group,
+                cx=center[0],
+                cy=center[1],
+                radius_x=radius_x,
+                radius_y=radius_y,
+                rotation_degrees=angle,
+                source_edge=source_edge,
+                projection_metadata=metadata,
+            )
+        else:
+            _, center, radius, start, end, large_arc, sweep = primitive
+            append_arc(
+                parent_svg_group,
+                cx=center[0],
+                cy=center[1],
+                radius=radius,
+                start_x=start[0],
+                start_y=start[1],
+                end_x=end[0],
+                end_y=end[1],
+                large_arc=large_arc,
+                sweep=sweep,
+                source_edge=source_edge,
+                projection_metadata=metadata,
+            )
+    return emitted_keys
+
+
+def _projection_primitive_sort_key(primitive):
+    if primitive[0] == "line":
+        return (0, *primitive[1], *primitive[2])
+    if primitive[0] == "circle":
+        return (1, *primitive[1], primitive[2])
+    if primitive[0] == "ellipse":
+        return (2, *primitive[1], primitive[2], primitive[3], primitive[4])
+    return (3, *primitive[1], primitive[2], *primitive[3], *primitive[4])
+
+
+def _projection_primitive_key(primitive):
+    if primitive[0] == "line":
+        start, end = sorted((primitive[1], primitive[2]))
+        return ("line", *(round(value, 8) for value in (*start, *end)))
+    if primitive[0] == "circle":
+        return ("circle", *(round(value, 8) for value in (*primitive[1], primitive[2])))
+    return tuple(primitive)
+
+
+def _degenerate_bspline_as_line(edge, view_frame):
+    first, last = (float(value) for value in edge.ParameterRange)
+    points = [
+        _section_point(edge.valueAt(first + (last - first) * index / 8.0), view_frame)
+        for index in range(9)
+    ]
+    start, end = points[0], points[-1]
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    length = math.hypot(dx, dy)
+    if length <= 1e-9:
+        raise NotImplementedError("Projected B-spline collapses to a point")
+    if any(
+        abs(dx * (point[1] - start[1]) - dy * (point[0] - start[0])) > 1e-7 * length
+        for point in points[1:-1]
+    ):
+        raise NotImplementedError("Unsupported non-linear exact projection B-spline")
+    if end < start:
+        start, end = end, start
+    return ("line", start, end)
+
+
+def _emit_edge_on_cylinder_side_lines(
+    shape, view_frame, parent_svg_group, *, part_index: int
+):
+    """Emit hidden side walls of final-solid internal cylinders seen edge-on."""
+
+    from shellforgepy.drawing.construction import append_line
+
+    normal = _section_vector(view_frame, "normal")
+    emitted: set[tuple] = set()
+    for face_index, face in enumerate(shape.Faces, start=1):
+        surface = face.Surface
+        if (
+            not surface.__class__.__name__.endswith("Cylinder")
+            or face.Orientation != "Reversed"
+        ):
+            continue
+        axis = (float(surface.Axis.x), float(surface.Axis.y), float(surface.Axis.z))
+        if abs(sum(axis[index] * normal[index] for index in range(3))) > 1e-7:
+            continue
+        centers = []
+        for edge in face.Edges:
+            curve = edge.Curve
+            if curve.__class__.__name__.rsplit(".", 1)[-1] != "Circle":
+                continue
+            center = curve.Center
+            point = (float(center.x), float(center.y), float(center.z))
+            if point not in centers:
+                centers.append(point)
+        if len(centers) != 2:
+            continue
+        radial = _normalize_projection_vector(_cross_product(axis, normal))
+        for sign in (-1.0, 1.0):
+            start_point = Base.Vector(
+                *(
+                    centers[0][index] + sign * float(surface.Radius) * radial[index]
+                    for index in range(3)
+                )
+            )
+            end_point = Base.Vector(
+                *(
+                    centers[1][index] + sign * float(surface.Radius) * radial[index]
+                    for index in range(3)
+                )
+            )
+            start = _section_point(start_point, view_frame)
+            end = _section_point(end_point, view_frame)
+            key = _projection_primitive_key(("line", start, end))
+            if key in emitted:
+                continue
+            emitted.add(key)
+            source = f"projection-{part_index}-hidden-cylinder-{face_index}-{int(sign)}"
+            append_line(
+                parent_svg_group,
+                x1=start[0],
+                y1=start[1],
+                x2=end[0],
+                y2=end[1],
+                source_edge=source,
+                projection_metadata={
+                    "data-shellforgepy-role": "projection-hidden",
+                    "data-shellforgepy-visibility": "hidden",
+                    "data-shellforgepy-source-kind": "edge",
+                    "data-shellforgepy-source-reference": source,
+                    "stroke-dasharray": "1.2 0.8",
+                },
+            )
+    return emitted
+
+
+def _cross_product(left, right):
+    return (
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    )
+
+
+def _normalize_projection_vector(vector):
+    length = math.sqrt(sum(value * value for value in vector))
+    if length <= 1e-12:
+        raise ValueError("Cannot derive edge-on cylinder projection")
+    return tuple(value / length for value in vector)
 
 
 def _section_vector(section_plane, name):

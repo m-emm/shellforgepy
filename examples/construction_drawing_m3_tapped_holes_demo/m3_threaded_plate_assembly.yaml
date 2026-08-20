@@ -1,11 +1,17 @@
 ShellforgepyBuilderVersion: "2026-03-27"
 
-Description: M3 top and front tapped-hole multi-view construction-drawing plate
+Description: M3 top, front, and right-side tapped-hole construction-drawing plate
 
 Parameters: {}
 
 Builder:
   Visualization:
+    preview:
+      enabled: true
+      views:
+        - isometric
+      width: 900
+      height: 600
     construction_drawings:
       - name: m3_threaded_plate
         parts:
@@ -21,6 +27,12 @@ Builder:
               normal: [0, 0, 1]
               up: [0, 1, 0]
               origin: [40, 25, 6]
+            representation:
+              mode: projection
+              include:
+                - visible_outline
+                - visible_feature_edges
+                - hidden_feature_edges
             annotations:
               - id: plate_width
                 operation: bounding_box_x_dimension
@@ -72,6 +84,12 @@ Builder:
               normal: [0, -1, 0]
               up: [0, 0, 1]
               origin: [40, 0, 4]
+            representation:
+              mode: projection
+              include:
+                - visible_outline
+                - visible_feature_edges
+                - hidden_feature_edges
             annotations:
               - id: plate_thickness
                 operation: bounding_box_y_dimension
@@ -91,6 +109,19 @@ Builder:
                     - alignment: RIGHT
                     - alignment: STACK_FRONT
                       stack_gap: 8
+          - id: right
+            placement:
+              alignments:
+                - alignment: CENTER
+                - alignment: STACK_FRONT
+                  stack_gap: 16
+            view: right
+            representation:
+              mode: projection
+              include:
+                - visible_outline
+                - visible_feature_edges
+                - hidden_feature_edges
         frame: technical
         sheet:
           format: A4

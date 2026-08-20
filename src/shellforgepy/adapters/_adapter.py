@@ -30,6 +30,9 @@ from shellforgepy.adapters._adapter_bridge import (
     deserialize_structured_step as adapter_deserialize_structured_step,
 )
 from shellforgepy.adapters._adapter_bridge import (
+    emit_projection_svg as adapter_emit_projection_svg,
+)
+from shellforgepy.adapters._adapter_bridge import (
     emit_section_svg as adapter_emit_section_svg,
 )
 from shellforgepy.adapters._adapter_bridge import expand_part as adapter_expand_part
@@ -251,6 +254,25 @@ def emit_section_svg(
         section_plane,
         parent_svg_group,
         section_thickness=section_thickness,
+        tolerance=tolerance,
+    )
+
+
+def emit_projection_svg(
+    scene_parts,
+    view_frame,
+    parent_svg_group,
+    *,
+    include,
+    tolerance=1e-6,
+):
+    """Emit exact scene-aware projection SVG primitives through the adapter."""
+
+    return adapter_emit_projection_svg(
+        scene_parts,
+        view_frame,
+        parent_svg_group,
+        include=include,
         tolerance=tolerance,
     )
 
