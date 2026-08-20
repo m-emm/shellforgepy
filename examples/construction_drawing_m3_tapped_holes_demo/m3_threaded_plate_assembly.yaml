@@ -46,9 +46,10 @@ Builder:
                 depth: 6
                 placement:
                   alignments:
+                    - alignment: STACK_BACK
+                      stack_gap: 8
                     - alignment: STACK_LEFT
                       stack_gap: 8
-                    - alignment: EDGE_BACK
               - id: through_m3_thread
                 operation: circle_diameter
                 target: m3_threaded_plate.cutters.m3_through_left
@@ -58,9 +59,10 @@ Builder:
                 through: true
                 placement:
                   alignments:
+                    - alignment: STACK_FRONT
+                      stack_gap: 8
                     - alignment: STACK_LEFT
                       stack_gap: 8
-                    - alignment: EDGE_FRONT
           - id: front
             placement:
               alignments:
@@ -86,9 +88,9 @@ Builder:
                 depth: 5
                 placement:
                   alignments:
-                    - alignment: STACK_BACK
+                    - alignment: RIGHT
+                    - alignment: STACK_FRONT
                       stack_gap: 8
-                    - alignment: CENTER
         frame: technical
         sheet:
           format: A4

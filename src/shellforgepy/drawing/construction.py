@@ -438,6 +438,11 @@ def _normalize_annotations(
             annotation_id=annotation_id,
             operation=operation,
         )
+        if operation == "circle_diameter":
+            _resolve_circle_callout_quadrant(
+                normalized_annotation.get("placement"),
+                annotation_id=annotation_id,
+            )
         normalized.append(normalized_annotation)
         annotation_ids.add(annotation_id)
     return normalized
@@ -589,6 +594,80 @@ def _normalize_circle_diameter_callout(
                 f"Construction drawing annotation {annotation_id!r} leader_tilt_degrees must be below 90"
             )
         normalized_annotation[key] = value  # type: ignore[literal-required]
+
+
+def _resolve_circle_callout_quadrant(
+    placement: object,
+    *,
+    annotation_id: str,
+) -> tuple[Alignment, float, Alignment, float]:
+    """Resolve exactly one horizontal and vertical placement for a callout."""
+
+    vertical: tuple[Alignment, float] | None = None
+    horizontal: tuple[Alignment, float] | None = None
+    operations = (
+        _annotation_layout_operations(
+            placement,
+            default_alignment=Alignment.STACK_BACK,
+        )
+        if placement is not None
+        else ()
+    )
+    for alignment, stack_gap in operations:
+        if alignment in {Alignment.STACK_BACK, Alignment.STACK_FRONT}:
+            if vertical is not None:
+                raise ValueError(
+                    f"Construction drawing annotation {annotation_id!r} circle_diameter "
+                    "placement cannot specify more than one vertical alignment"
+                )
+            vertical = (alignment, stack_gap)
+        elif alignment in {
+            Alignment.BACK,
+            Alignment.FRONT,
+            Alignment.EDGE_BACK,
+            Alignment.EDGE_FRONT,
+        }:
+            if vertical is not None:
+                raise ValueError(
+                    f"Construction drawing annotation {annotation_id!r} circle_diameter "
+                    "placement cannot specify more than one vertical alignment"
+                )
+            vertical = (alignment, stack_gap)
+        elif alignment in {Alignment.STACK_LEFT, Alignment.STACK_RIGHT}:
+            if horizontal is not None:
+                raise ValueError(
+                    f"Construction drawing annotation {annotation_id!r} circle_diameter "
+                    "placement cannot specify more than one horizontal alignment"
+                )
+            horizontal = (alignment, stack_gap)
+        elif alignment in {
+            Alignment.LEFT,
+            Alignment.RIGHT,
+            Alignment.EDGE_LEFT,
+            Alignment.EDGE_RIGHT,
+        }:
+            if horizontal is not None:
+                raise ValueError(
+                    f"Construction drawing annotation {annotation_id!r} circle_diameter "
+                    "placement cannot specify more than one horizontal alignment"
+                )
+            horizontal = (alignment, stack_gap)
+        else:
+            raise ValueError(
+                f"Construction drawing annotation {annotation_id!r} circle_diameter "
+                "placement only supports one LEFT/RIGHT and one FRONT/BACK "
+                "planar alignment; CENTER is not supported"
+            )
+    vertical = vertical or (Alignment.STACK_BACK, 5.0)
+    horizontal = horizontal or (Alignment.STACK_RIGHT, 5.0)
+    if vertical[0] not in {Alignment.STACK_BACK, Alignment.STACK_FRONT} and horizontal[
+        0
+    ] not in {Alignment.STACK_LEFT, Alignment.STACK_RIGHT}:
+        raise ValueError(
+            f"Construction drawing annotation {annotation_id!r} circle_diameter "
+            "placement requires at least one STACK_* alignment"
+        )
+    return vertical[0], vertical[1], horizontal[0], horizontal[1]
 
 
 def _normalize_annotation_placement(
@@ -2139,89 +2218,89 @@ def _append_circle_diameter_dimension(
         annotation=annotation,
         precision=precision,
     )
-    callout_width = max(_estimated_annotation_text_width(label) for label in labels)
-    lower_offset, upper_offset = _circle_callout_vertical_offsets(labels)
-
-    # Resolve a preliminary side from the external layout footprint.  It is
-    # then refined after the nominal elbow supplies the landing-rule height.
-    preliminary = _place_annotation_bounds(
+    thread_label = labels[0] if isinstance(annotation.get("thread_size"), str) else None
+    diameter_label = labels[1] if thread_label is not None else labels[0]
+    callout_width = max(
+        _estimated_annotation_text_width(label)
+        for label in (thread_label, diameter_label)
+        if label is not None
+    )
+    lower_offset = _annotation_text_baseline_below_line() - _ANNOTATION_TEXT_DESCENT
+    upper_offset = _annotation_text_baseline_above_line() + _ANNOTATION_TEXT_ASCENT
+    vertical, vertical_gap, horizontal, horizontal_gap = (
+        _resolve_circle_callout_quadrant(
+            placement,
+            annotation_id=str(annotation.get("id", "<unnamed>")),
+        )
+    )
+    callout_bounds = align_bounds_sequence_2d(
         Bounds2D(
             center_x,
             center_y + lower_offset,
             center_x + callout_width,
             center_y + upper_offset,
         ),
-        layout_bounds,
-        placement,
-        default_alignment=Alignment.STACK_BACK,
+        Bounds2D(*layout_bounds),
+        ((vertical, vertical_gap), (horizontal, horizontal_gap)),
     )
-    preliminary_direction_x = preliminary.center_x - center_x
-    preliminary_direction_y = preliminary.center_y - center_y
-    unit_x, unit_y = _circle_leader_direction(
-        preliminary_direction_x,
-        preliminary_direction_y,
-        tilt_degrees=float(
-            annotation.get("leader_tilt_degrees", _DEFAULT_CIRCLE_LEADER_TILT_DEGREES)
-        ),
-    )
+    rule_y = callout_bounds.min_y - lower_offset
+    horizontal_delta = callout_bounds.center_x - center_x
+    if abs(horizontal_delta) > 1e-9:
+        line_direction = 1.0 if horizontal_delta > 0 else -1.0
+    else:
+        line_direction = (
+            1.0
+            if horizontal
+            in {Alignment.RIGHT, Alignment.EDGE_RIGHT, Alignment.STACK_RIGHT}
+            else -1.0
+        )
+    elbow_x = callout_bounds.min_x if line_direction > 0 else callout_bounds.max_x
+    elbow_y = rule_y
+    direction_x = elbow_x - center_x
+    direction_y = elbow_y - center_y
+    direction_length = math.hypot(direction_x, direction_y)
+    if direction_length <= 1e-9:
+        direction_x, direction_y, direction_length = 1.0, 0.0, 1.0
+    unit_x, unit_y = direction_x / direction_length, direction_y / direction_length
     if is_arc:
         arrow_x, arrow_y = _arc_anchor_toward_elements(target_elements, unit_x, unit_y)
+        arrow_x += unit_x * _CIRCLE_ARROW_CLEARANCE
+        arrow_y += unit_y * _CIRCLE_ARROW_CLEARANCE
     else:
-        arrow_x = center_x + radius * unit_x
-        arrow_y = center_y + radius * unit_y
-    arrow_x += unit_x * _CIRCLE_ARROW_CLEARANCE
-    arrow_y += unit_y * _CIRCLE_ARROW_CLEARANCE
-
+        arrow_x, arrow_y = _circle_anchor_toward_point(
+            center_x, center_y, radius, elbow_x, elbow_y
+        )
     elbow_length = float(
         annotation.get("leader_elbow_length", _DEFAULT_CIRCLE_LEADER_ELBOW_LENGTH)
     )
-    nominal_elbow_y = arrow_y + unit_y * elbow_length
-    callout_bounds = _place_annotation_bounds(
-        Bounds2D(
-            center_x,
-            nominal_elbow_y + lower_offset,
-            center_x + callout_width,
-            nominal_elbow_y + upper_offset,
-        ),
-        layout_bounds,
-        placement,
-        default_alignment=Alignment.STACK_BACK,
-    )
-    rule_y = nominal_elbow_y + (callout_bounds.min_y - (nominal_elbow_y + lower_offset))
-    direction_x = callout_bounds.center_x - center_x
-    direction_y = callout_bounds.center_y - center_y
-    unit_x, unit_y = _circle_leader_direction(
-        direction_x,
-        direction_y,
-        tilt_degrees=float(
-            annotation.get("leader_tilt_degrees", _DEFAULT_CIRCLE_LEADER_TILT_DEGREES)
-        ),
-    )
-    if is_arc:
-        arrow_x, arrow_y = _arc_anchor_toward_elements(target_elements, unit_x, unit_y)
-    else:
-        arrow_x = center_x + radius * unit_x
-        arrow_y = center_y + radius * unit_y
-    arrow_x += unit_x * _CIRCLE_ARROW_CLEARANCE
-    arrow_y += unit_y * _CIRCLE_ARROW_CLEARANCE
-    required_length = (
-        (rule_y - arrow_y) / unit_y if abs(unit_y) > 1e-9 else elbow_length
-    )
-    effective_elbow_length = max(elbow_length, required_length)
-    elbow_x = arrow_x + unit_x * effective_elbow_length
-    elbow_y = arrow_y + unit_y * effective_elbow_length
-    # Explicit non-stacking placement can intentionally request a nearer
-    # landing.  Keep its annotation footprint attached to the actual elbow.
-    callout_bounds = callout_bounds.translated(0.0, elbow_y - rule_y)
-    line_direction = _circle_callout_line_direction(
-        callout_bounds.center_x - center_x,
-        fallback=unit_x,
-    )
-    # A leader elbow is the end of its horizontal landing, never an
-    # intermediate point on it.  Preserve the requested external label bounds
-    # and route the diagonal leg to the label-side endpoint; this is more
-    # important than maintaining an exact nominal leader tilt after placement.
-    elbow_x = callout_bounds.min_x if line_direction > 0 else callout_bounds.max_x
+    leader_length = math.hypot(elbow_x - arrow_x, elbow_y - arrow_y)
+    if leader_length < elbow_length:
+        if leader_length <= 1e-9:
+            shift_x, shift_y = unit_x * elbow_length, unit_y * elbow_length
+        else:
+            extension = elbow_length - leader_length
+            shift_x = (elbow_x - arrow_x) / leader_length * extension
+            shift_y = (elbow_y - arrow_y) / leader_length * extension
+        callout_bounds = callout_bounds.translated(shift_x, shift_y)
+        elbow_x += shift_x
+        elbow_y += shift_y
+        if is_arc:
+            shifted_direction_x = elbow_x - center_x
+            shifted_direction_y = elbow_y - center_y
+            shifted_length = math.hypot(shifted_direction_x, shifted_direction_y)
+            arrow_x, arrow_y = _arc_anchor_toward_elements(
+                target_elements,
+                shifted_direction_x / shifted_length,
+                shifted_direction_y / shifted_length,
+            )
+        else:
+            arrow_x, arrow_y = _circle_anchor_toward_point(
+                center_x,
+                center_y,
+                radius,
+                elbow_x,
+                elbow_y,
+            )
     _append_annotation_line(
         parent,
         elbow_x,
@@ -2232,9 +2311,6 @@ def _append_circle_diameter_dimension(
     )
     text_anchor = "start" if line_direction > 0 else "end"
     text_x = callout_bounds.min_x if line_direction > 0 else callout_bounds.max_x
-    # The landing runs beneath the complete longest label and starts at its
-    # elbow.  Its other endpoint follows the label away from the measured
-    # feature, so the elbow cannot appear inside the landing.
     _append_annotation_line(
         parent,
         elbow_x,
@@ -2242,68 +2318,48 @@ def _append_circle_diameter_dimension(
         callout_bounds.max_x if line_direction > 0 else callout_bounds.min_x,
         elbow_y,
     )
-    if len(labels) == 1:
-        # Plain diameter/clearance-hole text is stacked on the drawing BACK
-        # side of its callout rule, consistent with Alignment.STACK_BACK.
+    if thread_label is not None:
         _append_annotation_text(
             parent,
             x=text_x,
             y=elbow_y + _annotation_text_baseline_above_line(),
-            value=labels[0],
+            value=thread_label,
             anchor=text_anchor,
         )
-    else:
-        _append_annotation_text(
-            parent,
-            x=text_x,
-            y=elbow_y + _annotation_text_baseline_above_line(),
-            value=labels[0],
-            anchor=text_anchor,
-        )
-        _append_annotation_text(
-            parent,
-            x=text_x,
-            y=elbow_y + _annotation_text_baseline_below_line(),
-            value=labels[1],
-            anchor=text_anchor,
-        )
+    _append_annotation_text(
+        parent,
+        x=text_x,
+        y=elbow_y + _annotation_text_baseline_below_line(),
+        value=diameter_label,
+        anchor=text_anchor,
+    )
     return 2.0 * radius, callout_bounds.as_tuple()
 
 
-def _circle_callout_line_direction(delta_x: float, *, fallback: float) -> float:
-    if delta_x > 1e-9:
-        return 1.0
-    if delta_x < -1e-9:
-        return -1.0
-    return 1.0 if fallback >= 0 else -1.0
+def _circle_anchor_toward_point(
+    center_x: float,
+    center_y: float,
+    radius: float,
+    point_x: float,
+    point_y: float,
+) -> tuple[float, float]:
+    """Return the rim point on the radial line from a circle to ``point``."""
+
+    delta_x = point_x - center_x
+    delta_y = point_y - center_y
+    distance = math.hypot(delta_x, delta_y)
+    if distance <= 1e-9:
+        return center_x + radius, center_y
+    return (
+        center_x + radius * delta_x / distance,
+        center_y + radius * delta_y / distance,
+    )
 
 
 def _estimated_annotation_text_width(value: str) -> float:
     """Conservative width for the fixed 3 mm Arial callout text style."""
 
     return max(6.0, len(value) * 1.74)
-
-
-def _circle_leader_direction(
-    direction_x: float,
-    direction_y: float,
-    *,
-    tilt_degrees: float,
-) -> tuple[float, float]:
-    """Return an outward leader direction tilted from the placement axis.
-
-    Placement continues to choose which side of the target owns the callout.
-    A vertical placement is deliberately leaned to the drawing right when it
-    does not otherwise specify a horizontal side, yielding a conventional
-    readable leader instead of a vertical arrow.
-    """
-
-    tilt = math.radians(tilt_degrees)
-    horizontal_sign = 1.0 if direction_x >= 0 else -1.0
-    vertical_sign = 1.0 if direction_y >= 0 else -1.0
-    if abs(direction_y) >= abs(direction_x):
-        return (horizontal_sign * math.sin(tilt), vertical_sign * math.cos(tilt))
-    return (horizontal_sign * math.cos(tilt), vertical_sign * math.sin(tilt))
 
 
 def _circle_diameter_callout_lines(
@@ -2446,35 +2502,6 @@ def _annotation_text_bounds(
         y - _ANNOTATION_TEXT_DESCENT,
         max_x,
         y + _ANNOTATION_TEXT_ASCENT,
-    )
-
-
-def _circle_callout_vertical_offsets(labels: Sequence[str]) -> tuple[float, float]:
-    """Return the text-and-rule footprint relative to a callout landing rule."""
-
-    if len(labels) == 1:
-        text_bounds = _annotation_text_bounds(
-            x=0.0,
-            y=_annotation_text_baseline_above_line(),
-            value=labels[0],
-            anchor="start",
-        )
-        return min(0.0, text_bounds.min_y), text_bounds.max_y
-    thread_bounds = _annotation_text_bounds(
-        x=0.0,
-        y=_annotation_text_baseline_above_line(),
-        value=labels[0],
-        anchor="start",
-    )
-    diameter_bounds = _annotation_text_bounds(
-        x=0.0,
-        y=_annotation_text_baseline_below_line(),
-        value=labels[1],
-        anchor="start",
-    )
-    return (
-        min(0.0, thread_bounds.min_y, diameter_bounds.min_y),
-        max(0.0, thread_bounds.max_y, diameter_bounds.max_y),
     )
 
 

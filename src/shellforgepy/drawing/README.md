@@ -127,32 +127,49 @@ provides the exact diameter from its 2D section geometry.
       alignments:
         - alignment: STACK_BACK
           stack_gap: 8
+        - alignment: STACK_LEFT
+          stack_gap: 8
 ```
 
 This renders the supplier-style two-line label `2 X M3 - 6H ↧ 6.00` and
 `⌀2.50 ±0.05`. Use `through: true` instead of `depth` to render `THRU`.
 `quantity` is author-supplied and does not infer a hole pattern.
 
-The horizontal callout rule runs beneath the full width of the longest label
-from the elbow outward. The elbow is always one endpoint of that rule, never
-an intermediate point. For a threaded callout it separates the thread text
-above from the diameter below with a fixed 0.8 mm visible-ink gap on each
-side; a plain diameter or clearance-hole label is stacked on the rule's
-`STACK_BACK` (drawing-up) side. The label text is laid out outside the visible
-part bounds; only the attached diagonal leader and landing rule may cross them.
-
-The leader defaults to a 30-degree tilt and a 6 mm nominal first leg. The
-endpoint is adjusted as needed to keep the elbow at the landing endpoint.
-Override only when the explicit alignment placement needs refinement:
+Every `circle_diameter` callout uses one horizontal and one vertical standard
+alignment. Horizontal choices are `LEFT`, `RIGHT`, their `EDGE_*` forms, and
+their `STACK_*` forms; vertical choices are the matching `FRONT`/`BACK` forms.
+The order is irrelevant. Missing directions default to `STACK_BACK` and
+`STACK_RIGHT`, each with a 5 mm gap. A circle callout requires at least one
+`STACK_*` direction, so its envelope remains outside the part on one axis.
+This allows compact mixed placement such as right-aligned within the part span
+and stacked below it:
 
 ```yaml
-leader_tilt_degrees: 20
-leader_elbow_length: 7
+placement:
+  alignments:
+    - alignment: RIGHT
+    - alignment: STACK_FRONT
+      stack_gap: 8
 ```
 
-Circle/arc arrow tips terminate exactly on the measured contour; the marker
-reference is its triangle tip, so it does not extend through the line. Linear
-dimension witness lines stop 0.8 mm short of the part, continue 1.5 mm past
+`stack_gap` controls clearance for the stacking axis. Duplicate or conflicting
+directions on either axis, and `CENTER`, are rejected.
+
+The horizontal callout rule runs from the elbow outward. The elbow is always
+one endpoint, never an intermediate point. Threaded callouts place the thread
+specification above the rule and the diameter below it with a fixed 0.8 mm
+visible-ink gap. Diameter-only and `THRU` callouts retain the same layout but
+render only the lower diameter row. `*_LEFT` callouts extend their rule and
+text left from the elbow; `*_RIGHT` callouts mirror this. This makes the
+diagonal leader leave the text envelope toward the hole without crossing it.
+The complete real-or-virtual two-row envelope is placed outside the visible
+part bounds on every stacking axis. A normal or edge-aligned axis may remain
+within the part span because the other stacking axis prevents overlap.
+
+Circle arrow tips terminate on the measured rim along the radial line through
+the hole centre. Arc callouts retain their analytic arc-contour attachment.
+The marker reference is its triangle tip, so it does not extend through the
+line. Linear dimension witness lines stop 0.8 mm short of the part, continue 1.5 mm past
 the dimension line, and use a 0.12 mm stroke (the visible part contour uses
 0.2 mm), keeping the drafting aids distinct from manufactured geometry.
 

@@ -34,6 +34,27 @@ def _bounds_attribute(element, name):
     return tuple(float(value) for value in element.attrib[name].split(","))
 
 
+def _line_intersects_bounds_interior(line, bounds):
+    """Whether an SVG line enters the open interior of a model-space box."""
+
+    x1, y1, x2, y2 = (float(line.attrib[key]) for key in ("x1", "y1", "x2", "y2"))
+    intervals = []
+    for start, end, lower, upper in (
+        (x1, x2, bounds.min_x, bounds.max_x),
+        (y1, y2, bounds.min_y, bounds.max_y),
+    ):
+        delta = end - start
+        if abs(delta) <= 1e-9:
+            if not lower < start < upper:
+                return False
+            continue
+        first, second = sorted(((lower - start) / delta, (upper - start) / delta))
+        intervals.append((first, second))
+    lower_t = max([0.0, *(interval[0] for interval in intervals)])
+    upper_t = min([1.0, *(interval[1] for interval in intervals)])
+    return lower_t < upper_t
+
+
 def _make_plate_for_drawing_test():
     plate = create_box(60.0, 20.0, 5.0)
     cutters = PartCollector()
@@ -467,10 +488,20 @@ def test_stage5_dimensions_use_canonical_named_targets_and_alignment(tmp_path):
     circle_center_x = (circle_target_bounds[0] + circle_target_bounds[2]) / 2.0
     circle_center_y = (circle_target_bounds[1] + circle_target_bounds[3]) / 2.0
     circle_radius = (circle_target_bounds[2] - circle_target_bounds[0]) / 2.0
+    leader_elbow_x = float(circle_leader.attrib["x1"])
+    leader_elbow_y = float(circle_leader.attrib["y1"])
+    arrow_x = float(circle_leader.attrib["x2"])
+    arrow_y = float(circle_leader.attrib["y2"])
     assert math.hypot(
-        float(circle_leader.attrib["x2"]) - circle_center_x,
-        float(circle_leader.attrib["y2"]) - circle_center_y,
+        arrow_x - circle_center_x,
+        arrow_y - circle_center_y,
     ) == pytest.approx(circle_radius + construction_module._CIRCLE_ARROW_CLEARANCE)
+    assert (arrow_x - circle_center_x) * (
+        leader_elbow_y - circle_center_y
+    ) == pytest.approx((arrow_y - circle_center_y) * (leader_elbow_x - circle_center_x))
+    assert (arrow_x - circle_center_x) * (leader_elbow_x - circle_center_x) + (
+        arrow_y - circle_center_y
+    ) * (leader_elbow_y - circle_center_y) > 0
     circle_layout_bounds = _bounds_attribute(
         dimension_by_id["hole_left_diameter"], "data-shellforgepy-layout-bounds"
     )
@@ -616,8 +647,13 @@ def test_stage5_threaded_circle_callouts_emit_supplier_style_labels_and_leaders(
     through_lines = through.findall(f".//{{{SVG_NS}}}line")
     assert len(blind_lines) == 2
     assert blind_lines[0].attrib["marker-end"].startswith("url(#")
-    assert float(blind_lines[0].attrib["x1"]) != float(blind_lines[0].attrib["x2"])
-    assert float(blind_lines[0].attrib["y1"]) != float(blind_lines[0].attrib["y2"])
+    assert (
+        math.hypot(
+            float(blind_lines[0].attrib["x1"]) - float(blind_lines[0].attrib["x2"]),
+            float(blind_lines[0].attrib["y1"]) - float(blind_lines[0].attrib["y2"]),
+        )
+        > 0
+    )
     assert float(blind_lines[1].attrib["y1"]) == float(blind_lines[1].attrib["y2"])
     for callout_lines in (blind_lines, through_lines):
         assert (
@@ -635,7 +671,9 @@ def test_stage5_threaded_circle_callouts_emit_supplier_style_labels_and_leaders(
         }
     assert abs(
         float(blind_lines[1].attrib["x2"]) - float(blind_lines[1].attrib["x1"])
-    ) >= construction_module._estimated_annotation_text_width("2 X M3 - 6H ↧ 6.00")
+    ) == pytest.approx(
+        construction_module._estimated_annotation_text_width("2 X M3 - 6H ↧ 6.00")
+    )
     blind_layout_bounds = _bounds_attribute(blind, "data-shellforgepy-layout-bounds")
     blind_placed_bounds = _bounds_attribute(blind, "data-shellforgepy-placed-bounds")
     through_layout_bounds = _bounds_attribute(
@@ -646,12 +684,22 @@ def test_stage5_threaded_circle_callouts_emit_supplier_style_labels_and_leaders(
     )
     assert blind_placed_bounds[1] > blind_layout_bounds[3]
     assert through_placed_bounds[0] > through_layout_bounds[2]
-    assert -float(blind.findall(f".//{{{SVG_NS}}}text")[0].attrib["y"]) - float(
-        blind_lines[1].attrib["y1"]
-    ) == pytest.approx(construction_module._annotation_text_baseline_above_line())
-    assert float(blind_lines[1].attrib["y1"]) - -float(
-        blind.findall(f".//{{{SVG_NS}}}text")[1].attrib["y"]
-    ) == pytest.approx(-construction_module._annotation_text_baseline_below_line())
+    blind_rule_y = float(blind_lines[1].attrib["y1"])
+    blind_text_bounds = [
+        construction_module._annotation_text_bounds(
+            x=float(text.attrib["x"]),
+            y=-float(text.attrib["y"]),
+            value=str(text.text),
+            anchor=text.attrib["text-anchor"],
+        )
+        for text in blind.findall(f".//{{{SVG_NS}}}text")
+    ]
+    assert blind_text_bounds[0].min_y > blind_rule_y
+    assert blind_text_bounds[1].max_y < blind_rule_y
+    assert all(
+        not _line_intersects_bounds_interior(blind_lines[0], bounds)
+        for bounds in blind_text_bounds
+    )
     blind_length = math.hypot(
         float(blind_lines[0].attrib["x1"]) - float(blind_lines[0].attrib["x2"]),
         float(blind_lines[0].attrib["y1"]) - float(blind_lines[0].attrib["y2"]),
@@ -695,6 +743,209 @@ def test_stage5_circle_callout_uses_tilted_leader_for_arc_target():
     assert leader.attrib["marker-end"] == "url(#arrow)"
     assert float(leader.attrib["x1"]) != float(leader.attrib["x2"])
     assert float(leader.attrib["y1"]) != float(leader.attrib["y2"])
+
+
+@pytest.mark.parametrize(
+    ("vertical", "horizontal"),
+    [
+        ("STACK_BACK", "STACK_LEFT"),
+        ("STACK_BACK", "STACK_RIGHT"),
+        ("STACK_FRONT", "STACK_LEFT"),
+        ("STACK_FRONT", "STACK_RIGHT"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("annotation", "text_count"),
+    [
+        (
+            {
+                "id": "thread",
+                "operation": "circle_diameter",
+                "thread_size": "M3",
+                "thread_tolerance_class": "6H",
+                "depth": 5,
+            },
+            2,
+        ),
+        ({"id": "diameter", "operation": "circle_diameter"}, 1),
+        (
+            {"id": "through", "operation": "circle_diameter", "through": True},
+            1,
+        ),
+    ],
+)
+def test_circle_callout_routes_all_quadrants_without_crossing_its_text(
+    vertical,
+    horizontal,
+    annotation,
+    text_count,
+):
+    parent = ET.Element(f"{{{SVG_NS}}}g")
+    circle = ET.SubElement(
+        parent,
+        f"{{{SVG_NS}}}circle",
+        {"cx": "0", "cy": "0", "r": "2"},
+    )
+    callout_parent = ET.Element(f"{{{SVG_NS}}}g")
+    placement = {
+        "alignments": [
+            {"alignment": vertical, "stack_gap": 4.0},
+            {"alignment": horizontal, "stack_gap": 6.0},
+        ]
+    }
+    _, placed = construction_module._append_circle_diameter_dimension(
+        callout_parent,
+        target_elements=[circle],
+        target_bounds=(-2.0, -2.0, 2.0, 2.0),
+        layout_bounds=(-20.0, -10.0, 20.0, 10.0),
+        placement=placement,
+        marker_id="arrow",
+        precision=2,
+        annotation=annotation,
+    )
+
+    leader, landing = callout_parent.findall(f".//{{{SVG_NS}}}line")
+    text = callout_parent.findall(f".//{{{SVG_NS}}}text")
+    assert len(text) == text_count
+    rule_y = float(landing.attrib["y1"])
+    text_bounds = [
+        construction_module._annotation_text_bounds(
+            x=float(element.attrib["x"]),
+            y=-float(element.attrib["y"]),
+            value=str(element.text),
+            anchor=element.attrib["text-anchor"],
+        )
+        for element in text
+    ]
+    if text_count == 2:
+        assert text_bounds[0].min_y > rule_y
+        assert text_bounds[1].max_y < rule_y
+    else:
+        assert text_bounds[0].max_y < rule_y
+    assert all(
+        not _line_intersects_bounds_interior(leader, bounds) for bounds in text_bounds
+    )
+    expected_anchor = "end" if horizontal == "STACK_LEFT" else "start"
+    assert {element.attrib["text-anchor"] for element in text} == {expected_anchor}
+
+    elbow_x, elbow_y = float(leader.attrib["x1"]), float(leader.attrib["y1"])
+    arrow_x, arrow_y = float(leader.attrib["x2"]), float(leader.attrib["y2"])
+    assert math.hypot(arrow_x, arrow_y) == pytest.approx(2.0)
+    assert arrow_x * elbow_y == pytest.approx(arrow_y * elbow_x)
+    assert arrow_x * elbow_x + arrow_y * elbow_y > 0
+
+    min_x, min_y, max_x, max_y = placed
+    if vertical == "STACK_BACK":
+        assert min_y >= 14.0
+    else:
+        assert max_y <= -14.0
+    if horizontal == "STACK_LEFT":
+        assert max_x <= -26.0
+    else:
+        assert min_x >= 26.0
+
+
+def test_circle_callout_allows_mixed_alignment_and_validates_axes():
+    placement = {
+        "alignments": [
+            {"alignment": "RIGHT"},
+            {"alignment": "STACK_FRONT", "stack_gap": 8},
+        ]
+    }
+    assert construction_module._resolve_circle_callout_quadrant(
+        placement, annotation_id="mixed"
+    ) == (Alignment.STACK_FRONT, 8.0, Alignment.RIGHT, 0.0)
+    assert construction_module._resolve_circle_callout_quadrant(
+        None, annotation_id="defaults"
+    ) == (Alignment.STACK_BACK, 5.0, Alignment.STACK_RIGHT, 5.0)
+    assert construction_module._resolve_circle_callout_quadrant(
+        {"alignments": [{"alignment": "STACK_FRONT", "stack_gap": 7}]},
+        annotation_id="vertical_only",
+    ) == (Alignment.STACK_FRONT, 7.0, Alignment.STACK_RIGHT, 5.0)
+    assert construction_module._resolve_circle_callout_quadrant(
+        {"alignments": [{"alignment": "STACK_LEFT", "stack_gap": 9}]},
+        annotation_id="horizontal_only",
+    ) == (Alignment.STACK_BACK, 5.0, Alignment.STACK_LEFT, 9.0)
+
+    request = make_construction_drawing_request(
+        name="mixed_callout",
+        parts=[{"source": "self", "artifact": "leader"}],
+        annotations=[
+            {
+                "id": "mixed",
+                "operation": "circle_diameter",
+                "target": "plate.hole",
+                "placement": placement,
+            }
+        ],
+    )
+    assert request["annotations"][0]["placement"] == placement
+
+    for alignments, message in (
+        (
+            [{"alignment": "STACK_LEFT"}, {"alignment": "STACK_RIGHT"}],
+            "more than one horizontal",
+        ),
+        (
+            [{"alignment": "LEFT"}, {"alignment": "FRONT"}],
+            "requires at least one STACK",
+        ),
+        ([{"alignment": "CENTER"}, {"alignment": "STACK_FRONT"}], "CENTER"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            make_construction_drawing_request(
+                name="invalid_callout",
+                parts=[{"source": "self", "artifact": "leader"}],
+                annotations=[
+                    {
+                        "id": "invalid",
+                        "operation": "circle_diameter",
+                        "target": "plate.hole",
+                        "placement": {"alignments": alignments},
+                    }
+                ],
+            )
+
+
+def test_circle_callout_mixed_right_and_stack_front_routes_below_the_part():
+    target_parent = ET.Element(f"{{{SVG_NS}}}g")
+    circle = ET.SubElement(
+        target_parent,
+        f"{{{SVG_NS}}}circle",
+        {"cx": "0", "cy": "0", "r": "2"},
+    )
+    callout_parent = ET.Element(f"{{{SVG_NS}}}g")
+    _, placed = construction_module._append_circle_diameter_dimension(
+        callout_parent,
+        target_elements=[circle],
+        target_bounds=(-2.0, -2.0, 2.0, 2.0),
+        layout_bounds=(-20.0, -10.0, 20.0, 10.0),
+        placement={
+            "alignments": [
+                {"alignment": "RIGHT"},
+                {"alignment": "STACK_FRONT", "stack_gap": 8.0},
+            ]
+        },
+        marker_id="arrow",
+        precision=2,
+        annotation={
+            "id": "mixed",
+            "operation": "circle_diameter",
+            "thread_size": "M3",
+            "thread_tolerance_class": "6H",
+            "depth": 5,
+        },
+    )
+
+    leader, landing = callout_parent.findall(f".//{{{SVG_NS}}}line")
+    text = callout_parent.findall(f".//{{{SVG_NS}}}text")
+    assert placed[2] == pytest.approx(20.0)
+    assert placed[3] <= -18.0
+    assert leader.attrib["x1"] == landing.attrib["x1"]
+    assert leader.attrib["y1"] == landing.attrib["y1"]
+    assert {element.attrib["text-anchor"] for element in text} == {"start"}
+    assert -float(text[0].attrib["y"]) > float(landing.attrib["y1"])
+    assert -float(text[1].attrib["y"]) < float(landing.attrib["y1"])
 
 
 def test_multi_view_drawing_uses_one_discrete_scale_and_view_scoped_annotations(
